@@ -1,0 +1,13 @@
+MANTA LAYERS 0.1.0 — DÉMARRER ICI
+
+1) Décompresser tout le ZIP.
+2) Installer Python 3 depuis https://www.python.org/downloads/windows/ si besoin.
+3) Double-cliquer sur lancer_manta_layers.bat.
+4) Au premier lancement, le PC a besoin d'Internet pour télécharger PySide6 et Pillow.
+5) Un projet de démonstration utilisant ta raie manta apparaît au démarrage.
+
+Le logiciel fonctionne ensuite localement.
+La sauvegarde du projet se fait en .manta, l'image finale en PNG/JPEG/WebP.
+Le texte incurvé, les masques et l'IA ne sont pas encore inclus dans la version 0.1.
+
+Documentation plus détaillée dans README.md.
