@@ -20,6 +20,51 @@ class CommitPlainTextEdit(QPlainTextEdit):
         self.editingFinished.emit()
 
 
+class InlineTextEditor(QPlainTextEdit):
+    """Editor floating over the canvas to type a text layer in place.
+
+    Ctrl+Enter or leaving the editor validates; Escape cancels. Opening a menu
+    (popup focus) does not count as leaving.
+    """
+
+    committed = Signal(str)
+    cancelled = Signal()
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self._finished = False
+        self.setPlainText(text)
+        self.setPlaceholderText("Saisissez le texte… (Ctrl+Entrée pour valider, Échap pour annuler)")
+        self.setToolTip("Ctrl+Entrée pour valider · Échap pour annuler")
+        cursor = self.textCursor()
+        cursor.select(cursor.SelectionType.Document)
+        self.setTextCursor(cursor)
+
+    def finish(self, accept: bool) -> None:
+        if self._finished:
+            return
+        self._finished = True
+        if accept:
+            self.committed.emit(self.toPlainText())
+        else:
+            self.cancelled.emit()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.finish(False)
+            return
+        if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            self.finish(True)
+            return
+        super().keyPressEvent(event)
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        if event.reason() != Qt.FocusReason.PopupFocusReason:
+            self.finish(True)
+
+
 class LayerDragHandle(QToolButton):
     """Poignée qui démarre le glissement d'une ligne de calque."""
 

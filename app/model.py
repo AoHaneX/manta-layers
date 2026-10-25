@@ -10,6 +10,8 @@ from uuid import uuid4
 
 from PIL import Image
 
+from .textpath import DEFAULT_CONTROLS, normalize_controls, normalize_shape
+
 PROJECT_VERSION = 1
 MAX_DIMENSION = 16384
 # Au-delà, le décodage et l'affichage d'un calque deviennent trop coûteux en mémoire
@@ -60,8 +62,13 @@ class Layer:
     font_size: int = 56
     color: str = "#000000"
     text_background: str | None = None
-    text_deformation: str = "curve"
+    # Path shape: straight | arc | u | u_inverted | custom (see app/textpath.py).
+    text_deformation: str = "straight"
     curve_intensity: float = 0.0
+    # Bézier control points of the custom shape, as fractions of the path width.
+    path_controls: list[list[float]] = field(
+        default_factory=lambda: [list(point) for point in DEFAULT_CONTROLS]
+    )
     character_spacing: float = 0.0
     path_alignment: str = "center"
     path_orientation: str = "tangent"
@@ -114,18 +121,11 @@ class Layer:
             layer.color = defaults.color
         if layer.text_background is not None and not is_hex_color(layer.text_background):
             layer.text_background = None
-        # Les anciens projets utilisaient un mode + une intensité positive.
-        # Ils sont convertis vers l'unique courbure signée sans perdre le sens.
-        legacy_deformation = layer.text_deformation if isinstance(layer.text_deformation, str) else "curve"
-        layer.curve_intensity = _number(layer.curve_intensity, 0.0)
-        if legacy_deformation in {"arc_up", "u_inverted", "wave"}:
-            layer.curve_intensity = abs(layer.curve_intensity)
-        elif legacy_deformation in {"arc_down", "u"}:
-            layer.curve_intensity = -abs(layer.curve_intensity)
-        elif legacy_deformation == "straight":
-            layer.curve_intensity = 0.0
-        layer.text_deformation = "curve"
-        layer.curve_intensity = max(-100.0, min(100.0, layer.curve_intensity))
+        # Legacy deformation names (signed "curve", directional modes) map to a shape.
+        layer.text_deformation, layer.curve_intensity = normalize_shape(
+            layer.text_deformation, _number(layer.curve_intensity, 0.0)
+        )
+        layer.path_controls = normalize_controls(layer.path_controls)
         layer.character_spacing = _number(layer.character_spacing, 0.0, -50.0, 200.0)
         if layer.path_alignment not in ("left", "center", "right"):
             layer.path_alignment = "center"

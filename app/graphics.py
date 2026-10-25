@@ -15,6 +15,9 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
 from .model import MAX_PIXELS, Document, Layer
+from .textpath import (
+    custom_points, drag_handle, handle_points, normalize_controls, normalize_shape, sample_path,
+)
 from .theme import COLORS
 
 MIN_ZOOM = 0.01
@@ -24,38 +27,39 @@ ROTATION_HANDLE_DISTANCE = 35  # pixels écran au-dessus du cadre
 
 
 class CurvedTextGraphicItem(QGraphicsItem):
-    """Texte caractère par caractère sur une trajectoire, sans rasterisation."""
+    """Vector text laid out glyph by glyph along a path; it is never rasterised.
+
+    The path geometry comes from ``app.textpath``; this class only turns it
+    into Qt paths, glyph placements and interactive handles.
+    """
 
     def __init__(self, layer: Layer):
         super().__init__()
+        self.apply_layer(layer)
+
+    def apply_layer(self, layer: Layer) -> None:
+        """Reload every text property from the model and redraw."""
         self.lines = layer.text.split("\n")
         available = {family.casefold(): family for family in QFontDatabase.families()}
         family = available.get(layer.font_family.casefold(), QFont().defaultFamily())
         self.font = QFont(family, layer.font_size)
         self.color = QColor(layer.color)
         self.background = QColor(layer.text_background) if layer.text_background else QColor()
-        self.curve_intensity = float(layer.curve_intensity)
+        self.path_shape, self.curve_intensity = normalize_shape(layer.text_deformation, layer.curve_intensity)
+        self.controls = normalize_controls(layer.path_controls)
         self.spacing = float(layer.character_spacing)
         self.alignment = layer.path_alignment
         self.orientation = layer.path_orientation
         self.flip_horizontal = bool(layer.flip_horizontal)
         self.flip_vertical = bool(layer.flip_vertical)
         self._rebuild_geometry()
+        self.update()
 
-    def _shape_value(self, t: float) -> float:
-        # Dans les coordonnées Qt, une ordonnée négative monte : une valeur
-        # positive produit donc un arc vers le haut, et une négative vers le bas.
-        return -4.0 * t * (1.0 - t)
-
-    def _line_path(self, baseline: float, samples: int) -> QPainterPath:
-        path = QPainterPath(QPointF(self.path_start_x, baseline))
-        for index in range(1, samples + 1):
-            t = index / samples
-            path.lineTo(
-                self.path_start_x + self.path_width * t,
-                baseline + self.amplitude * self._shape_value(t),
-            )
-        return path
+    def set_text_preview(self, text: str) -> None:
+        """Live preview while the text is typed on the canvas."""
+        self.lines = text.split("\n")
+        self._rebuild_geometry()
+        self.update()
 
     def _rebuild_geometry(self):
         self.prepareGeometryChange()
@@ -63,30 +67,36 @@ class CurvedTextGraphicItem(QGraphicsItem):
         line_advances = [[metrics.horizontalAdvance(char) for char in line] for line in self.lines]
         positive_advances = [advance for advances in line_advances for advance in advances if advance > 0]
         minimum_advance = min(positive_advances, default=1.0)
-        # L'espacement négatif peut rapprocher les lettres sans jamais faire
-        # repartir le curseur en arrière ni inverser leur ordre.
+        # Negative spacing may tighten letters but never moves the cursor
+        # backwards nor swaps their order.
         effective_spacing = max(self.spacing, -minimum_advance * 0.8)
         widths = [sum(advances) + max(0, len(advances) - 1) * effective_spacing
                   for advances in line_advances]
         self.text_width = max(widths, default=0.0)
-        self.max_amplitude = max(1.0, self.font.pointSizeF() * 2.0)
-        self.amplitude = self.max_amplitude * self.curve_intensity / 100.0
+        self.arc_amplitude = max(1.0, self.font.pointSizeF() * 2.0)
         margin = max(4.0, self.font.pointSizeF())
         self.path_start_x = -margin
+        # The path width only depends on the text, so dragging a handle never
+        # shifts the layout.
         self.path_width = max(1.0, self.text_width + margin * 2)
-        # La première ligne de base reste à l'emplacement historique du texte
-        # droit ; les lignes suivantes suivent la même courbe, décalées vers le bas.
+        # The first baseline stays where straight text has always been drawn;
+        # following lines reuse the same shape, shifted downwards.
         self.baseline = metrics.ascent() + 2
         line_height = metrics.lineSpacing()
         block_height = metrics.height() + line_height * (len(self.lines) - 1) + 4
-        # Centre de retournement indépendant de la courbure : le texte retourné
-        # ne saute pas pendant le glissement de la poignée.
+        # Flip centre independent from the shape: flipped text does not jump
+        # while its handles are dragged.
         self._flip_center = QPointF(self.path_start_x + self.path_width / 2, block_height / 2)
         samples = max(32, min(256, int(self.path_width / 4)))
+        offsets = sample_path(self.path_shape, self.curve_intensity, self.controls,
+                              self.path_width, self.arc_amplitude, samples)
         self.placements = []
         content = None
         for index, (line, advances, width) in enumerate(zip(self.lines, line_advances, widths)):
-            path = self._line_path(self.baseline + index * line_height, samples)
+            baseline = self.baseline + index * line_height
+            path = QPainterPath(QPointF(self.path_start_x + offsets[0][0], baseline + offsets[0][1]))
+            for x, dy in offsets[1:]:
+                path.lineTo(self.path_start_x + x, baseline + dy)
             if index == 0:
                 self.guide_path = path
             length = max(1.0, path.length())
@@ -105,8 +115,8 @@ class CurvedTextGraphicItem(QGraphicsItem):
                 cursor += max(advance * 0.2, advance + effective_spacing)
         if content is None:
             content = QRectF(self.path_start_x, 0, self.path_width, metrics.height())
-        # Le cadre suit les glyphes réellement placés : le fond et les poignées
-        # restent collés au texte au lieu d'englober toute l'amplitude possible.
+        # The frame hugs the glyphs actually drawn, so the background and the
+        # selection handles stay close to the text.
         self._content_bounds = content.adjusted(-2, -2, 2, 2)
         self._bounds = self._visual_transform().mapRect(self._content_bounds)
 
@@ -141,32 +151,43 @@ class CurvedTextGraphicItem(QGraphicsItem):
         transform.translate(-center.x(), -center.y())
         return transform
 
+    def _to_visual(self, x: float, dy: float) -> QPointF:
+        return self._visual_transform().map(QPointF(self.path_start_x + x, self.baseline + dy))
+
     def visual_guide_path(self) -> QPainterPath:
         return self._visual_transform().map(self.guide_path)
 
-    def set_curve_intensity(self, value: float):
-        self.curve_intensity = max(-100.0, min(100.0, float(value)))
+    def shape_handles_local(self) -> list[QPointF]:
+        """Handles controlling the shape: the apex, or the two Bézier control points."""
+        return [self._to_visual(x, dy) for x, dy in handle_points(
+            self.path_shape, self.curve_intensity, self.controls, self.path_width, self.arc_amplitude
+        )]
+
+    def control_polygon_local(self) -> list[QPointF]:
+        """Bézier control polygon of the custom shape, empty for other shapes."""
+        if self.path_shape != "custom":
+            return []
+        return [self._to_visual(x, dy) for x, dy in custom_points(self.path_width, self.controls)]
+
+    def drag_shape_handle(self, index: int, local: QPointF) -> None:
+        inverse, invertible = self._visual_transform().inverted()
+        if invertible:
+            local = inverse.map(local)
+        self.path_shape, self.curve_intensity, self.controls = drag_handle(
+            self.path_shape, index, local.x() - self.path_start_x, local.y() - self.baseline,
+            self.path_width, self.arc_amplitude, self.curve_intensity, self.controls,
+        )
         self._rebuild_geometry()
         self.update()
 
-    def curve_handle_local(self) -> QPointF:
-        t = 0.5
-        point = QPointF(
-            self.path_start_x + self.path_width * t,
-            self.baseline + self.amplitude * self._shape_value(t),
-        )
-        return self._visual_transform().map(point)
-
-    def intensity_from_local(self, point: QPointF) -> float:
-        inverse, invertible = self._visual_transform().inverted()
-        if invertible:
-            point = inverse.map(point)
-        t = 0.5
-        coefficient = self._shape_value(t)
-        return max(-100.0, min(
-            100.0,
-            (point.y() - self.baseline) / (self.max_amplitude * coefficient) * 100,
-        ))
+    def set_curve_intensity(self, value: float):
+        """Preview from the slider; a straight text becomes an arc when bent."""
+        value = max(-100.0, min(100.0, float(value)))
+        if self.path_shape == "straight" and value:
+            self.path_shape = "arc"
+        self.curve_intensity = abs(value) if self.path_shape in ("u", "u_inverted") else value
+        self._rebuild_geometry()
+        self.update()
 
 
 def render_layer_image(
@@ -518,6 +539,8 @@ class CanvasView(QGraphicsView):
         self.old_layer = None
         self.drag_item = None
         self.drag_start = None
+        self.handle_index = None
+        self.selection_drag = None
         self.fixed_world = None
         self.fixed_local = None
         self.corner_local = None
@@ -603,11 +626,21 @@ class CanvasView(QGraphicsView):
                 painter.setPen(guide_pen)
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawPath(item.sceneTransform().map(item.visual_guide_path()))
-            handle = item.mapToScene(item.curve_handle_local())
-            radius = 7 / factor
-            painter.setPen(QPen(QColor(COLORS["background"]), 1 / factor))
-            painter.setBrush(QColor(COLORS["primary"]))
-            painter.drawEllipse(handle, radius, radius)
+            polygon = [item.mapToScene(point) for point in item.control_polygon_local()]
+            if polygon:
+                # Bézier tangents of the custom shape: start -> P1 and P2 -> end.
+                tangent_pen = QPen(QColor(COLORS["muted"]), 1)
+                tangent_pen.setCosmetic(True)
+                tangent_pen.setStyle(Qt.PenStyle.DotLine)
+                painter.setPen(tangent_pen)
+                painter.drawLine(polygon[0], polygon[1])
+                painter.drawLine(polygon[2], polygon[3])
+            if not layer.locked:
+                radius = 7 / factor
+                painter.setPen(QPen(QColor(COLORS["background"]), 1 / factor))
+                painter.setBrush(QColor(COLORS["primary"]))
+                for handle in item.shape_handles_local():
+                    painter.drawEllipse(item.mapToScene(handle), radius, radius)
         if item and not self.window.eraser_active:
             size = 9 / factor
             painter.setBrush(QColor(COLORS["primary"]))
@@ -658,9 +691,9 @@ class CanvasView(QGraphicsView):
 
     def _hit_handle(self, item, viewport_pos):
         if isinstance(item, CurvedTextGraphicItem):
-            curve_handle = item.mapToScene(item.curve_handle_local())
-            if (self.mapFromScene(curve_handle) - viewport_pos).manhattanLength() <= 15:
-                return "curve", None
+            for index, local in enumerate(item.shape_handles_local()):
+                if (self.mapFromScene(item.mapToScene(local)) - viewport_pos).manhattanLength() <= 15:
+                    return "shape", index
         targets = [("resize", i, item.mapToScene(pt)) for i, pt in enumerate(self.local_handles(item))]
         targets.append(("rotate", None, self.rotation_point(item)))
         for mode, index, world in targets:
@@ -727,6 +760,10 @@ class CanvasView(QGraphicsView):
                 self.window.paint_canvas_color(self.mapToScene(event.position().toPoint()))
                 event.accept()
                 return
+            if self.window.text_tool_active:
+                self.window.begin_inline_text_create(self.mapToScene(event.position().toPoint()))
+                event.accept()
+                return
             item = self.selected_graphic()
             layer = self.window.document.layer(item.data(0)) if item else None
             if item and layer and not layer.locked:
@@ -735,6 +772,7 @@ class CanvasView(QGraphicsView):
                     self.mode = mode
                     self.old_layer = self.window.document.clone()
                     self.drag_item = item
+                    self.handle_index = handle
                     if mode == "resize":
                         local = self.local_handles(item)
                         self.corner_local = local[handle]
@@ -754,6 +792,18 @@ class CanvasView(QGraphicsView):
                 self.drag_item = at
         super().mousePressEvent(event)
         self.viewport().update()
+
+    def mouseDoubleClickEvent(self, event):
+        # Double-clicking a text edits its content directly on the canvas.
+        if event.button() == Qt.MouseButton.LeftButton and not self.window.any_tool_active():
+            item = self.itemAt(event.position().toPoint())
+            layer = self.window.document.layer(item.data(0)) if item else None
+            if isinstance(item, CurvedTextGraphicItem) and layer and not layer.locked:
+                self.mode = self.drag_item = self.old_layer = None
+                self.window.begin_inline_text_edit(layer.id)
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
 
     def keyPressEvent(self, event):
         if event.matches(QKeySequence.StandardKey.Copy):
@@ -831,20 +881,14 @@ class CanvasView(QGraphicsView):
                 self.viewport().update()
             event.accept()
             return
-        if self.mode in ("resize", "rotate", "curve") and self.drag_item:
+        if self.mode in ("resize", "rotate", "shape") and self.drag_item:
             item = self.drag_item
             old = self.old_layer.layer(item.data(0))
             mouse = self.mapToScene(event.position().toPoint())
-            if self.mode == "curve" and isinstance(item, CurvedTextGraphicItem):
-                local = item.mapFromScene(mouse)
-                intensity = item.intensity_from_local(local)
-                item.set_curve_intensity(intensity)
-                self.window.curve_intensity.blockSignals(True)
-                self.window.curve_intensity.setValue(round(intensity))
-                self.window.curve_intensity.blockSignals(False)
-                self.window.curve_value.blockSignals(True)
-                self.window.curve_value.setValue(round(intensity))
-                self.window.curve_value.blockSignals(False)
+            if self.mode == "shape" and isinstance(item, CurvedTextGraphicItem):
+                # Live deformation; the model is only updated on release.
+                item.drag_shape_handle(self.handle_index, item.mapFromScene(mouse))
+                self.window.show_text_shape(item.path_shape, item.curve_intensity)
             elif self.mode == "resize":
                 d = mouse - self.fixed_world
                 r = radians(old.rotation)
@@ -892,8 +936,9 @@ class CanvasView(QGraphicsView):
             event.accept()
             return
         mode, item, before = self.mode, self.drag_item, self.old_layer
-        if mode == "curve" and item and before and isinstance(item, CurvedTextGraphicItem):
-            self.window.commit_curve_handle(before, item.data(0), item.curve_intensity)
+        if mode == "shape" and item and before and isinstance(item, CurvedTextGraphicItem):
+            self.window.commit_text_shape(before, item.data(0), item.path_shape,
+                                          item.curve_intensity, item.controls)
             self.mode = self.drag_item = self.old_layer = None
             self.viewport().update()
             event.accept()
@@ -992,6 +1037,10 @@ class CanvasView(QGraphicsView):
             except RuntimeError:
                 pass
         self._reset_eraser_preview()
+
+    def cancel_selection_drag(self) -> None:
+        self.selection_drag = None
+        self.viewport().update()
 
     def zoom_by(self, factor: float) -> None:
         """Zoom borné : le pas est raccourci au lieu d'être refusé près des limites."""

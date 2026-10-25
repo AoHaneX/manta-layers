@@ -58,8 +58,8 @@ class ModelTests(unittest.TestCase):
         text.font_family = "Verdana"
         text.color = "#F0E1D2"
         text.opacity = 0.3
-        text.text_deformation = "curve"
-        text.curve_intensity = 72
+        text.text_deformation = "arc"
+        text.curve_intensity = 72.0
         text.character_spacing = 2.5
         text.path_alignment = "right"
         text.path_orientation = "horizontal"

@@ -1,6 +1,7 @@
 """Fenêtre principale de Manta Layers, éditeur simple à calques pour Windows."""
 from __future__ import annotations
 
+from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
 from shutil import copy2
@@ -18,17 +19,20 @@ from PySide6.QtWidgets import (
 
 from . import __version__
 from .dialogs import NewProjectDialog, ResizeDocumentDialog
-from .graphics import CanvasView, make_scene, qimage_png, render_document
+from .graphics import CanvasView, CurvedTextGraphicItem, make_scene, qimage_png, render_document
 from .icons import (
     alignment_icon, color_tool_icon, eye_icon, history_arrow_icon, layer_kind_icon, lock_icon,
     sidebar_arrow_icon,
 )
-from .model import Document
+from .model import Document, Layer
 from .paths import user_data_directory
 from .storage import open_project, save_project
 from .templates import list_templates, save_template
+from .textpath import DEFAULT_CONTROLS, SHAPE_LABELS, TEXT_SHAPES, normalize_controls
 from .theme import COLORS, STYLE, dialog_button_style
-from .widgets import CommitPlainTextEdit, LayerDragHandle, LayerListWidget, SidebarBackground
+from .widgets import (
+    CommitPlainTextEdit, InlineTextEditor, LayerDragHandle, LayerListWidget, SidebarBackground,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
@@ -50,6 +54,8 @@ PROPERTY_LABELS = {
     "curve_intensity": "Courbure du texte",
     "character_spacing": "Espacement des caractères",
     "path_alignment": "Alignement du texte",
+    "text_deformation": "Forme du texte",
+    "path_orientation": "Orientation des lettres",
 }
 
 
@@ -77,8 +83,10 @@ class DocumentCommand(QUndoCommand):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, settings: QSettings | None = None):
+    def __init__(self, settings: QSettings | None = None, recovery_dir: Path | None = None):
         super().__init__()
+        # Crash-recovery copies; tests pass a temporary folder.
+        self.recovery_dir = Path(recovery_dir) if recovery_dir is not None else user_data_directory() / "recovery"
         self.document = Document()
         self.project_path: Path | None = None
         self.selected_id: str | None = None
@@ -91,6 +99,11 @@ class MainWindow(QMainWindow):
         self.picker_text_layer_id: str | None = None
         self.paint_mode: str | None = None
         self.eraser_active = False
+        self.text_tool_active = False
+        self.selection_tool: str | None = None
+        self.selection_tool_buttons: dict[str, QToolButton] = {}
+        # Floating editor used to type a text directly on the canvas.
+        self._inline: dict | None = None
         self.last_eraser_point: tuple[float, float] | None = None
         self.last_eraser_layer_id: str | None = None
         self.replacement_color = COLORS["primary"]
@@ -175,33 +188,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, "tools_tab") and tab_index != self.tabs.indexOf(self.tools_tab):
             self.deactivate_active_tools()
         self._schedule_right_panel_layout()
-
-    def deactivate_active_tools(self):
-        """Quitter l'onglet Outils rend toujours le canvas neutre."""
-        if not (self.eraser_active or self.picker_active or self.paint_mode is not None):
-            return
-
-        self.canvas.cancel_eraser_preview()
-        self.eraser_active = False
-        self.picker_active = False
-        self.picker_text_layer_id = None
-        self.paint_mode = None
-
-        for button in (
-            self.eraser_btn, self.picker_btn, self.text_picker_btn,
-            self.text_background_picker_btn, self.paint_bucket_btn,
-            self.paint_global_btn,
-        ):
-            button.setChecked(False)
-        if hasattr(self, "eraser_action"):
-            self.eraser_action.setChecked(False)
-
-        self.canvas.eraser_item = None
-        self.canvas.eraser_points = []
-        self.canvas.eraser_cursor_local = None
-        self.update_tool_options_visibility()
-        self._refresh_color_tool_cursor()
-        self.canvas.viewport().update()
 
     def _schedule_right_panel_layout(self):
         """Recalcule la hauteur naturelle du panneau sans bloquer l'interface."""
@@ -396,6 +382,19 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.zoom_label)
         self.statusBar().showMessage("Prêt · Déplacez les objets sur le canvas")
 
+    @staticmethod
+    def _tool_button(icon: str, text: str, tooltip: str) -> QToolButton:
+        button = QToolButton()
+        button.setObjectName("colorTool")
+        button.setCheckable(True)
+        button.setIcon(color_tool_icon(icon))
+        button.setIconSize(QSize(20, 20))
+        button.setText(text)
+        button.setToolTip(tooltip)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        return button
+
     def _build_tools_tab(self) -> QWidget:
         tools = QWidget()
         tools_layout = QVBoxLayout(tools)
@@ -493,6 +492,11 @@ class MainWindow(QMainWindow):
         self.eraser_btn.setToolTip("Gomme (E)")
         self.eraser_btn.clicked.connect(self.set_eraser_active)
         paint_tools_layout.addWidget(self.eraser_btn)
+        self.text_tool_btn = self._tool_button(
+            "text", "Texte", "Outil texte (T) : cliquer sur le canvas pour écrire"
+        )
+        self.text_tool_btn.clicked.connect(self.set_text_tool_active)
+        paint_tools_layout.addWidget(self.text_tool_btn)
         tools_layout.addWidget(paint_tools)
         self.paint_settings = QWidget()
         paint_settings_layout = QFormLayout(self.paint_settings)
@@ -703,6 +707,26 @@ class MainWindow(QMainWindow):
         background_layout.addWidget(self.text_background_btn, stretch=1)
         background_layout.addWidget(self.text_background_clear)
         self.property_form.addRow("Couleur de fond", self.text_background_control)
+        self.text_shape_control = QWidget()
+        shape_layout = QHBoxLayout(self.text_shape_control)
+        shape_layout.setContentsMargins(0, 0, 0, 0)
+        shape_layout.setSpacing(6)
+        self.text_shape_combo = QComboBox()
+        for shape in TEXT_SHAPES:
+            self.text_shape_combo.addItem(SHAPE_LABELS[shape], shape)
+        self.text_shape_combo.setToolTip(
+            "Trajectoire du texte ; les poignées cyan sur le canvas la déforment"
+        )
+        self.text_shape_combo.currentIndexChanged.connect(
+            lambda _index: self.commit_property("text_deformation")
+        )
+        self.text_controls_reset_btn = QToolButton()
+        self.text_controls_reset_btn.setText("↺")
+        self.text_controls_reset_btn.setToolTip("Réinitialiser les points de la courbe personnalisée")
+        self.text_controls_reset_btn.clicked.connect(self.reset_text_controls)
+        shape_layout.addWidget(self.text_shape_combo, stretch=1)
+        shape_layout.addWidget(self.text_controls_reset_btn)
+        self.property_form.addRow("Forme", self.text_shape_control)
         self.curve_control = QWidget()
         curve_layout = QHBoxLayout(self.curve_control)
         curve_layout.setContentsMargins(0, 0, 0, 0)
@@ -741,13 +765,19 @@ class MainWindow(QMainWindow):
         self.character_spacing.setKeyboardTracking(False)
         self.character_spacing.editingFinished.connect(lambda: self.commit_property("character_spacing"))
         self.property_form.addRow("Espacement", self.character_spacing)
+        self.upright_letters = QCheckBox("Lettres verticales")
+        self.upright_letters.setToolTip(
+            "Garder les lettres droites au lieu de les incliner le long de la trajectoire"
+        )
+        self.upright_letters.clicked.connect(lambda _checked: self.commit_property("path_orientation"))
+        self.property_form.addRow("Orientation", self.upright_letters)
         self.lock_btn = QPushButton("Verrouiller / déverrouiller")
         self.lock_btn.clicked.connect(self.toggle_lock)
         self.property_form.addRow("Édition", self.lock_btn)
         self.text_property_widgets = (
             self.text_input, self.text_alignment_control, self.font_combo, self.font_size,
-            self.text_color_control, self.text_background_control, self.curve_control,
-            self.character_spacing,
+            self.text_color_control, self.text_background_control, self.text_shape_control,
+            self.curve_control, self.character_spacing, self.upright_letters,
             self.lock_btn
         )
 
@@ -804,6 +834,15 @@ class MainWindow(QMainWindow):
         self.eraser_shortcut.activated.connect(
             lambda: self.set_eraser_active(not self.eraser_active)
         )
+        self.text_tool_action = QAction(color_tool_icon("text"), "Outil texte (T)", self)
+        self.text_tool_action.setCheckable(True)
+        self.text_tool_action.triggered.connect(self.set_text_tool_active)
+        tools_menu.addAction(self.text_tool_action)
+        self.text_tool_shortcut = QShortcut(QKeySequence("T"), self.canvas)
+        self.text_tool_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        self.text_tool_shortcut.activated.connect(
+            lambda: self.set_text_tool_active(not self.text_tool_active)
+        )
         v = self.menuBar().addMenu("Affichage")
         self._action(v, "Afficher / masquer le panneau d'utilitaires", self.toggle_left_sidebar, "F9")
         self._action(v, "Ajuster à la fenêtre", self.canvas.fit_document, "Ctrl+0")
@@ -848,6 +887,8 @@ class MainWindow(QMainWindow):
     def install_document(self, doc: Document, selected: str | None):
         """Affiche un document. Si son rendu échoue, l'état courant reste intact."""
         scene = make_scene(doc, interactive=True)
+        # The scene is replaced: an editor typing into the old one is dropped.
+        self._close_inline_editor()
         self.refreshing = True
         try:
             self.document = doc
@@ -1047,6 +1088,18 @@ class MainWindow(QMainWindow):
             w.setEnabled(is_text and not layer.locked)
         self.font_combo.setCurrentFont(QFont(layer.font_family))
         self.font_size.setValue(layer.font_size)
+        shape = layer.text_deformation if layer.text_deformation in TEXT_SHAPES else "straight"
+        self.text_shape_combo.setCurrentIndex(self.text_shape_combo.findData(shape))
+        # U shapes use a magnitude only; the custom curve is driven by its handles.
+        minimum = 0 if shape in ("u", "u_inverted") else -100
+        self.curve_intensity.setRange(minimum, 100)
+        self.curve_value.setRange(minimum, 100)
+        editable_text = is_text and not layer.locked
+        self.text_shape_control.setEnabled(editable_text)
+        self.curve_control.setEnabled(editable_text and shape != "custom")
+        self.text_controls_reset_btn.setEnabled(editable_text and shape == "custom")
+        self.upright_letters.setEnabled(editable_text)
+        self.upright_letters.setChecked(layer.path_orientation == "horizontal")
         self.curve_intensity.setValue(round(layer.curve_intensity))
         self.curve_value.setValue(round(layer.curve_intensity))
         self.character_spacing.setValue(layer.character_spacing)
@@ -1152,6 +1205,19 @@ class MainWindow(QMainWindow):
             if self.curve_intensity.value() == round(layer.curve_intensity):
                 return
             value = float(self.curve_intensity.value())
+            # Bending a straight text turns it into an arc.
+            shape = "arc" if layer.text_deformation == "straight" and value else layer.text_deformation
+            self._set_text_shape(layer.id, shape, value, layer.path_controls, PROPERTY_LABELS[key])
+            return
+        elif key == "text_deformation":
+            shape = self.text_shape_combo.currentData()
+            if shape == layer.text_deformation:
+                return
+            self._set_text_shape(layer.id, shape, layer.curve_intensity, layer.path_controls,
+                                 PROPERTY_LABELS[key])
+            return
+        elif key == "path_orientation":
+            value = "horizontal" if self.upright_letters.isChecked() else "tangent"
         elif key == "character_spacing":
             if abs(self.character_spacing.value() - layer.character_spacing) <= 0.05 + 1e-9:
                 return
@@ -1201,15 +1267,162 @@ class MainWindow(QMainWindow):
                 return alignment
         return "center"
 
-    def commit_curve_handle(self, before: Document, layer_id: str, intensity: float):
+    @staticmethod
+    def _shape_values(shape: str, intensity: float, controls) -> tuple[str, float, list]:
+        # U shapes only use the magnitude of the intensity.
+        intensity = max(-100.0, min(100.0, float(intensity)))
+        if shape in ("u", "u_inverted"):
+            intensity = abs(intensity)
+        return shape, intensity, normalize_controls(controls)
+
+    def _set_text_shape(self, layer_id: str, shape: str, intensity: float, controls, description: str):
+        shape, intensity, controls = self._shape_values(shape, intensity, controls)
+
+        def apply(doc):
+            target = doc.layer(layer_id)
+            target.text_deformation, target.curve_intensity, target.path_controls = shape, intensity, controls
+
+        self.mutate(description, apply, layer_id)
+
+    def commit_text_shape(self, before: Document, layer_id: str, shape: str, intensity: float, controls):
+        """Record a handle drag on the canvas as a single undoable step."""
         source = before.layer(layer_id)
-        if not source or abs(source.curve_intensity - intensity) < 0.01:
+        if not source:
+            return
+        shape, intensity, controls = self._shape_values(shape, intensity, controls)
+        if (shape, controls) == (source.text_deformation, source.path_controls) \
+                and abs(source.curve_intensity - intensity) < 0.01:
             return
         after = before.clone()
-        after.layer(layer_id).curve_intensity = intensity
+        target = after.layer(layer_id)
+        target.text_deformation, target.curve_intensity, target.path_controls = shape, intensity, controls
         self._push(DocumentCommand(
-            self, before, after, "Ajuster la courbure du texte", layer_id, layer_id
+            self, before, after, "Déformer le texte", layer_id, layer_id
         ))
+
+    def show_text_shape(self, shape: str, intensity: float):
+        """Mirror a live handle drag in the property panel without committing."""
+        for widget, value in ((self.curve_intensity, round(intensity)), (self.curve_value, round(intensity))):
+            widget.blockSignals(True)
+            widget.setValue(value)
+            widget.blockSignals(False)
+        index = self.text_shape_combo.findData(shape)
+        if index >= 0 and index != self.text_shape_combo.currentIndex():
+            self.text_shape_combo.blockSignals(True)
+            self.text_shape_combo.setCurrentIndex(index)
+            self.text_shape_combo.blockSignals(False)
+
+    def reset_text_controls(self):
+        layer = self.document.layer(self.selected_id)
+        if layer and layer.kind == "text" and not layer.locked:
+            self._set_text_shape(layer.id, "custom", layer.curve_intensity, DEFAULT_CONTROLS,
+                                 "Réinitialiser la courbe du texte")
+
+    # --- Text typed directly on the canvas -------------------------------------------
+
+    def begin_inline_text_edit(self, layer_id: str):
+        layer = self.document.layer(layer_id)
+        item = self.canvas.graphic_for(layer_id)
+        if not layer or layer.kind != "text" or layer.locked or item is None:
+            return
+        self.select_layer(layer_id)
+        self._open_inline_editor(layer.text, item, layer_id, None)
+
+    def begin_inline_text_create(self, scene_position: QPointF):
+        """Text tool: preview a new text at the click and create it on validation."""
+        if self.canvas.scene() is None:
+            return
+        available = {family.casefold(): family for family in QFontDatabase.families()}
+        layer = Layer(kind="text", name="Texte", text="Texte",
+                      font_family=available.get(self.last_font_family.casefold(), QFont().defaultFamily()))
+        item = CurvedTextGraphicItem(layer)
+        # The click marks the start of the first baseline.
+        layer.x = scene_position.x()
+        layer.y = scene_position.y() - item.baseline
+        item.setPos(layer.x, layer.y)
+        item.setZValue(len(self.document.layers) + 1)
+        self.canvas.scene().addItem(item)
+        self._open_inline_editor("", item, None, layer)
+
+    def _open_inline_editor(self, text: str, item, layer_id: str | None, new_layer: Layer | None):
+        self._close_inline_editor()
+        editor = InlineTextEditor(text, self.canvas.viewport())
+        editor.setObjectName("inlineTextEditor")
+        anchor = self.canvas.mapFromScene(item.mapToScene(item.boundingRect().bottomLeft()))
+        viewport = self.canvas.viewport().rect()
+        editor.resize(280, 96)
+        editor.move(max(4, min(anchor.x(), viewport.width() - editor.width() - 4)),
+                    max(4, min(anchor.y() + 6, viewport.height() - editor.height() - 4)))
+        self._inline = {"editor": editor, "item": item, "layer_id": layer_id, "new_layer": new_layer}
+        editor.textChanged.connect(lambda: self._preview_inline_text(editor.toPlainText()))
+        editor.committed.connect(self._commit_inline_text)
+        editor.cancelled.connect(self._cancel_inline_text)
+        editor.show()
+        editor.setFocus()
+
+    def _preview_inline_text(self, text: str):
+        if self._inline is None:
+            return
+        placeholder = "Texte" if self._inline["new_layer"] is not None else " "
+        try:
+            self._inline["item"].set_text_preview(text if text.strip() else placeholder)
+        except RuntimeError:
+            return  # the scene was rebuilt meanwhile
+        self.canvas.viewport().update()
+
+    def _close_inline_editor(self) -> dict | None:
+        session, self._inline = self._inline, None
+        if session is None:
+            return None
+        session["editor"].hide()
+        session["editor"].deleteLater()
+        if session["new_layer"] is not None:
+            try:
+                scene = session["item"].scene()
+                if scene is not None:
+                    scene.removeItem(session["item"])
+            except RuntimeError:
+                pass
+        self.canvas.setFocus()
+        self.canvas.viewport().update()
+        return session
+
+    def _commit_inline_text(self, text: str):
+        session = self._close_inline_editor()
+        if session is None or not text.strip():
+            if session is not None and session["layer_id"]:
+                self._restore_inline_item(session)
+            return
+        new_layer = session["new_layer"]
+        if new_layer is not None:
+            new_layer.text = text
+            new_layer.name = f"Texte : {text.split(chr(10), 1)[0][:28]}"
+
+            def add(doc):
+                doc.layers.append(deepcopy(new_layer))
+
+            if self.mutate("Ajouter un texte", add):
+                self.select_layer(new_layer.id)
+            return
+        layer = self.document.layer(session["layer_id"])
+        if layer is None or layer.text == text:
+            self._restore_inline_item(session)
+            return
+        self.mutate("Contenu du texte", lambda doc: setattr(doc.layer(layer.id), "text", text), layer.id)
+
+    def _cancel_inline_text(self):
+        session = self._close_inline_editor()
+        if session is not None and session["layer_id"]:
+            self._restore_inline_item(session)
+
+    def _restore_inline_item(self, session: dict):
+        layer = self.document.layer(session["layer_id"])
+        try:
+            if layer is not None:
+                session["item"].apply_layer(layer)
+        except RuntimeError:
+            pass
+        self.canvas.viewport().update()
 
     def choose_color(self):
         old = self.document.layer(self.selected_id)
@@ -1243,109 +1456,157 @@ class MainWindow(QMainWindow):
                 old.id,
             )
 
+    # --- Canvas tools ----------------------------------------------------------------
+    # Only one tool is active at a time; every activation goes through _clear_tools.
+
+    def any_tool_active(self) -> bool:
+        return bool(self.eraser_active or self.picker_active or self.paint_mode
+                    or self.text_tool_active or self.selection_tool)
+
+    def _clear_tools(self, keep: str | None = None):
+        if keep != "eraser" and self.eraser_active:
+            self.canvas.cancel_eraser_preview()
+            self.eraser_active = False
+            self.canvas.eraser_cursor_local = None
+        if keep != "picker":
+            self.picker_active = False
+            self.picker_text_layer_id = None
+        if keep != "paint":
+            self.paint_mode = None
+        if keep != "text":
+            self.text_tool_active = False
+        if keep != "select":
+            self.selection_tool = None
+            self.canvas.cancel_selection_drag()
+
+    def _sync_tool_buttons(self):
+        """Reflect the tool flags on every button, then refresh options and cursor."""
+        pairs = [
+            (self.eraser_btn, self.eraser_active),
+            (self.picker_btn, self.picker_active and self.picker_target == "tools"),
+            (self.text_picker_btn, self.picker_active and self.picker_target == "text"),
+            (self.text_background_picker_btn,
+             self.picker_active and self.picker_target == "text_background"),
+            (self.paint_bucket_btn, self.paint_mode == "contiguous"),
+            (self.paint_global_btn, self.paint_mode == "global"),
+            (self.text_tool_btn, self.text_tool_active),
+        ]
+        pairs += [(button, self.selection_tool == tool)
+                  for tool, button in self.selection_tool_buttons.items()]
+        for button, checked in pairs:
+            button.blockSignals(True)
+            button.setChecked(bool(checked))
+            button.blockSignals(False)
+        for action, checked in ((self.eraser_action, self.eraser_active),
+                                (self.text_tool_action, self.text_tool_active)):
+            action.blockSignals(True)
+            action.setChecked(checked)
+            action.blockSignals(False)
+        self.update_tool_options_visibility()
+        self._refresh_color_tool_cursor()
+        self.canvas.viewport().update()
+
+    def deactivate_active_tools(self):
+        """Leaving the Tools tab always returns the canvas to its neutral state."""
+        if not self.any_tool_active():
+            return
+        self._clear_tools()
+        self._sync_tool_buttons()
+
     def activate_picker(self, target: str, active: bool):
         if not active:
             self.deactivate_picker()
             return
-        self.set_eraser_active(False)
         if target in ("text", "text_background"):
             layer = self.document.layer(self.selected_id)
             if not layer or layer.kind != "text" or layer.locked:
-                self.text_picker_btn.setChecked(False)
-                self.text_background_picker_btn.setChecked(False)
+                self._sync_tool_buttons()
                 self.statusBar().showMessage(
                     "Sélectionnez un calque texte déverrouillé", 3000
                 )
                 return
-            self.picker_text_layer_id = layer.id
-        else:
-            self.picker_text_layer_id = None
-        self.paint_mode = None
-        self.paint_bucket_btn.setChecked(False)
-        self.paint_global_btn.setChecked(False)
-        self.update_tool_options_visibility()
+        self._clear_tools("picker")
+        self.picker_text_layer_id = self.selected_id if target != "tools" else None
         self.picker_target = target
         self.picker_active = True
-        self.picker_btn.setChecked(target == "tools")
-        self.text_picker_btn.setChecked(target == "text")
-        self.text_background_picker_btn.setChecked(target == "text_background")
-        self._refresh_color_tool_cursor()
+        self._sync_tool_buttons()
         self.statusBar().showMessage("Cliquez sur un pixel d'un calque image", 3000)
 
     def deactivate_picker(self):
         self.picker_active = False
-        self.picker_btn.setChecked(False)
-        self.text_picker_btn.setChecked(False)
-        self.text_background_picker_btn.setChecked(False)
-        self._refresh_color_tool_cursor()
+        self._sync_tool_buttons()
 
     def _refresh_color_tool_cursor(self):
         if self.eraser_active:
             cursor = Qt.CursorShape.BlankCursor
+        elif self.text_tool_active:
+            cursor = Qt.CursorShape.IBeamCursor
         else:
-            active = self.picker_active or self.paint_mode is not None
+            active = self.picker_active or self.paint_mode is not None or self.selection_tool
             cursor = Qt.CursorShape.CrossCursor if active else Qt.CursorShape.ArrowCursor
         self.canvas.setCursor(cursor)
 
     def toggle_paint_mode(self, mode: str, active: bool):
         if active:
-            self.set_eraser_active(False)
-            self.picker_active = False
-            self.picker_btn.setChecked(False)
-            self.text_picker_btn.setChecked(False)
-            self.text_background_picker_btn.setChecked(False)
+            self._clear_tools("paint")
             self.paint_mode = mode
             self._show_tool_target()
-            self.paint_bucket_btn.setChecked(mode == "contiguous")
-            self.paint_global_btn.setChecked(mode == "global")
-            message = (
-                "Cliquez dans une zone à remplir"
-                if mode == "contiguous"
-                else "Cliquez sur la couleur à remplacer dans tout le calque"
+            self.statusBar().showMessage(
+                "Cliquez dans une zone à remplir" if mode == "contiguous"
+                else "Cliquez sur la couleur à remplacer dans tout le calque", 4000
             )
-            self.statusBar().showMessage(message, 4000)
         elif self.paint_mode == mode:
             self.paint_mode = None
-        self.update_tool_options_visibility()
-        self._refresh_color_tool_cursor()
+        self._sync_tool_buttons()
 
     def set_eraser_active(self, active: bool):
         self.canvas.cancel_eraser_preview()
-        self.eraser_active = bool(active)
-        if self.eraser_active:
-            self.picker_active = False
-            self.paint_mode = None
-            self.picker_btn.setChecked(False)
-            self.text_picker_btn.setChecked(False)
-            self.text_background_picker_btn.setChecked(False)
-            self.paint_bucket_btn.setChecked(False)
-            self.paint_global_btn.setChecked(False)
+        if active:
+            self._clear_tools("eraser")
             self._show_tool_target()
             self.tabs.setCurrentWidget(self.tools_tab)
             self.statusBar().showMessage(
                 "Gomme active · glisser pour effacer · [ et ] changent la taille", 4500
             )
-        self.eraser_btn.setChecked(self.eraser_active)
-        if hasattr(self, "eraser_action"):
-            self.eraser_action.setChecked(self.eraser_active)
-        self.canvas.eraser_item = None
-        self.canvas.eraser_points = []
+        self.eraser_active = bool(active)
         self.canvas.eraser_cursor_local = None
-        self.update_tool_options_visibility()
-        self._refresh_color_tool_cursor()
-        self.canvas.viewport().update()
+        self._sync_tool_buttons()
+
+    def set_text_tool_active(self, active: bool):
+        if active:
+            self._clear_tools("text")
+            self.statusBar().showMessage(
+                "Outil texte · cliquez sur le canvas pour écrire · double-clic sur un texte pour le modifier",
+                5000,
+            )
+        self.text_tool_active = bool(active)
+        self._sync_tool_buttons()
+
+    def set_selection_tool(self, tool: str | None):
+        if tool:
+            self._clear_tools("select")
+            self._show_tool_target()
+            self.tabs.setCurrentWidget(self.tools_tab)
+            self.statusBar().showMessage(
+                "Maj : ajouter · Alt : soustraire · Maj+Alt : intersection", 4500
+            )
+        self.selection_tool = tool or None
+        self._sync_tool_buttons()
 
     def update_tool_options_visibility(self):
-        """N'affiche que les réglages utiles à l'outil actuellement actif."""
+        """Only show the settings of the active tool."""
         eraser = self.eraser_active
         bucket = self.paint_mode is not None and not eraser
         self.eraser_settings.setVisible(eraser)
         self.paint_settings.setVisible(bucket)
+        if hasattr(self, "selection_settings"):
+            self.selection_settings.setVisible(bool(self.selection_tool))
+            self.wand_settings.setVisible(self.selection_tool == "wand")
         for widget in (
             self.color_tools_label, self.color_editor,
             self.alternative_label, self.variations_widget,
         ):
-            widget.setVisible(not eraser)
+            widget.setVisible(not eraser and not self.selection_tool)
         self._schedule_right_panel_layout()
 
     def update_eraser_size_preset(self, _index=None):

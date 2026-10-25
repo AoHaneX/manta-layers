@@ -204,7 +204,7 @@ class GuiSmokeTests(unittest.TestCase):
         win.install_document(win.document, layer.id)
         before = win.document.clone()
         start_index = win.undo_stack.index()
-        win.commit_curve_handle(before, layer.id, 82.5)
+        win.commit_text_shape(before, layer.id, "custom", 82.5, layer.path_controls)
         self.assertEqual(win.undo_stack.index(), start_index + 1)
         self.assertEqual(win.document.layer(layer.id).curve_intensity, 82.5)
         win.undo_stack.undo()

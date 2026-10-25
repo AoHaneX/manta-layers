@@ -150,7 +150,11 @@ def color_tool_icon(tool: str) -> QIcon:
     color = QColor(COLORS["muted"])
     painter.setPen(QPen(color, 2))
     painter.setBrush(Qt.BrushStyle.NoBrush)
-    if tool == "picker":
+    if tool == "text":
+        painter.drawLine(4, 4, 16, 4)
+        painter.drawLine(10, 4, 10, 17)
+        painter.drawLine(7, 17, 13, 17)
+    elif tool == "picker":
         painter.drawLine(5, 15, 15, 5)
         painter.drawLine(4, 12, 8, 16)
         painter.drawEllipse(QRectF(13, 3, 4, 4))
