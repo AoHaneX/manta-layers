@@ -2,6 +2,17 @@
 
 ## Non publié
 
+### Nouvelles fonctionnalités
+- Texte vectoriel édité directement sur le canvas : outil Texte (`T`), double-clic, aperçu en direct.
+- Formes de texte : droit, arc, U, U inversé et courbe de Bézier personnalisée, avec poignées interactives et option « Lettres verticales ».
+- Sélections rectangle, ellipse et baguette magique (contigu ou global, tolérance RGBA), avec ajout, soustraction, intersection, mode pixel parfait ou adoucissement, contour et vue du masque.
+- Copier, couper, effacer et déplacer le contenu sélectionné via un masque de calque non destructif ; copie et coupe vers un nouveau calque.
+- Suppression locale de l'arrière-plan avec aperçu : méthode par couleur de fond sans IA, ou modèle ONNX facultatif téléchargé uniquement après confirmation.
+- Déplacement au clavier avec fusion des pressions dans l'historique.
+- Récupération de la session après une fermeture imprévue.
+- Format de projet version 2 ; la version 1 et les `.mcrab` restent lisibles. Sauvegardes vérifiées par relecture.
+- Suite de tests pytest : 168 tests, images synthétiques, sans réseau ni modèle.
+
 ### Corrections
 - Une image impossible à afficher n'entre plus dans l'historique et ne bloque plus l'interface ; les images de plus de 67 mégapixels sont refusées dès l'import.
 - Le zoom n'est plus bloqué sur les très petits ou très grands documents ; plage portée de 1 % à 6400 %.

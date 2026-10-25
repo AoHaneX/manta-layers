@@ -8,6 +8,10 @@
 - Toute modification persistante du document doit passer par `QUndoCommand` / `QUndoStack` ; ne pas modifier le modèle directement depuis les widgets sans transaction.
 - Préserver **exactement** le dessin de la mascotte `assets/manta.png`. Ne pas le régénérer ni le déformer : icônes dérivées autorisées par redimensionnement nearest-neighbor.
 - Ne jamais rasteriser définitivement les images source ou les calques de texte. Conserver les propriétés (position, taille, angle, etc.) éditables dans le projet.
-- Tester `python -m unittest discover -s tests -v` ; vérifier manuellement sous Windows après toute modification Qt.
-- Phase suivante : Warp à points de contrôle (champ réservé `text_warp`), sans casser le format `.manta`. Le texte sur trajectoire est fait.
+- Calculs sans Qt dans `textpath.py` (texte), `selection.py` (masques) et `background.py` (détourage) ; Qt uniquement dans `graphics.py`, `window.py` et les dialogues.
+- Effacer ou couper des pixels passe par le masque du calque (`Layer.mask`), jamais par la réécriture de l'image source.
+- Dépendances IA (`requirements-ai.txt`) facultatives et importées à la demande ; aucun téléchargement de modèle sans confirmation explicite.
+- Nouveaux commentaires de code en anglais.
+- Tester avec `python -m pytest` (installer `requirements-dev.txt`) ; vérifier manuellement sous Windows après toute modification Qt. Les tests doivent passer `settings` et `recovery_dir` temporaires à `MainWindow`.
+- Phase suivante : Warp à points de contrôle (champ réservé `text_warp`), sans casser le format `.manta` (version 2).
 - Ne pas introduire d'API distante, de télémétrie ni de comptes utilisateur sans demande explicite.

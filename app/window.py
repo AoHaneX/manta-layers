@@ -2829,11 +2829,24 @@ class MainWindow(QMainWindow):
                 self._recovery_lock = lock
         except OSError:
             pass
+        self._remove_orphan_locks()
         self.autosave_timer = QTimer(self)
         self.autosave_timer.setInterval(RECOVERY_INTERVAL_MS)
         self.autosave_timer.timeout.connect(self.autosave_now)
         self.autosave_timer.start()
         QTimer.singleShot(0, self.offer_session_recovery)
+
+    def _remove_orphan_locks(self):
+        """Delete locks of dead sessions that left no copy behind (nothing to restore)."""
+        if not self.recovery_dir.is_dir():
+            return
+        for lock_path in self.recovery_dir.glob("*.lock"):
+            session_id = lock_path.stem
+            if session_id == self._session_id or (self.recovery_dir / f"{session_id}.json").exists():
+                continue
+            lock = QLockFile(str(lock_path))
+            if lock.tryLock(0):  # free: its owner is gone
+                lock.unlock()  # unlocking also removes the file
 
     def _recovery_files(self, session_id: str) -> tuple[Path, Path]:
         return (self.recovery_dir / f"{session_id}.manta", self.recovery_dir / f"{session_id}.json")

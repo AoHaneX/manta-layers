@@ -216,3 +216,22 @@ def test_copies_of_running_sessions_are_left_alone(qapp, tmp_path, monkeypatch):
         for window in (first, second):
             window.undo_stack.setClean()
             window.close()
+
+
+def test_orphan_locks_without_copy_are_cleaned(qapp, tmp_path):
+    import subprocess
+    import sys
+    recovery = tmp_path / "recovery"
+    recovery.mkdir()
+    orphan = recovery / "gone.lock"
+    # A real crash: another process takes the lock and dies without releasing it.
+    subprocess.run([sys.executable, "-c",
+                    "import os, sys; from PySide6.QtCore import QLockFile; "
+                    "lock = QLockFile(sys.argv[1]); assert lock.tryLock(0); os._exit(0)", str(orphan)],
+                   check=True, timeout=60)
+    assert orphan.exists()
+    window = make_window(qapp, tmp_path, recovery)
+    try:
+        assert not orphan.exists()
+    finally:
+        window.close()

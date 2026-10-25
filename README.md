@@ -33,11 +33,16 @@ Le script `lancer_linux_mac.sh` est fourni à titre expérimental (Python 3.11 o
 | Modèles locaux réutilisables avec galerie, miniature et ressources intégrées | ✅ |
 | Export image composite PNG avec alpha, JPEG sur fond blanc, WebP | ✅ |
 | Mascotte et ressources graphiques incluses ; exemple `.manta` | ✅ |
-| Texte courbé et texte sur trajectoire éditables | ✅ |
+| Texte vectoriel éditable sur le canvas : droit, arc, U, U inversé, courbe de Bézier personnalisée, poignées de déformation | ✅ |
+| Sélections rectangle, ellipse et baguette magique ; ajout, soustraction, intersection ; pixel parfait ou adouci | ✅ |
+| Copier, couper, effacer et déplacer le contenu sélectionné, via un masque de calque non destructif | ✅ |
+| Suppression locale de l'arrière-plan avec aperçu : couleur de fond (sans IA) ou modèle ONNX facultatif | ✅ |
+| Restauration de la session après une fermeture imprévue | ✅ |
 | Déformation Warp réelle des formes de lettres | **Pas encore** — architecture préparée |
 | Pots de peinture, recolorisation et gomme non destructifs | ✅ |
-| Filtres et réglages d'image (luminosité, contraste…), recadrage, masques, IA | **Pas encore** — après V0.1 |
-| Historique conservé après fermeture du logiciel | **Pas encore** — historique de session uniquement |
+| Filtres et réglages d'image (luminosité, contraste…), recadrage | **Pas encore** |
+| Segmentation d'un objet choisi au clic | **Non prise en charge** — seul le fond entier est supprimé |
+| Historique conservé après fermeture du logiciel | **Pas encore** — la session est restaurée, pas son historique |
 | Installation sous forme de `.exe` autonome | **Pas encore** — lancement `.bat` + Python |
 
 ## Manipulation de l'interface
@@ -57,8 +62,14 @@ Le script `lancer_linux_mac.sh` est fourni à titre expérimental (Python 3.11 o
 - **Symétrie** : retourne un calque image horizontalement ou verticalement sans modifier son fichier source.
 - **Propriétés contextuelles** : contenu, police, taille, couleur et édition ne sont affichés que lorsqu'un calque texte est sélectionné.
 - **Texte lisible** : les nouveaux calques texte utilisent le noir par défaut. Le contenu se modifie dans une zone multiligne avec curseur et défilement vertical ; chaque ligne est conservée au rendu. La couleur des caractères et la couleur de fond disposent de contrôles séparés, avec un fond transparent par défaut ; le fond épouse le texte.
-- **Texte sur trajectoire** : le curseur de -100 à +100 règle une courbure continue vers le bas ou vers le haut ; chaque ligne suit la même courbe. Le réglage au clavier ou à la molette est enregistré après une courte pause, en une seule étape d'historique. L'espacement et l'alignement restent modifiables sans rasteriser le texte.
-- **Manipulation directe** : sélectionne un texte courbé pour afficher sa trajectoire pointillée et sa poignée cyan. Fais glisser la poignée pour régler la courbure en temps réel ; tout le glissement constitue une seule opération dans l'historique. Le guide n'apparaît jamais dans les exports.
+- **Écrire sur le canvas** : active l'outil Texte (`T`) puis clique où le texte doit commencer, ou double-clique sur un texte existant. Un éditeur flottant affiche le résultat en direct ; `Ctrl+Entrée` valide, `Échap` annule. La création ou la modification compte pour une seule étape d'historique.
+- **Forme du texte** : choisis Droit, Arc, U, U inversé ou Courbe personnalisée dans « Forme ». Le curseur règle la courbure de l'arc (-100 à +100) ou la profondeur des U (0 à 100, 100 = demi-cercle) ; chaque ligne suit la même trajectoire. Le réglage au clavier ou à la molette est enregistré après une courte pause, en une seule étape d'historique. « Lettres verticales » garde les caractères droits au lieu de suivre la pente.
+- **Poignées de déformation** : sélectionne un texte pour afficher sa trajectoire pointillée et ses poignées cyan : le sommet pour l'arc et les U, deux points de contrôle (avec leurs tangentes) pour la courbe personnalisée. Tirer le sommet d'un texte droit le transforme en arc. Tout le glissement constitue une seule opération dans l'historique ; le guide n'apparaît jamais dans les exports.
+- **Sélections** : outils Rectangle (`M`), Ellipse et Baguette magique (`W`) dans l'onglet Outils. `Maj` ajoute, `Alt` soustrait, `Maj+Alt` garde l'intersection ; le mode par défaut se choisit aussi dans la liste. « Pixel parfait » donne des bords nets pour le pixel art, sinon l'adoucissement floute les bords. La baguette a une tolérance de 0 à 255 sur les canaux R, V, B et alpha, en pixels contigus ou sur toute l'image, sur le calque visé ou sur tous les calques. « Afficher le masque » voile en rouge les zones non sélectionnées. Chaque changement de sélection est annulable.
+- **Contenu sélectionné** : `Suppr` efface la sélection du calque visé, `Ctrl+C` / `Ctrl+X` copient ou coupent ses pixels (un collage revient au même endroit), `Ctrl+J` / `Ctrl+Maj+J` les copient ou coupent vers un nouveau calque, et `Ctrl` + glisser à l'intérieur de la sélection les déplace. Ces opérations passent par le **masque du calque** : l'image source n'est jamais modifiée et le menu Sélection permet de masquer, révéler ou supprimer ce masque. Un calque texte reste vectoriel : on peut copier son rendu vers un nouveau calque, pas l'effacer au pixel près.
+- **Supprimer l'arrière-plan** : bouton de l'onglet Outils, menu Outils ou clic droit sur un calque image. La méthode « Couleur de fond » fonctionne sans IA, idéale pour un fond uni ou un pixel art. La méthode « IA locale » utilise un modèle U²-Net exécuté sur le processeur, après installation de `requirements-ai.txt`. Un aperçu sur damier précède toute application ; le résultat devient un masque du calque, corrigeable avec les sélections, ou un nouveau calque détouré. Aucune image n'est envoyée sur Internet et aucun modèle n'est téléchargé sans confirmation.
+- **Déplacement au clavier** : les flèches déplacent le calque sélectionné de 1 px (10 px avec `Maj`) ; une série de pressions rapprochées forme une seule étape d'historique.
+- **Récupération de session** : tant que des modifications ne sont pas enregistrées, une copie de travail est conservée chaque minute. Si Manta Layers se ferme de façon imprévue, la copie est proposée au lancement suivant.
 - **Polices personnalisées** : utilise `Fichier > Importer une police…` pour copier durablement des fichiers TTF, OTF ou TTC dans ton dossier utilisateur (`%LOCALAPPDATA%\MantaLayers\fonts` sous Windows, `~/.local/share/MantaLayers/fonts` ailleurs). Elles sont rechargées aux lancements suivants, de même que les polices placées dans le dossier `fonts` de l'application. Les polices ne sont pas intégrées au fichier `.manta` : à l'ouverture d'un projet, Manta Layers signale celles qui manquent et conserve leur nom tant que tu n'en choisis pas une autre.
 - **Modèles** : utilise `Fichier > Enregistrer comme modèle…`, puis `Nouveau projet > Depuis un modèle`. Chaque modèle contient ses images et sa miniature ; les calques instanciés sont verrouillés par défaut et le modèle original reste inchangé.
 - **Police mémorisée** : la dernière police choisie devient celle des prochains calques texte, y compris après redémarrage. Une police système de remplacement est utilisée si elle n'est plus disponible.
@@ -91,13 +102,21 @@ Le script `lancer_linux_mac.sh` est fourni à titre expérimental (Python 3.11 o
 | Annuler | `Ctrl+Z` |
 | Rétablir | `Ctrl+Y` ou `Ctrl+Maj+Z` |
 | Dupliquer le calque | `Ctrl+D` |
-| Supprimer le calque | `Suppr` |
-| Copier le calque image | `Ctrl+C` |
-| Couper le calque image | `Ctrl+X` |
+| Supprimer le calque, ou effacer la sélection si elle existe | `Suppr` |
+| Copier le calque image ou la sélection | `Ctrl+C` |
+| Couper le calque image ou la sélection | `Ctrl+X` |
 | Coller une image du presse-papiers | `Ctrl+V` |
 | Cadrer le document | `Ctrl+0` |
 | Activer/désactiver la gomme | `E` |
 | Réduire/augmenter la gomme | `[` / `]` |
+| Outil texte | `T` |
+| Valider / annuler l'édition d'un texte | `Ctrl+Entrée` / `Échap` |
+| Sélection rectangulaire / baguette magique | `M` / `W` |
+| Tout sélectionner / désélectionner / inverser | `Ctrl+A` / `Ctrl+Maj+A` / `Ctrl+Maj+I` |
+| Afficher le masque de sélection | `Ctrl+M` |
+| Copier / couper la sélection vers un nouveau calque | `Ctrl+J` / `Ctrl+Maj+J` |
+| Déplacer le contenu sélectionné | `Ctrl` + glisser |
+| Déplacer le calque de 1 px / 10 px | flèches / `Maj` + flèches |
 
 ## Architecture du code
 
@@ -106,7 +125,11 @@ MantaLayers/
 ├── main.py                     # lanceur Python
 ├── lancer_manta_layers.bat     # lanceur Windows (installe au premier démarrage)
 ├── installer_dependances.bat   # installation explicite
-├── requirements.txt
+├── requirements.txt            # PySide6 et Pillow
+├── requirements-dev.txt        # + pytest
+├── requirements-ai.txt         # facultatif : onnxruntime et numpy pour le détourage IA
+├── pytest.ini
+├── docs/ARCHITECTURE.md        # documentation technique
 ├── tests_windows.bat           # diagnostic/tests après installation
 ├── AGENTS.md                   # consignes courtes pour les développements Codex
 ├── README.md
@@ -119,6 +142,10 @@ MantaLayers/
 ├── fonts/                      # polices livrées avec l'application (facultatif)
 ├── app/
 │   ├── model.py                # document/calques, pas de dépendance Qt
+│   ├── textpath.py             # géométrie des trajectoires de texte (sans Qt)
+│   ├── selection.py            # masques de sélection (sans Qt)
+│   ├── background.py           # détourage local, IA facultative (sans Qt)
+│   ├── background_dialog.py    # aperçu et calcul du détourage
 │   ├── storage.py              # format natif de projet .manta
 │   ├── templates.py            # bibliothèque locale de modèles
 │   ├── paths.py                # dossier de données de l'utilisateur
@@ -131,10 +158,13 @@ MantaLayers/
 ├── exemples/
 │   └── Manta_Demo.manta        # projet modifiable avec la mascotte
 └── tests/
-    ├── test_model.py           # tests du modèle et du format de projet
-    ├── test_templates.py       # bibliothèque de modèles
-    ├── test_color_fill.py      # tolérance, zones contiguës, alpha, gomme et recolorisation
-    └── test_gui_smoke.py       # tests d'intégration GUI Qt (offscreen)
+    ├── conftest.py             # fenêtre isolée (réglages et récupération temporaires)
+    ├── test_model.py, test_templates.py, test_history_save.py   # modèle, formats, historique, récupération
+    ├── test_textpath.py, test_text_editing.py                  # courbes et édition du texte
+    ├── test_selection.py, test_selection_tools.py              # masques et outils de sélection
+    ├── test_background.py, test_background_ui.py               # détourage (images synthétiques, sans modèle)
+    ├── test_color_fill.py, test_edge_cases.py                  # pots, gomme, cas limites
+    └── test_gui_smoke.py                                       # intégration Qt
 ```
 
 **Choix architecturaux :** modèle `Document`/`Layer` isolé de Qt ; affichage `QGraphicsScene` ; chaque modification validée crée un `QUndoCommand` dans `QUndoStack` ; historique de snapshots du modèle (plus facile à comprendre pour cette première version, à remplacer par des commandes ciblées lorsque le volume devient important) ; rendu des calques image mis en cache, si bien qu'une action ne recalcule que les calques modifiés ; une action dont le rendu échoue est annoncée et n'entre pas dans l'historique ; export via scène temporaire sans handles ni rectangles de sélection ; fichiers projet en ZIP avec manifeste JSON et les images PNG sources.
@@ -145,24 +175,40 @@ L'interface applique la charte ReefKit commune : palette bleu nuit/cyan, composa
 
 Le panneau droit conserve la taille utile de ses onglets et de ses champs. Lorsque la fenêtre manque de hauteur, une barre de défilement verticale permet d'atteindre les propriétés sans comprimer ni superposer les contrôles.
 
-**Format `.manta` :** ouvre-le avec 7-Zip pour consulter `manifest.json` et `assets/*.png`. Les images originales restent présentes, et la position/rotation/échelle sont conservées séparément. Les anciens fichiers `.mcrab` restent lisibles et sont proposés en `.manta` lors de leur prochaine sauvegarde.
+**Format `.manta` (version 2) :** ouvre-le avec 7-Zip pour consulter `manifest.json` et `assets/*.png`. Les images originales restent présentes ; position, rotation, échelle, formes de texte et masques de calque sont conservés séparément. Les projets en version 1 et les anciens fichiers `.mcrab` restent lisibles et sont enregistrés en version 2 lors de leur prochaine sauvegarde. Chaque sauvegarde est écrite dans un fichier temporaire, vérifiée par relecture, puis remplace l'ancien fichier.
+
+Pour le détail technique (modules, rendu du texte, masques, détourage, historique), voir [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Tests
 
 Une fois les dépendances installées, ouvre un terminal dans ce dossier et exécute (ou double-clique sur `tests_windows.bat`) :
 
 ```bat
-.venv\Scripts\python.exe -m unittest discover -s tests -v
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m pytest
 ```
+
+Les tests utilisent des images synthétiques : ils ne demandent ni réseau ni modèle d'IA.
+
+### Détourage par IA (facultatif)
+
+```bat
+.venv\Scripts\python.exe -m pip install -r requirements-ai.txt
+```
+
+Ensuite, dans la fenêtre « Supprimer l'arrière-plan », utilise « Télécharger un modèle… » (U²-Net léger, 4,6 Mo, après confirmation) ou place un fichier `.onnx` de la famille U²-Net / IS-Net dans `%LOCALAPPDATA%\MantaLayers\models`.
 
 Avant toute modification majeure : création d'un projet vide, import de 3 images, déplacement, redimensionnement, annuler/rétablir, duplication, fermeture/réouverture d'un `.manta`, export PNG/WebP/JPEG.
 
 ## Limites connues de cette V0.1
 
-- La déformation par enveloppe Warp des formes de lettres n'est pas encore implémentée ; le modèle prévoit déjà un emplacement distinct pour ce futur moteur.
+- La déformation par enveloppe Warp des formes de lettres n'est pas encore implémentée ; le texte suit une trajectoire, ses glyphes ne sont pas déformés.
+- La sélection n'est pas enregistrée dans le projet. Effacer au pixel près n'est possible que sur les calques image : un texte reste vectoriel.
+- Le détourage supprime le fond entier ; il ne segmente pas un objet choisi au clic. L'IA dépend de dépendances facultatives et d'un modèle présent sur le disque.
+- Les changements de sélection comptent dans l'historique : sélectionner marque le document comme modifié.
 - L'historique est limité à 100 commandes et **n'est pas sérialisé** dans `.manta`.
 - Les commandes mémorisent des snapshots du modèle ; c'est simple pour démarrer, mais à optimiser avant les très gros documents.
-- Le redimensionnement du document change la zone de travail sans déplacer les calques ; pas encore de recadrage, masques, filtres, calques de réglage ou PSD.
+- Le redimensionnement du document change la zone de travail sans déplacer les calques ; pas encore de recadrage, filtres, calques de réglage ou PSD.
 - Images limitées à 67 mégapixels par calque ; le premier affichage d'une très grande image reste lent (pas de cache de tuiles).
 - Les polices ne sont pas intégrées aux projets `.manta`.
 - La présentation du canvas n'effectue pas d'anti-aliasing des images pour préserver le pixel-art ; le rendu de texte dépend des polices installées.
@@ -170,9 +216,9 @@ Avant toute modification majeure : création d'un projet vide, import de 3 image
 
 ## Pour développer la suite
 
-1. Stabiliser la prise en main : sélection/multisélection, poignées de rotation, tests UI et performances.
-2. Ajouter l'**enveloppe Warp**, contrôlée par des points de Bézier.
-3. Ajouter recadrage, masques, réglages d'image non destructifs et export calque par calque.
+1. Multisélection de calques et lasso.
+2. Ajouter l'**enveloppe Warp** des glyphes (champ réservé `text_warp`).
+3. Ajouter recadrage, réglages d'image non destructifs et export calque par calque.
 4. Quand les fonctionnalités sont stables, envisager **PyInstaller** et intégration dans le launcher ReefKit.
 
 Les images de mascotte restent les ressources provisoires fournies par le propriétaire du projet ; aucune licence de redistribution distincte n'est présumée.
