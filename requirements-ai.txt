@@ -1,0 +1,3 @@
+# Optional: local AI background removal (CPU). The app works without these packages.
+onnxruntime>=1.17,<2
+numpy>=1.26

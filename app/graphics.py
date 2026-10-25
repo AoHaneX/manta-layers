@@ -597,7 +597,7 @@ def selection_outline(mask: Image.Image, max_rects: int = 20000) -> QPainterPath
     return path.simplified()
 
 
-def _checker_brush() -> QBrush:
+def checker_brush() -> QBrush:
     """Motif de damier dessiné une fois, puis répété par Qt."""
     tile = CHECKER_TILE
     pixmap = QPixmap(tile * 2, tile * 2)
@@ -626,7 +626,7 @@ class CanvasView(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setBackgroundBrush(QColor(COLORS["canvas"]))
-        self._checker = _checker_brush()
+        self._checker = checker_brush()
         self.mode = None
         self.old_layer = None
         self.drag_item = None

@@ -19,10 +19,11 @@ from PySide6.QtWidgets import (
 
 from . import __version__
 from .dialogs import NewProjectDialog, ResizeDocumentDialog
-from . import selection
+from . import background, selection
+from .background_dialog import BackgroundRemovalDialog
 from .graphics import (
     CanvasView, CurvedTextGraphicItem, document_mask_to_layer, make_scene, pil_to_qimage, qimage_png,
-    render_document, render_layers,
+    render_document, render_layer_image, render_layers,
 )
 from .icons import (
     alignment_icon, color_tool_icon, eye_icon, history_arrow_icon, layer_kind_icon, lock_icon,
@@ -126,6 +127,7 @@ class MainWindow(QMainWindow):
         # Floating editor used to type a text directly on the canvas.
         self._inline: dict | None = None
         self.selection_mask = None
+        self.models_dir = background.models_directory()
         self._clipboard_origin = None
         self._setting_clipboard = False
         self.last_eraser_point: tuple[float, float] | None = None
@@ -594,6 +596,10 @@ class MainWindow(QMainWindow):
             paint_tools_layout.addWidget(button)
             self.selection_tool_buttons[tool] = button
         tools_layout.addWidget(paint_tools)
+        self.remove_background_btn = QPushButton("Supprimer l'arrière-plan…")
+        self.remove_background_btn.setToolTip("Détourage local, avec aperçu, appliqué comme masque modifiable")
+        self.remove_background_btn.clicked.connect(self.remove_background)
+        tools_layout.addWidget(self.remove_background_btn)
         self.paint_settings = QWidget()
         paint_settings_layout = QFormLayout(self.paint_settings)
         paint_settings_layout.setContentsMargins(0, 0, 0, 0)
@@ -936,6 +942,8 @@ class MainWindow(QMainWindow):
         self.text_tool_action.setCheckable(True)
         self.text_tool_action.triggered.connect(self.set_text_tool_active)
         tools_menu.addAction(self.text_tool_action)
+        tools_menu.addSeparator()
+        self._action(tools_menu, "Supprimer l'arrière-plan…", self.remove_background)
         self.text_tool_shortcut = QShortcut(QKeySequence("T"), self.canvas)
         self.text_tool_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         self.text_tool_shortcut.activated.connect(
@@ -1974,6 +1982,52 @@ class MainWindow(QMainWindow):
         finally:
             self.undo_stack.endMacro()
 
+    def remove_background(self):
+        """Preview then apply a local background removal on the target image layer."""
+        layer = self.document.layer(self.tool_target_id())
+        if layer is None or layer.kind != "image":
+            self.statusBar().showMessage("Sélectionnez un calque image à détourer", 3000)
+            return
+        if layer.locked:
+            self.statusBar().showMessage("Déverrouillez le calque pour le détourer", 3000)
+            return
+        # Source pixels with their non-destructive edits, but without the current mask.
+        image = render_layer_image(self.document.assets[layer.asset], layer.color_replacements,
+                                   layer.color_fills, layer.eraser_strokes)
+        dialog = BackgroundRemovalDialog(image, layer.name, bool(layer.mask), self.models_dir, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.result_mask() is None:
+            return
+        mask = dialog.result_mask()
+        if dialog.keep_existing.isChecked() and layer.mask:
+            current = selection.decode(self.document.assets[layer.mask])
+            if current.size != mask.size:
+                current = current.resize(mask.size, Image.Resampling.NEAREST)
+            mask = selection.combine(current, mask, "intersect")
+        if dialog.as_mask.isChecked():
+            def apply_mask(doc):
+                target = doc.layer(layer.id)
+                target.mask = new_id()
+                doc.assets[target.mask] = selection.encode(mask)
+
+            self.mutate("Supprimer l'arrière-plan", apply_mask, layer.id)
+            return
+        output = BytesIO()
+        selection.apply_alpha(image, mask).save(output, format="PNG")
+        data, holder = output.getvalue(), {}
+
+        def add_layer(doc):
+            source = doc.layer(layer.id)
+            new = doc.add_image_bytes(data, f"{source.name} (détouré)", center=False)
+            for key in ("x", "y", "sx", "sy", "rotation", "opacity", "flip_horizontal", "flip_vertical"):
+                setattr(new, key, getattr(source, key))
+            doc.layers.remove(new)
+            doc.layers.insert(doc.layers.index(source) + 1, new)
+            source.visible = False
+            holder["id"] = new.id
+
+        if self.mutate("Supprimer l'arrière-plan (nouveau calque)", add_layer, layer.id):
+            self.select_layer(holder["id"])
+
     def delete_selection_or_layer(self):
         if self.selection_mask is not None:
             self.clear_selection_content()
@@ -2347,6 +2401,9 @@ class MainWindow(QMainWindow):
                 self.clear_selection_content)
             menu.addAction("Désélectionner	Ctrl+Maj+A").triggered.connect(self.deselect)
         menu.addSeparator()
+        background_action = menu.addAction("Supprimer l'arrière-plan…")
+        background_action.setEnabled(editable_image)
+        background_action.triggered.connect(self.remove_background)
         save_layer_action = menu.addAction("Enregistrer le calque sous…")
         save_layer_action.setEnabled(is_image)
         save_layer_action.triggered.connect(self.export_selected_layer)

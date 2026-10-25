@@ -85,6 +85,23 @@ def _within(channel: Image.Image, reference: int, tolerance: int) -> Image.Image
     return difference.point([255 if value <= tolerance else 0 for value in range(256)])
 
 
+def similar_colour(image: Image.Image, reference, tolerance: int) -> Image.Image:
+    """Pixels whose RGBA channels are all within ``tolerance`` of ``reference``.
+
+    A transparent reference matches transparent pixels; an opaque one never
+    matches fully transparent pixels, whose colour is meaningless.
+    """
+    rgba = image.convert("RGBA")
+    tolerance = max(0, min(255, int(tolerance)))
+    red, green, blue, alpha = rgba.split()
+    if reference[3] == 0:
+        return _within(alpha, 0, tolerance)
+    candidates = _within(alpha, reference[3], tolerance)
+    for channel, value in zip((red, green, blue), reference[:3]):
+        candidates = ImageChops.multiply(candidates, _within(channel, value, tolerance))
+    return ImageChops.multiply(candidates, alpha.point([0] + [255] * 255))
+
+
 def magic_wand(image: Image.Image, seed: tuple[int, int], tolerance: int,
                contiguous: bool = True) -> Image.Image:
     """Select pixels similar to the seed pixel.
@@ -97,16 +114,7 @@ def magic_wand(image: Image.Image, seed: tuple[int, int], tolerance: int,
     x, y = seed
     if not (0 <= x < rgba.width and 0 <= y < rgba.height):
         return empty(rgba.size)
-    tolerance = max(0, min(255, int(tolerance)))
-    red, green, blue, alpha = rgba.split()
-    reference = rgba.getpixel((x, y))
-    if reference[3] == 0:
-        candidates = _within(alpha, 0, tolerance)
-    else:
-        candidates = _within(alpha, reference[3], tolerance)
-        for channel, value in zip((red, green, blue), reference[:3]):
-            candidates = ImageChops.multiply(candidates, _within(channel, value, tolerance))
-        candidates = ImageChops.multiply(candidates, alpha.point([0] + [255] * 255))
+    candidates = similar_colour(rgba, rgba.getpixel((x, y)), tolerance)
     if not contiguous:
         return candidates
     region = candidates.copy()
