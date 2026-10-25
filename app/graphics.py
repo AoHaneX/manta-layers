@@ -10,10 +10,11 @@ from PIL import Image, ImageChops, ImageDraw
 from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QPointF, QRectF, Qt
 from PySide6.QtGui import (
     QBrush, QColor, QFont, QFontDatabase, QFontMetricsF, QImage, QKeySequence, QPainter,
-    QPainterPath, QPen, QPixmap, QRadialGradient, QTransform,
+    QBitmap, QPainterPath, QPen, QPixmap, QRadialGradient, QRegion, QTransform,
 )
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
+from . import selection
 from .model import MAX_PIXELS, Document, Layer
 from .textpath import (
     custom_points, drag_handle, handle_points, normalize_controls, normalize_shape, sample_path,
@@ -417,11 +418,11 @@ def _render_key(layer: Layer) -> str:
     # Un identifiant d'image désigne toujours le même contenu : seuls les
     # réglages non destructifs et les retournements font varier le rendu.
     state = (layer.asset, sorted(layer.color_replacements.items()), layer.color_fills,
-             layer.eraser_strokes, layer.flip_horizontal, layer.flip_vertical)
+             layer.eraser_strokes, layer.mask, layer.flip_horizontal, layer.flip_vertical)
     return sha1(repr(state).encode("utf-8")).hexdigest()
 
 
-def _qimage_from_pil(image: Image.Image) -> QImage:
+def pil_to_qimage(image: Image.Image) -> QImage:
     data = image.tobytes("raw", "RGBA")
     return QImage(data, image.width, image.height, image.width * 4,
                   QImage.Format.Format_RGBA8888).copy()
@@ -437,7 +438,12 @@ def layer_pixmap(layer: Layer, document: Document) -> QPixmap:
             document.assets[layer.asset], layer.color_replacements,
             layer.color_fills, layer.eraser_strokes,
         )
-        pixmap = QPixmap.fromImage(_qimage_from_pil(image))
+        if layer.mask:
+            mask = selection.decode(document.assets[layer.mask])
+            if mask.size != image.size:
+                mask = mask.resize(image.size, Image.Resampling.NEAREST)
+            image = selection.apply_alpha(image, mask)
+        pixmap = QPixmap.fromImage(pil_to_qimage(image))
     except Exception as exc:
         raise ValueError(f"Image illisible pour le calque « {layer.name} » : {exc}") from exc
     if pixmap.isNull():
@@ -505,6 +511,92 @@ def qimage_png(image: QImage) -> bytes:
     return bytes(data)
 
 
+# --- Bridges between Pillow masks and Qt -------------------------------------------
+
+def mask_to_qimage(mask: Image.Image) -> QImage:
+    """8-bit mask as a Qt alpha image (same byte layout, rows copied safely)."""
+    return QImage(mask.tobytes(), mask.width, mask.height, mask.width,
+                  QImage.Format.Format_Alpha8).copy()
+
+
+def qimage_to_mask(image: QImage) -> Image.Image:
+    image = image.convertToFormat(QImage.Format.Format_Alpha8)
+    stride = image.bytesPerLine()
+    data = bytes(image.constBits())[:stride * image.height()]
+    return Image.frombytes("L", (image.width(), image.height()), data, "raw", "L", stride)
+
+
+def qimage_to_pil(image: QImage) -> Image.Image:
+    image = image.convertToFormat(QImage.Format.Format_RGBA8888)
+    stride = image.bytesPerLine()
+    data = bytes(image.constBits())[:stride * image.height()]
+    return Image.frombytes("RGBA", (image.width(), image.height()), data, "raw", "RGBA", stride)
+
+
+def layer_transform(layer: Layer) -> QTransform:
+    """Item-local to document coordinates, identical to the canvas item."""
+    return (QTransform.fromScale(layer.sx, layer.sy) * QTransform().rotate(layer.rotation)
+            * QTransform.fromTranslate(layer.x, layer.y))
+
+
+def document_mask_to_layer(mask: Image.Image, layer: Layer, size: tuple[int, int],
+                           smooth: bool = False) -> Image.Image:
+    """Resample a document-space mask into the source pixels of an image layer.
+
+    The result is aligned with the layer's source image (flips undone), so it
+    can be stored as a layer mask that survives later moves and flips.
+    """
+    target = QImage(size[0], size[1], QImage.Format.Format_Alpha8)
+    target.fill(0)
+    inverse, invertible = layer_transform(layer).inverted()
+    if invertible:
+        painter = QPainter(target)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, smooth)
+        painter.setTransform(inverse)
+        painter.drawImage(0, 0, mask_to_qimage(mask))
+        painter.end()
+    local = qimage_to_mask(target)
+    if layer.flip_horizontal:
+        local = local.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    if layer.flip_vertical:
+        local = local.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+    return local
+
+
+def render_layers(document: Document, layer_ids=None, with_background: bool = False) -> Image.Image:
+    """Document-sized RGBA rendering of some layers (all visible ones by default)."""
+    keep = None if layer_ids is None else set(layer_ids)
+    layers = [layer for layer in document.layers if keep is None or layer.id in keep]
+    partial = Document(document.width, document.height,
+                       document.background if with_background else None, layers, document.assets)
+    return qimage_to_pil(render_document(partial))
+
+
+def selection_overlay(mask: Image.Image, show_mask: bool) -> QImage:
+    """Tint drawn over the canvas: light cyan inside, or red outside in mask view."""
+    if show_mask:
+        color, alpha = QColor(COLORS["danger"]), selection.invert(mask).point(lambda v: v * 110 // 255)
+    else:
+        color, alpha = QColor(COLORS["primary"]), mask.point(lambda v: v * 45 // 255)
+    tint = Image.new("RGBA", mask.size, (color.red(), color.green(), color.blue(), 0))
+    tint.putalpha(alpha)
+    return pil_to_qimage(tint)
+
+
+def selection_outline(mask: Image.Image, max_rects: int = 20000) -> QPainterPath | None:
+    """Outline of the selected pixels, or None when it is too fragmented to draw."""
+    binary = mask.point([0] * 128 + [255] * 128)
+    if binary.getbbox() is None:
+        return QPainterPath()
+    image = mask_to_qimage(binary).convertToFormat(QImage.Format.Format_ARGB32)
+    region = QRegion(QBitmap.fromImage(image.createAlphaMask()))
+    if region.rectCount() > max_rects:
+        return None
+    path = QPainterPath()
+    path.addRegion(region)
+    return path.simplified()
+
+
 def _checker_brush() -> QBrush:
     """Motif de damier dessiné une fois, puis répété par Qt."""
     tile = CHECKER_TILE
@@ -541,6 +633,11 @@ class CanvasView(QGraphicsView):
         self.drag_start = None
         self.handle_index = None
         self.selection_drag = None
+        # Pixels being moved with Ctrl+drag inside the selection.
+        self.lift = None
+        self.selection_overlay_image: QImage | None = None
+        self.selection_path: QPainterPath | None = None
+        self.selection_box: tuple[int, int, int, int] | None = None
         self.fixed_world = None
         self.fixed_local = None
         self.corner_local = None
@@ -616,7 +713,9 @@ class CanvasView(QGraphicsView):
         painter.setPen(border_pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(QRectF(0, 0, self.window.document.width, self.window.document.height))
-        item = self.selected_graphic()
+        self._draw_selection(painter)
+        # Transform and shape handles only make sense without an active tool.
+        item = None if self.window.any_tool_active() else self.selected_graphic()
         layer = self.window.document.layer(item.data(0)) if item else None
         if isinstance(item, CurvedTextGraphicItem) and layer:
             if layer.show_curve_guide:
@@ -641,7 +740,7 @@ class CanvasView(QGraphicsView):
                 painter.setBrush(QColor(COLORS["primary"]))
                 for handle in item.shape_handles_local():
                     painter.drawEllipse(item.mapToScene(handle), radius, radius)
-        if item and not self.window.eraser_active:
+        if item:
             size = 9 / factor
             painter.setBrush(QColor(COLORS["primary"]))
             painter.setPen(QPen(QColor(COLORS["background"]), 1 / factor))
@@ -688,6 +787,78 @@ class CanvasView(QGraphicsView):
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawPath(scene_path)
         painter.restore()
+
+    def update_selection_visual(self, mask, show_mask: bool) -> None:
+        """Recompute the tint and outline once per selection change."""
+        if mask is None or selection.is_empty(mask):
+            self.selection_overlay_image = self.selection_path = self.selection_box = None
+        else:
+            self.selection_overlay_image = selection_overlay(mask, show_mask)
+            self.selection_path = selection_outline(mask)
+            self.selection_box = selection.bounds(mask)
+        self.viewport().update()
+
+    def _selection_pens(self) -> tuple[QPen, QPen]:
+        # White under black dashes: visible on any background, at any zoom.
+        under = QPen(QColor("white"), 1)
+        under.setCosmetic(True)
+        over = QPen(QColor("black"), 1, Qt.PenStyle.DashLine)
+        over.setCosmetic(True)
+        return under, over
+
+    def _draw_selection(self, painter: QPainter) -> None:
+        document = self.window.document
+        if self.selection_overlay_image is not None:
+            painter.drawImage(QRectF(0, 0, document.width, document.height), self.selection_overlay_image)
+        outlines = []
+        if self.selection_path is not None:
+            outlines.append(self.selection_path)
+        elif self.selection_box is not None:
+            box = QPainterPath()
+            left, top, right, bottom = self.selection_box
+            box.addRect(QRectF(left, top, right - left, bottom - top))
+            outlines.append(box)
+        if self.selection_drag is not None:
+            outlines.append(self._drag_shape_path())
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for path in outlines:
+            for pen in self._selection_pens():
+                painter.setPen(pen)
+                painter.drawPath(path)
+        if self.lift is not None:
+            painter.setOpacity(0.85)
+            painter.drawPixmap(self.lift["origin"] + self.lift["delta"], self.lift["pixmap"])
+            painter.setOpacity(1.0)
+
+    def _drag_rect(self) -> QRectF:
+        rect = QRectF(self.selection_drag["start"], self.selection_drag["end"]).normalized()
+        if self.window.selection_pixel_perfect.isChecked():
+            rect = QRectF(round(rect.left()), round(rect.top()),
+                          round(rect.right()) - round(rect.left()), round(rect.bottom()) - round(rect.top()))
+        return rect
+
+    def _drag_shape_path(self) -> QPainterPath:
+        path = QPainterPath()
+        rect = self._drag_rect()
+        if self.selection_drag["tool"] == "ellipse":
+            path.addEllipse(rect)
+        else:
+            path.addRect(rect)
+        return path
+
+    def _selection_press(self, event) -> None:
+        scene_position = self.mapToScene(event.position().toPoint())
+        modifiers = event.modifiers()
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            lift = self.window.lift_selection(scene_position)
+            if lift is not None:
+                self.lift = {**lift, "start": scene_position, "delta": QPointF(0, 0)}
+            return
+        if self.window.selection_tool == "wand":
+            self.window.apply_magic_wand(scene_position, modifiers)
+            return
+        self.selection_drag = {"tool": self.window.selection_tool, "start": scene_position,
+                               "end": scene_position, "modifiers": modifiers}
 
     def _hit_handle(self, item, viewport_pos):
         if isinstance(item, CurvedTextGraphicItem):
@@ -764,6 +935,11 @@ class CanvasView(QGraphicsView):
                 self.window.begin_inline_text_create(self.mapToScene(event.position().toPoint()))
                 event.accept()
                 return
+            if self.window.selection_tool:
+                self._selection_press(event)
+                self.viewport().update()
+                event.accept()
+                return
             item = self.selected_graphic()
             layer = self.window.document.layer(item.data(0)) if item else None
             if item and layer and not layer.locked:
@@ -819,7 +995,8 @@ class CanvasView(QGraphicsView):
             event.accept()
             return
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-            self.window.delete_layer()
+            # With an active selection, Delete erases its content instead of the layer.
+            self.window.delete_selection_or_layer()
             event.accept()
             return
         if event.key() == Qt.Key.Key_BracketLeft:
@@ -866,6 +1043,16 @@ class CanvasView(QGraphicsView):
             self._pan_last = pos
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+            event.accept()
+            return
+        if self.selection_drag is not None or self.lift is not None:
+            position = self.mapToScene(event.position().toPoint())
+            if self.selection_drag is not None:
+                self.selection_drag["end"] = position
+            else:
+                delta = position - self.lift["start"]
+                self.lift["delta"] = QPointF(round(delta.x()), round(delta.y()))
+            self.viewport().update()
             event.accept()
             return
         if self.window.eraser_active:
@@ -932,6 +1119,19 @@ class CanvasView(QGraphicsView):
             self.window.commit_eraser_stroke(layer_id, points)
             self.window.last_eraser_point = (last.x(), last.y())
             self.window.last_eraser_layer_id = layer_id
+            self.viewport().update()
+            event.accept()
+            return
+        if event.button() == Qt.MouseButton.LeftButton and self.selection_drag is not None:
+            drag, rect = self.selection_drag, self._drag_rect()
+            self.selection_drag = None
+            self.window.apply_selection_shape(drag["tool"], rect, drag["modifiers"])
+            self.viewport().update()
+            event.accept()
+            return
+        if event.button() == Qt.MouseButton.LeftButton and self.lift is not None:
+            delta, self.lift = self.lift["delta"], None
+            self.window.move_selection_content(int(delta.x()), int(delta.y()))
             self.viewport().update()
             event.accept()
             return
@@ -1040,6 +1240,7 @@ class CanvasView(QGraphicsView):
 
     def cancel_selection_drag(self) -> None:
         self.selection_drag = None
+        self.lift = None
         self.viewport().update()
 
     def zoom_by(self, factor: float) -> None:

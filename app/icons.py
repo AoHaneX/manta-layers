@@ -150,7 +150,19 @@ def color_tool_icon(tool: str) -> QIcon:
     color = QColor(COLORS["muted"])
     painter.setPen(QPen(color, 2))
     painter.setBrush(Qt.BrushStyle.NoBrush)
-    if tool == "text":
+    if tool in ("select_rect", "select_ellipse"):
+        pen = QPen(color, 1.6, Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        if tool == "select_rect":
+            painter.drawRect(QRectF(3, 4, 14, 12))
+        else:
+            painter.drawEllipse(QRectF(3, 4, 14, 12))
+    elif tool == "wand":
+        painter.drawLine(4, 16, 13, 7)
+        painter.setPen(QPen(color, 1.4))
+        for x1, y1, x2, y2 in ((15, 2, 15, 6), (13, 4, 17, 4), (17, 9, 19, 9), (10, 2, 11, 3)):
+            painter.drawLine(x1, y1, x2, y2)
+    elif tool == "text":
         painter.drawLine(4, 4, 16, 4)
         painter.drawLine(10, 4, 10, 17)
         painter.drawLine(7, 17, 13, 17)

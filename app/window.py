@@ -7,7 +7,7 @@ from pathlib import Path
 from shutil import copy2
 
 from PIL import Image
-from PySide6.QtCore import QPointF, Qt, QSize, QSettings, QTimer
+from PySide6.QtCore import QPointF, QRectF, Qt, QSize, QSettings, QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QImage, QKeySequence, QPixmap, QShortcut, QUndoCommand, QUndoStack
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
@@ -19,13 +19,18 @@ from PySide6.QtWidgets import (
 
 from . import __version__
 from .dialogs import NewProjectDialog, ResizeDocumentDialog
-from .graphics import CanvasView, CurvedTextGraphicItem, make_scene, qimage_png, render_document
+from . import selection
+from .graphics import (
+    CanvasView, CurvedTextGraphicItem, document_mask_to_layer, make_scene, pil_to_qimage, qimage_png,
+    render_document, render_layers,
+)
 from .icons import (
     alignment_icon, color_tool_icon, eye_icon, history_arrow_icon, layer_kind_icon, lock_icon,
     sidebar_arrow_icon,
 )
-from .model import Document, Layer
+from .model import Document, Layer, new_id
 from .paths import user_data_directory
+from .selection import COMBINE_LABELS, COMBINE_MODES
 from .storage import open_project, save_project
 from .templates import list_templates, save_template
 from .textpath import DEFAULT_CONTROLS, SHAPE_LABELS, TEXT_SHAPES, normalize_controls
@@ -82,6 +87,22 @@ class DocumentCommand(QUndoCommand):
         self._apply(self.after, self.selected_after)
 
 
+class SelectionCommand(QUndoCommand):
+    """Undoable selection change; masks are kept PNG-compressed."""
+
+    def __init__(self, win: "MainWindow", before: bytes | None, after: bytes | None, description: str):
+        super().__init__(description)
+        self.win = win
+        self.before = before
+        self.after = after
+
+    def undo(self):
+        self.win._install_selection(self.before)
+
+    def redo(self):
+        self.win._install_selection(self.after)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, settings: QSettings | None = None, recovery_dir: Path | None = None):
         super().__init__()
@@ -104,6 +125,9 @@ class MainWindow(QMainWindow):
         self.selection_tool_buttons: dict[str, QToolButton] = {}
         # Floating editor used to type a text directly on the canvas.
         self._inline: dict | None = None
+        self.selection_mask = None
+        self._clipboard_origin = None
+        self._setting_clipboard = False
         self.last_eraser_point: tuple[float, float] | None = None
         self.last_eraser_layer_id: str | None = None
         self.replacement_color = COLORS["primary"]
@@ -395,6 +419,66 @@ class MainWindow(QMainWindow):
         button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         return button
 
+    def _build_selection_settings(self) -> QWidget:
+        """Options shared by the selection tools, plus the magic wand settings."""
+        self.selection_settings = QWidget()
+        layout = QFormLayout(self.selection_settings)
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setSpacing(5)
+        self.selection_mode_combo = QComboBox()
+        for mode in COMBINE_MODES:
+            self.selection_mode_combo.addItem(COMBINE_LABELS[mode], mode)
+        self.selection_mode_combo.setToolTip(
+            "Maj : ajouter · Alt : soustraire · Maj+Alt : intersection"
+        )
+        self.selection_pixel_perfect = QCheckBox("Pixel parfait")
+        self.selection_pixel_perfect.setChecked(True)
+        self.selection_pixel_perfect.setToolTip("Bords nets, sans anticrénelage (pixel art)")
+        self.selection_feather = QSpinBox()
+        self.selection_feather.setRange(0, 100)
+        self.selection_feather.setSuffix(" px")
+        self.selection_feather.setToolTip("Adoucissement des bords, pour les images classiques")
+        self.selection_feather.setEnabled(False)
+        self.selection_pixel_perfect.toggled.connect(
+            lambda checked: self.selection_feather.setEnabled(not checked)
+        )
+        self.show_selection_mask = QCheckBox("Afficher le masque")
+        self.show_selection_mask.setToolTip("Voile rouge sur les zones non sélectionnées")
+        self.show_selection_mask.toggled.connect(lambda _checked: self._refresh_selection_visual())
+        buttons = QWidget()
+        buttons_layout = QHBoxLayout(buttons)
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(4)
+        for text, tooltip, method in (("Tout", "Tout sélectionner · Ctrl+A", self.select_all),
+                                      ("Aucune", "Désélectionner · Ctrl+Maj+A", self.deselect),
+                                      ("Inverser", "Inverser · Ctrl+Maj+I", self.invert_selection)):
+            button = QPushButton(text)
+            button.setToolTip(tooltip)
+            button.clicked.connect(method)
+            buttons_layout.addWidget(button)
+        layout.addRow("Mode", self.selection_mode_combo)
+        layout.addRow("Bords", self.selection_pixel_perfect)
+        layout.addRow("Adoucissement", self.selection_feather)
+        layout.addRow(buttons)
+        layout.addRow(self.show_selection_mask)
+        self.wand_settings = QWidget()
+        wand_layout = QFormLayout(self.wand_settings)
+        wand_layout.setContentsMargins(0, 0, 0, 0)
+        wand_layout.setSpacing(5)
+        self.wand_tolerance = QSpinBox()
+        self.wand_tolerance.setRange(0, 255)
+        self.wand_tolerance.setValue(32)
+        self.wand_tolerance.setToolTip("Écart maximal sur chaque canal R, V, B et alpha")
+        self.wand_contiguous = QCheckBox("Pixels contigus uniquement")
+        self.wand_contiguous.setChecked(True)
+        self.wand_contiguous.setToolTip("Décoché : toutes les couleurs similaires de l'image")
+        self.wand_all_layers = QCheckBox("Échantillonner tous les calques")
+        self.wand_all_layers.setToolTip("Décoché : seul le calque sélectionné est analysé")
+        wand_layout.addRow("Tolérance", self.wand_tolerance)
+        wand_layout.addRow(self.wand_contiguous)
+        wand_layout.addRow(self.wand_all_layers)
+        return self.selection_settings
+
     def _build_tools_tab(self) -> QWidget:
         tools = QWidget()
         tools_layout = QVBoxLayout(tools)
@@ -497,6 +581,18 @@ class MainWindow(QMainWindow):
         )
         self.text_tool_btn.clicked.connect(self.set_text_tool_active)
         paint_tools_layout.addWidget(self.text_tool_btn)
+        paint_tools_layout.addWidget(QLabel("Sélection"))
+        for tool, icon, text, tooltip in (
+            ("rect", "select_rect", "Rectangle", "Sélection rectangulaire (M)"),
+            ("ellipse", "select_ellipse", "Ellipse", "Sélection elliptique"),
+            ("wand", "wand", "Baguette magique", "Baguette magique (W) : pixels de couleur proche"),
+        ):
+            button = self._tool_button(icon, text, tooltip)
+            button.clicked.connect(
+                lambda checked, tool=tool: self.set_selection_tool(tool if checked else None)
+            )
+            paint_tools_layout.addWidget(button)
+            self.selection_tool_buttons[tool] = button
         tools_layout.addWidget(paint_tools)
         self.paint_settings = QWidget()
         paint_settings_layout = QFormLayout(self.paint_settings)
@@ -554,6 +650,8 @@ class MainWindow(QMainWindow):
         eraser_layout.addRow("Dureté", self.eraser_hardness)
         eraser_layout.addRow("Opacité", self.eraser_opacity)
         tools_layout.addWidget(self.eraser_settings)
+        tools_layout.addWidget(self._build_selection_settings())
+        tools_layout.addWidget(self.wand_settings)
         self.alternative_label = QLabel("Alternative :")
         tools_layout.addWidget(self.alternative_label)
         self.variations_widget = QWidget()
@@ -823,7 +921,7 @@ class MainWindow(QMainWindow):
         self._action(e, "Retourner horizontalement", self.flip_layer_horizontal)
         self._action(e, "Retourner verticalement", self.flip_layer_vertical)
         self._action(e, "Verrouiller / déverrouiller", self.toggle_lock)
-        self.delete_action = self._action(e, "Supprimer le calque", self.delete_layer, "Delete")
+        self.delete_action = self._action(e, "Supprimer (sélection ou calque)", self.delete_selection_or_layer, "Delete")
         tools_menu = self.menuBar().addMenu("Outils")
         self.eraser_action = QAction(color_tool_icon("eraser"), "Gomme (E)", self)
         self.eraser_action.setCheckable(True)
@@ -843,6 +941,33 @@ class MainWindow(QMainWindow):
         self.text_tool_shortcut.activated.connect(
             lambda: self.set_text_tool_active(not self.text_tool_active)
         )
+        for key, tool in (("M", "rect"), ("W", "wand")):
+            shortcut = QShortcut(QKeySequence(key), self.canvas)
+            shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(
+                lambda tool=tool: self.set_selection_tool(None if self.selection_tool == tool else tool)
+            )
+        s = self.menuBar().addMenu("Sélection")
+        self._action(s, "Tout sélectionner", self.select_all, "Ctrl+A")
+        deselect = self._action(s, "Désélectionner", self.deselect, "Ctrl+Shift+A")
+        self._action(s, "Inverser la sélection", self.invert_selection, "Ctrl+Shift+I")
+        show_mask = self._action(s, "Afficher le masque de sélection",
+                                 lambda: self.show_selection_mask.toggle(), "Ctrl+M")
+        show_mask.setCheckable(True)
+        self.show_selection_mask.toggled.connect(show_mask.setChecked)
+        s.addSeparator()
+        copy_layer = self._action(s, "Copier vers un nouveau calque",
+                                  lambda: self.selection_to_new_layer(False), "Ctrl+J")
+        cut_layer = self._action(s, "Couper vers un nouveau calque",
+                                 lambda: self.selection_to_new_layer(True), "Ctrl+Shift+J")
+        clear = self._action(s, "Effacer le contenu sélectionné", self.clear_selection_content)
+        s.addSeparator()
+        hide = self._action(s, "Masque du calque : masquer la sélection", self.clear_selection_content)
+        reveal = self._action(s, "Masque du calque : révéler la sélection", self.reveal_selection_in_mask)
+        self._action(s, "Supprimer le masque du calque", self.remove_layer_mask)
+        self.selection_actions = (deselect, copy_layer, cut_layer, clear, hide, reveal)
+        self._update_selection_actions()
+        QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
         v = self.menuBar().addMenu("Affichage")
         self._action(v, "Afficher / masquer le panneau d'utilitaires", self.toggle_left_sidebar, "F9")
         self._action(v, "Ajuster à la fenêtre", self.canvas.fit_document, "Ctrl+0")
@@ -904,6 +1029,9 @@ class MainWindow(QMainWindow):
                     item.setSelected(True)
                     break
             self.doc_info.setText(f"{doc.width} × {doc.height} px · {len(doc.layers)} calque(s)")
+            if self.selection_mask is not None and self.selection_mask.size != (doc.width, doc.height):
+                self.selection_mask = selection.resize_canvas(self.selection_mask, (doc.width, doc.height))
+                self._refresh_selection_visual()
             self._refresh_properties()
             self.update_utility_buttons()
         finally:
@@ -1599,15 +1727,258 @@ class MainWindow(QMainWindow):
         bucket = self.paint_mode is not None and not eraser
         self.eraser_settings.setVisible(eraser)
         self.paint_settings.setVisible(bucket)
-        if hasattr(self, "selection_settings"):
-            self.selection_settings.setVisible(bool(self.selection_tool))
-            self.wand_settings.setVisible(self.selection_tool == "wand")
+        self.selection_settings.setVisible(bool(self.selection_tool))
+        self.wand_settings.setVisible(self.selection_tool == "wand")
         for widget in (
             self.color_tools_label, self.color_editor,
             self.alternative_label, self.variations_widget,
         ):
             widget.setVisible(not eraser and not self.selection_tool)
         self._schedule_right_panel_layout()
+
+    # --- Selections ---------------------------------------------------------------------
+    # The selection is a document-sized mask, outside the Document: it is not
+    # saved in projects, but every change is an undoable SelectionCommand.
+
+    def _combine_mode(self, modifiers) -> str:
+        shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+        alt = bool(modifiers & Qt.KeyboardModifier.AltModifier)
+        if shift and alt:
+            return "intersect"
+        if shift:
+            return "add"
+        if alt:
+            return "subtract"
+        return self.selection_mode_combo.currentData()
+
+    def _install_selection(self, data: bytes | None):
+        self.selection_mask = selection.decode(data) if data else None
+        self._refresh_selection_visual()
+
+    def _refresh_selection_visual(self):
+        self.canvas.update_selection_visual(self.selection_mask, self.show_selection_mask.isChecked())
+        self._update_selection_actions()
+
+    def _update_selection_actions(self):
+        has_selection = self.selection_mask is not None
+        for action in getattr(self, "selection_actions", ()):
+            action.setEnabled(has_selection)
+
+    def set_selection(self, mask, description: str):
+        if mask is not None and selection.is_empty(mask):
+            mask = None
+        before = selection.encode(self.selection_mask) if self.selection_mask is not None else None
+        after = selection.encode(mask) if mask is not None else None
+        if before != after:
+            self.undo_stack.push(SelectionCommand(self, before, after, description))
+
+    def _finish_shape(self, shape):
+        if self.selection_pixel_perfect.isChecked():
+            return shape
+        return selection.feather(shape, self.selection_feather.value())
+
+    def apply_selection_shape(self, tool: str, rect: QRectF, modifiers):
+        mode = self._combine_mode(modifiers)
+        if rect.width() < 1 and rect.height() < 1:
+            # A simple click with a new selection clears it, as in most editors.
+            if mode == "replace":
+                self.deselect()
+            return
+        size = (self.document.width, self.document.height)
+        box = (rect.left(), rect.top(), rect.right(), rect.bottom())
+        antialias = not self.selection_pixel_perfect.isChecked()
+        draw = selection.ellipse if tool == "ellipse" else selection.rectangle
+        shape = self._finish_shape(draw(size, box, antialias))
+        label = "Sélection elliptique" if tool == "ellipse" else "Sélection rectangulaire"
+        self.set_selection(selection.combine(self.selection_mask, shape, mode), label)
+
+    def apply_magic_wand(self, scene_position: QPointF, modifiers):
+        x, y = int(scene_position.x() // 1), int(scene_position.y() // 1)
+        if not (0 <= x < self.document.width and 0 <= y < self.document.height):
+            self.statusBar().showMessage("Cliquez à l'intérieur du document", 3000)
+            return
+        if self.wand_all_layers.isChecked():
+            image = render_layers(self.document, None, with_background=True)
+        else:
+            layer_id = self.tool_target_id()
+            if layer_id is None:
+                self.statusBar().showMessage("Sélectionnez le calque à analyser", 3000)
+                return
+            image = render_layers(self.document, [layer_id])
+        wand = selection.magic_wand(image, (x, y), self.wand_tolerance.value(),
+                                    self.wand_contiguous.isChecked())
+        mode = self._combine_mode(modifiers)
+        self.set_selection(selection.combine(self.selection_mask, self._finish_shape(wand), mode),
+                           "Baguette magique")
+
+    def select_all(self):
+        self.set_selection(selection.full((self.document.width, self.document.height)), "Tout sélectionner")
+
+    def deselect(self):
+        self.set_selection(None, "Désélectionner")
+
+    def invert_selection(self):
+        size = (self.document.width, self.document.height)
+        current = self.selection_mask if self.selection_mask is not None else selection.empty(size)
+        self.set_selection(selection.invert(current), "Inverser la sélection")
+
+    def _reset_selection(self):
+        """New or opened document: start without selection (not an undoable step)."""
+        self.selection_mask = None
+        self._refresh_selection_visual()
+
+    def _selection_layer(self, editable: bool):
+        """Layer the selection acts on; pixel edits need an unlocked image layer."""
+        layer = self.document.layer(self.tool_target_id())
+        if self.selection_mask is None:
+            self.statusBar().showMessage("Aucune sélection active", 3000)
+            return None
+        if layer is None:
+            self.statusBar().showMessage("Sélectionnez un calque", 3000)
+            return None
+        if editable and layer.kind != "image":
+            self.statusBar().showMessage(
+                "Un calque texte reste vectoriel : copiez la sélection vers un nouveau calque", 4000
+            )
+            return None
+        if editable and layer.locked:
+            self.statusBar().showMessage("Déverrouillez le calque pour le modifier", 3000)
+            return None
+        return layer
+
+    def selected_pixels(self, layer) -> tuple[Image.Image, tuple[int, int]] | None:
+        """Visible pixels of a layer inside the selection, cropped, with their position."""
+        rendered = render_layers(self.document, [layer.id])
+        cut = selection.apply_alpha(rendered, self.selection_mask)
+        box = cut.getchannel("A").getbbox()
+        if box is None:
+            self.statusBar().showMessage("Aucun pixel visible dans la sélection", 3000)
+            return None
+        return cut.crop(box), box[:2]
+
+    def _source_size(self, layer) -> tuple[int, int]:
+        with Image.open(BytesIO(self.document.assets[layer.asset])) as source:
+            return source.size
+
+    def _edit_layer_mask(self, doc: Document, layer_id: str, operation: str, area=None):
+        """Change a layer mask inside a mutation: hide, reveal or follow ``area``."""
+        layer = doc.layer(layer_id)
+        if area is None:
+            area = document_mask_to_layer(self.selection_mask, layer, self._source_size(layer),
+                                          smooth=not self.selection_pixel_perfect.isChecked())
+        current = selection.decode(doc.assets[layer.mask]) if layer.mask else None
+        updated = (selection.hide if operation == "hide" else selection.reveal)(current, area)
+        if updated.getextrema() == (255, 255):
+            layer.mask = None  # fully visible: no mask needed
+            return
+        layer.mask = new_id()
+        doc.assets[layer.mask] = selection.encode(updated)
+
+    def clear_selection_content(self):
+        layer = self._selection_layer(editable=True)
+        if layer is not None:
+            self.mutate("Effacer la sélection",
+                        lambda doc: self._edit_layer_mask(doc, layer.id, "hide"), layer.id)
+
+    def reveal_selection_in_mask(self):
+        layer = self._selection_layer(editable=True)
+        if layer is None:
+            return
+        if not layer.mask:
+            self.statusBar().showMessage("Ce calque n'a pas de masque", 3000)
+            return
+        self.mutate("Révéler la sélection",
+                    lambda doc: self._edit_layer_mask(doc, layer.id, "reveal"), layer.id)
+
+    def remove_layer_mask(self):
+        layer = self.document.layer(self.tool_target_id())
+        if layer is None or not layer.mask or layer.locked:
+            self.statusBar().showMessage("Aucun masque modifiable sur ce calque", 3000)
+            return
+        self.mutate("Supprimer le masque du calque",
+                    lambda doc: setattr(doc.layer(layer.id), "mask", None), layer.id)
+
+    def copy_selection(self) -> bool:
+        layer = self._selection_layer(editable=False)
+        pixels = self.selected_pixels(layer) if layer is not None else None
+        if pixels is None:
+            return False
+        image, origin = pixels
+        self._setting_clipboard = True
+        QApplication.clipboard().setImage(pil_to_qimage(image))
+        self._setting_clipboard = False
+        # Pasting our own copy puts it back where it came from.
+        self._clipboard_origin = (origin, image.size)
+        self.statusBar().showMessage("Sélection copiée", 3000)
+        return True
+
+    def cut_selection(self) -> bool:
+        if self._selection_layer(editable=True) is None or not self.copy_selection():
+            return False
+        self.clear_selection_content()
+        return True
+
+    def _on_clipboard_changed(self):
+        if not self._setting_clipboard:
+            self._clipboard_origin = None
+
+    def selection_to_new_layer(self, cut: bool = False, offset: tuple[int, int] = (0, 0)) -> bool:
+        layer = self._selection_layer(editable=cut)
+        pixels = self.selected_pixels(layer) if layer is not None else None
+        if pixels is None:
+            return False
+        image, (left, top) = pixels
+        output = BytesIO()
+        image.save(output, format="PNG")
+        data, holder = output.getvalue(), {}
+
+        def apply(doc):
+            if cut:
+                self._edit_layer_mask(doc, layer.id, "hide")
+            new = doc.add_image_bytes(data, f"{layer.name} (sélection)", center=False)
+            new.x, new.y = float(left + offset[0]), float(top + offset[1])
+            doc.layers.remove(new)
+            doc.layers.insert(doc.layers.index(doc.layer(layer.id)) + 1, new)
+            holder["id"] = new.id
+
+        label = "Couper vers un nouveau calque" if cut else "Copier vers un nouveau calque"
+        if not self.mutate(label, apply, layer.id):
+            return False
+        self.select_layer(holder["id"])
+        return True
+
+    def lift_selection(self, scene_position: QPointF):
+        """Start a Ctrl+drag move: the selected pixels follow the mouse."""
+        if self.selection_mask is None:
+            return None
+        x, y = int(scene_position.x() // 1), int(scene_position.y() // 1)
+        width, height = self.selection_mask.size
+        if not (0 <= x < width and 0 <= y < height) or self.selection_mask.getpixel((x, y)) == 0:
+            return None
+        layer = self._selection_layer(editable=True)
+        pixels = self.selected_pixels(layer) if layer is not None else None
+        if pixels is None:
+            return None
+        image, origin = pixels
+        return {"pixmap": QPixmap.fromImage(pil_to_qimage(image)), "origin": QPointF(*origin)}
+
+    def move_selection_content(self, dx: int, dy: int):
+        """Move the selected pixels to a new layer, and the selection with them."""
+        if dx == 0 and dy == 0 or self.selection_mask is None:
+            return
+        moved = selection.translate(self.selection_mask, dx, dy)
+        self.undo_stack.beginMacro("Déplacer la sélection")
+        try:
+            if self.selection_to_new_layer(cut=True, offset=(dx, dy)):
+                self.set_selection(moved, "Déplacer la sélection")
+        finally:
+            self.undo_stack.endMacro()
+
+    def delete_selection_or_layer(self):
+        if self.selection_mask is not None:
+            self.clear_selection_content()
+        else:
+            self.delete_layer()
 
     def update_eraser_size_preset(self, _index=None):
         size = self.eraser_size_preset.currentData()
@@ -1855,6 +2226,8 @@ class MainWindow(QMainWindow):
         if isinstance(focused, QPlainTextEdit) and focused.textCursor().hasSelection():
             focused.copy()
             return True
+        if self.selection_mask is not None:
+            return self.copy_selection()
         layer = self.document.layer(self.selected_id)
         item = self.selected_image_item()
         if not layer or layer.kind != "image" or item is None:
@@ -1872,6 +2245,8 @@ class MainWindow(QMainWindow):
         if isinstance(focused, QPlainTextEdit) and focused.textCursor().hasSelection() and not focused.isReadOnly():
             focused.cut()
             return True
+        if self.selection_mask is not None:
+            return self.cut_selection()
         layer = self.document.layer(self.selected_id)
         if not layer:
             self.statusBar().showMessage("Sélectionnez un calque image à couper", 3000)
@@ -1899,9 +2274,15 @@ class MainWindow(QMainWindow):
             return False
         data = qimage_png(image)
         holder = {}
+        origin = None
+        if self._clipboard_origin and self._clipboard_origin[1] == (image.width(), image.height()):
+            origin = self._clipboard_origin[0]
 
         def add(doc):
-            holder["id"] = doc.add_image_bytes(data, "Image collée").id
+            layer = doc.add_image_bytes(data, "Image collée", center=origin is None)
+            if origin is not None:
+                layer.x, layer.y = float(origin[0]), float(origin[1])
+            holder["id"] = layer.id
 
         if not self.mutate("Coller une image", add):
             return False
@@ -1956,6 +2337,15 @@ class MainWindow(QMainWindow):
         vertical.setEnabled(editable_layer)
         horizontal.triggered.connect(self.flip_layer_horizontal)
         vertical.triggered.connect(self.flip_layer_vertical)
+        if self.selection_mask is not None:
+            menu.addSeparator()
+            menu.addAction("Copier vers un nouveau calque	Ctrl+J").triggered.connect(
+                lambda: self.selection_to_new_layer(False))
+            menu.addAction("Couper vers un nouveau calque	Ctrl+Maj+J").triggered.connect(
+                lambda: self.selection_to_new_layer(True))
+            menu.addAction("Effacer le contenu sélectionné	Suppr").triggered.connect(
+                self.clear_selection_content)
+            menu.addAction("Désélectionner	Ctrl+Maj+A").triggered.connect(self.deselect)
         menu.addSeparator()
         save_layer_action = menu.addAction("Enregistrer le calque sous…")
         save_layer_action.setEnabled(is_image)
@@ -2069,6 +2459,7 @@ class MainWindow(QMainWindow):
         self.project_path = None
         self.undo_stack.clear()
         self.undo_stack.setClean()
+        self._reset_selection()
         self.canvas.fit_document()
         self.update_title()
         self._warn_missing_fonts(document)
@@ -2132,6 +2523,7 @@ class MainWindow(QMainWindow):
         self.project_path = opened_path if opened_path.suffix.lower() == ".manta" else None
         self.undo_stack.clear()
         self.undo_stack.setClean()
+        self._reset_selection()
         self.canvas.fit_document()
         self.update_title()
         self.statusBar().showMessage(f"Projet chargé : {opened_path.name}", 5000)

@@ -90,6 +90,9 @@ class Layer:
     color_replacements: dict[str, str] = field(default_factory=dict)
     color_fills: list[dict] = field(default_factory=list)
     eraser_strokes: list[dict] = field(default_factory=list)
+    # Optional non-destructive layer mask: asset id of an 8-bit PNG the size of
+    # the source image (255 visible, 0 hidden). Used by selections and background removal.
+    mask: str | None = None
 
     @classmethod
     def from_dict(cls, raw: dict) -> Layer:
@@ -104,6 +107,8 @@ class Layer:
             raise ValueError("Identifiant de calque invalide")
         if layer.asset is not None and not isinstance(layer.asset, str):
             raise ValueError("Référence d'image invalide")
+        if layer.mask is not None and (not isinstance(layer.mask, str) or layer.kind != "image"):
+            layer.mask = None
         for name in ("name", "text", "font_family"):
             if not isinstance(getattr(layer, name), str):
                 setattr(layer, name, getattr(defaults, name))
@@ -300,6 +305,9 @@ class Document:
         for layer in doc.layers:
             if layer.kind == "image" and layer.asset not in assets:
                 raise ValueError(f"Image manquante pour le calque « {layer.name} »")
+            if layer.mask is not None and layer.mask not in assets:
+                # A lost mask only hides less: keep the layer, drop the mask.
+                layer.mask = None
         if len({l.id for l in doc.layers}) != len(doc.layers):
             raise ValueError("Identifiants de calques dupliqués")
         return doc
