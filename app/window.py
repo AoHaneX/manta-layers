@@ -486,6 +486,14 @@ class MainWindow(QMainWindow):
         layout.addRow("Adoucissement", self.selection_feather)
         layout.addRow(buttons)
         layout.addRow(self.show_selection_mask)
+        # Shared by the rectangle, ellipse and magic wand tools.
+        self.separate_selection_btn = QPushButton("Séparer en nouveau calque")
+        self.separate_selection_btn.setProperty("variant", "primary")
+        self.separate_selection_btn.setToolTip(
+            "Déplace la partie sélectionnée dans un nouveau calque · Ctrl+Maj+J"
+        )
+        self.separate_selection_btn.clicked.connect(lambda: self.selection_to_new_layer(cut=True))
+        layout.addRow(self.separate_selection_btn)
         self.wand_settings = QWidget()
         wand_layout = QFormLayout(self.wand_settings)
         wand_layout.setContentsMargins(0, 0, 0, 0)
@@ -1795,6 +1803,7 @@ class MainWindow(QMainWindow):
         has_selection = self.selection_mask is not None
         for action in getattr(self, "selection_actions", ()):
             action.setEnabled(has_selection)
+        self.separate_selection_btn.setEnabled(has_selection)
 
     def set_selection(self, mask, description: str):
         if mask is not None and selection.is_empty(mask):

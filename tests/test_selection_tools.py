@@ -208,3 +208,25 @@ def test_new_document_starts_without_selection(setup, monkeypatch):
 def test_viewport_points_are_used_by_drag_helper(setup):
     window, _layer = setup
     assert isinstance(window.canvas.mapFromScene(QPointF(1, 1)), QPoint)
+
+
+@pytest.mark.parametrize("tool", ["wand", "rect", "ellipse"])
+def test_separate_button_moves_the_selection_to_a_new_layer(setup, tool):
+    window, layer_id = setup
+    window.set_selection_tool(tool)
+    assert window.selection_settings.isVisibleTo(window.tools_tab)
+    assert not window.separate_selection_btn.isEnabled()  # nothing selected yet
+    if tool == "wand":
+        QTest.mouseClick(window.canvas.viewport(), Qt.MouseButton.LeftButton,
+                         pos=window.canvas.mapFromScene(QPointF(15, 25)))
+    else:
+        drag(window, QPointF(10, 20), QPointF(40, 50))
+    assert window.separate_selection_btn.isEnabled()
+    count = window.undo_stack.count()
+    window.separate_selection_btn.click()
+    new = window.document.layer(window.selected_id)
+    assert new.id != layer_id and len(window.document.layers) == 2
+    assert window.document.layer(layer_id).mask is not None
+    assert render_layers(window.document, [new.id]).getpixel((25, 35)) == (220, 20, 20, 255)
+    assert render_layers(window.document, [layer_id]).getpixel((25, 35))[3] == 0
+    assert window.undo_stack.count() == count + 1
