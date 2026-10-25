@@ -126,3 +126,8 @@ def test_apply_alpha_keeps_colours_and_multiplies_transparency():
 def test_encode_decode_roundtrip():
     mask = S.ellipse((17, 9), (1, 1, 16, 8), antialias=True)
     assert S.decode(S.encode(mask)).tobytes() == mask.tobytes()
+
+
+@pytest.mark.parametrize("side, expected", [(1, 1), (2, 4)])
+def test_tiny_ellipses_still_select_their_pixels(side, expected):
+    assert selected_count(S.ellipse((5, 5), (0, 0, side, side))) == expected

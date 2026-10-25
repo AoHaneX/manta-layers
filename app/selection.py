@@ -66,7 +66,12 @@ def _shape(size, box, antialias: bool, draw_ellipse: bool) -> Image.Image:
         return mask
     left, top, right, bottom = pixels
     draw = ImageDraw.Draw(mask)
-    (draw.ellipse if draw_ellipse else draw.rectangle)((left, top, right - 1, bottom - 1), fill=255)
+    # Pillow draws nothing for an ellipse narrower than three pixels: such a
+    # tiny ellipse is its whole box.
+    if draw_ellipse and min(right - left, bottom - top) >= 3:
+        draw.ellipse((left, top, right - 1, bottom - 1), fill=255)
+    else:
+        draw.rectangle((left, top, right - 1, bottom - 1), fill=255)
     return mask
 
 
