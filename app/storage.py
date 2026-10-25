@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED, BadZipFile
 
@@ -20,15 +21,24 @@ def save_project(
     used = {asset for layer in document.layers if layer.kind == "image"
             for asset in (layer.asset, layer.mask) if asset}
     try:
-        with ZipFile(tmp, "w", ZIP_DEFLATED) as z:
-            manifest = document.manifest()
-            if metadata:
-                manifest["template"] = metadata
-            z.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False))
-            for asset_id in sorted(used):
-                z.writestr(f"assets/{asset_id}.png", document.assets[asset_id])
-            if thumbnail:
-                z.writestr("thumbnail.png", thumbnail)
+        with open(tmp, "wb") as handle:
+            with ZipFile(handle, "w", ZIP_DEFLATED) as z:
+                manifest = document.manifest()
+                if metadata:
+                    manifest["template"] = metadata
+                z.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False))
+                for asset_id in sorted(used):
+                    z.writestr(f"assets/{asset_id}.png", document.assets[asset_id])
+                if thumbnail:
+                    z.writestr("thumbnail.png", thumbnail)
+            # Make sure the bytes reached the disk before replacing the old file.
+            handle.flush()
+            os.fsync(handle.fileno())
+        # Re-read the temporary file: a corrupted write never replaces a good project.
+        try:
+            open_project(tmp)
+        except ValueError as exc:
+            raise ValueError(f"La vérification de la sauvegarde a échoué : {exc}") from exc
         tmp.replace(destination)
     finally:
         tmp.unlink(missing_ok=True)

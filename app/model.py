@@ -12,7 +12,10 @@ from PIL import Image
 
 from .textpath import DEFAULT_CONTROLS, normalize_controls, normalize_shape
 
-PROJECT_VERSION = 1
+# Version 2 adds text path shapes, Bézier controls and layer masks.
+# Version 1 projects still open: their fields are converted on load.
+PROJECT_VERSION = 2
+SUPPORTED_VERSIONS = (1, 2)
 MAX_DIMENSION = 16384
 # Au-delà, le décodage et l'affichage d'un calque deviennent trop coûteux en mémoire
 # (une image RGBA de 8192 × 8192 occupe déjà 256 Mo une fois décodée).
@@ -293,8 +296,15 @@ class Document:
         if not isinstance(manifest, dict):
             raise ValueError("Manifeste de projet invalide")
         # L'ancien identifiant reste accepté pour ne pas casser les projets existants.
-        if manifest.get("format") not in ("MantaLayers", LEGACY_PROJECT_FORMAT) or manifest.get("version") != PROJECT_VERSION:
-            raise ValueError("Format ou version de projet non pris en charge")
+        if manifest.get("format") not in ("MantaLayers", LEGACY_PROJECT_FORMAT):
+            raise ValueError("Format de projet non pris en charge")
+        version = manifest.get("version")
+        if isinstance(version, int) and not isinstance(version, bool) and version > PROJECT_VERSION:
+            raise ValueError(
+                f"Ce projet utilise le format {version}, créé par une version plus récente de Manta Layers"
+            )
+        if version not in SUPPORTED_VERSIONS:
+            raise ValueError("Version de projet non prise en charge")
         raw_layers = manifest.get("layers")
         if not isinstance(raw_layers, list):
             raise ValueError("Liste de calques invalide")

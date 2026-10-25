@@ -48,7 +48,7 @@ class GuiSmokeTests(unittest.TestCase):
     def make_window(self):
         # Réglages isolés : les tests ne touchent pas aux préférences de l'utilisateur.
         settings = QSettings(str(Path(self.settings_dir) / "settings.ini"), QSettings.Format.IniFormat)
-        win = MainWindow(settings=settings)
+        win = MainWindow(settings=settings, recovery_dir=Path(self.settings_dir) / "recovery")
         self.addCleanup(self.close_window, win)
         return win
 

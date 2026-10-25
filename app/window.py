@@ -1,13 +1,16 @@
 """Fenêtre principale de Manta Layers, éditeur simple à calques pour Windows."""
 from __future__ import annotations
 
+import json
+import time
 from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
 from shutil import copy2
+from uuid import uuid4
 
 from PIL import Image
-from PySide6.QtCore import QPointF, QRectF, Qt, QSize, QSettings, QTimer
+from PySide6.QtCore import QLockFile, QPointF, QRectF, Qt, QSize, QSettings, QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QImage, QKeySequence, QPixmap, QShortcut, QUndoCommand, QUndoStack
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
@@ -48,6 +51,8 @@ FONT_SUFFIXES = {".ttf", ".otf", ".ttc"}
 # par l'utilisateur, rangées dans son dossier de données.
 BUNDLED_FONTS_DIR = ROOT / "fonts"
 USER_FONTS_DIR = user_data_directory() / "fonts"
+RECOVERY_INTERVAL_MS = 60_000
+NUDGE_MERGE_SECONDS = 1.0
 PROPERTY_LABELS = {
     "name": "Renommer le calque",
     "x": "Position X", "y": "Position Y",
@@ -67,13 +72,29 @@ PROPERTY_LABELS = {
 
 class DocumentCommand(QUndoCommand):
     def __init__(self, win: "MainWindow", before: Document, after: Document,
-                 description: str, selected_before: str | None, selected_after: str | None):
+                 description: str, selected_before: str | None, selected_after: str | None,
+                 merge_key=None):
         super().__init__(description)
         self.win = win
         self.before = before
         self.after = after
         self.selected_before = selected_before
         self.selected_after = selected_after
+        # Commands sharing a merge key and close in time collapse into one step.
+        self.merge_key = merge_key
+        self.timestamp = time.monotonic()
+
+    def id(self):
+        return 1 if self.merge_key is not None else -1
+
+    def mergeWith(self, other):
+        if (not isinstance(other, DocumentCommand) or other.merge_key != self.merge_key
+                or other.timestamp - self.timestamp > NUDGE_MERGE_SECONDS):
+            return False
+        self.after = other.after
+        self.selected_after = other.selected_after
+        self.timestamp = other.timestamp
+        return True
 
     def _apply(self, document: Document, selected: str | None):
         try:
@@ -154,7 +175,9 @@ class MainWindow(QMainWindow):
         self._build_actions()
         self.undo_stack.indexChanged.connect(self.update_title)
         self.undo_stack.cleanChanged.connect(self.update_title)
+        self._revision = 0
         self._load_demo()
+        self._setup_recovery()
 
     def load_custom_fonts(self):
         """Charge les polices livrées avec l'application puis celles importées."""
@@ -1020,6 +1043,7 @@ class MainWindow(QMainWindow):
     def install_document(self, doc: Document, selected: str | None):
         """Affiche un document. Si son rendu échoue, l'état courant reste intact."""
         scene = make_scene(doc, interactive=True)
+        self._revision += 1
         # The scene is replaced: an editor typing into the old one is dropped.
         self._close_inline_editor()
         self.refreshing = True
@@ -2630,6 +2654,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Enregistrement impossible", str(exc))
             return False
         self.undo_stack.setClean()
+        self._discard_recovery(self._session_id)  # the project file is now up to date
         self.statusBar().showMessage(f"Enregistré : {destination.name}", 5000)
         return True
 
@@ -2772,9 +2797,143 @@ class MainWindow(QMainWindow):
         return [url.toLocalFile() for url in mime_data.urls()
                 if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in IMAGE_SUFFIXES]
 
+    # --- Keyboard nudging ---------------------------------------------------------------
+
+    def nudge_layer(self, dx: float, dy: float) -> bool:
+        """Move the selected layer with the arrow keys; a burst of presses is one undo step."""
+        layer = self.document.layer(self.selected_id)
+        if layer is None or layer.locked:
+            return False
+        before = self.document.clone()
+        after = before.clone()
+        target = after.layer(layer.id)
+        target.x += dx
+        target.y += dy
+        self._push(DocumentCommand(self, before, after, "Déplacer au clavier", layer.id, layer.id,
+                                   merge_key=("nudge", layer.id)))
+        return True
+
+    # --- Session recovery ------------------------------------------------------------
+    # While the document has unsaved changes, a copy is written every minute in
+    # the recovery folder. A lock file marks the session as alive; at start-up,
+    # copies whose lock is free belong to a session that ended unexpectedly.
+
+    def _setup_recovery(self):
+        self._session_id = uuid4().hex
+        self._recovery_lock = None
+        self._autosaved_revision = None
+        try:
+            self.recovery_dir.mkdir(parents=True, exist_ok=True)
+            lock = QLockFile(str(self.recovery_dir / f"{self._session_id}.lock"))
+            if lock.tryLock(0):
+                self._recovery_lock = lock
+        except OSError:
+            pass
+        self.autosave_timer = QTimer(self)
+        self.autosave_timer.setInterval(RECOVERY_INTERVAL_MS)
+        self.autosave_timer.timeout.connect(self.autosave_now)
+        self.autosave_timer.start()
+        QTimer.singleShot(0, self.offer_session_recovery)
+
+    def _recovery_files(self, session_id: str) -> tuple[Path, Path]:
+        return (self.recovery_dir / f"{session_id}.manta", self.recovery_dir / f"{session_id}.json")
+
+    def autosave_now(self) -> bool:
+        if self._recovery_lock is None or self.undo_stack.isClean():
+            return False
+        if self._autosaved_revision == self._revision:
+            return False  # nothing changed since the last copy
+        project, meta = self._recovery_files(self._session_id)
+        try:
+            save_project(self.document, project)
+            meta.write_text(json.dumps({
+                "project_path": str(self.project_path) if self.project_path else None,
+                "saved_at": time.time(),
+            }), encoding="utf-8")
+        except (OSError, ValueError):
+            return False
+        self._autosaved_revision = self._revision
+        return True
+
+    def _discard_recovery(self, session_id: str):
+        for path in self._recovery_files(session_id):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._autosaved_revision = None
+
+    def recovery_candidates(self) -> list[dict]:
+        """Copies left by sessions that are no longer running, newest first."""
+        candidates = []
+        if not self.recovery_dir.is_dir():
+            return candidates
+        for meta_path in self.recovery_dir.glob("*.json"):
+            session_id = meta_path.stem
+            project = self.recovery_dir / f"{session_id}.manta"
+            if session_id == getattr(self, "_session_id", None) or not project.is_file():
+                continue
+            lock = QLockFile(str(self.recovery_dir / f"{session_id}.lock"))
+            if not lock.tryLock(0):
+                continue  # another Manta Layers window still owns this copy
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                meta = {}
+            if not isinstance(meta, dict):
+                meta = {}
+            candidates.append({"id": session_id, "project": project, "meta": meta, "lock": lock})
+        return sorted(candidates, key=lambda item: item["meta"].get("saved_at") or 0, reverse=True)
+
+    def offer_session_recovery(self) -> bool:
+        candidates = self.recovery_candidates()
+        if not candidates:
+            return False
+        newest = candidates[0]
+        saved_at = newest["meta"].get("saved_at")
+        when = time.strftime("%d/%m/%Y à %H:%M", time.localtime(saved_at)) if saved_at else "une date inconnue"
+        answer = QMessageBox.question(
+            self, "Restaurer la session",
+            f"Manta Layers s'est fermé de façon imprévue. Une copie de travail du {when} a été conservée.\n\n"
+            "Restaurer cette copie ? Sinon, elle sera supprimée.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        restored = False
+        if answer == QMessageBox.StandardButton.Yes:
+            try:
+                document = open_project(newest["project"])
+                self.install_document(document, None)
+            except Exception as exc:
+                QMessageBox.warning(self, "Restauration impossible",
+                                    f"{exc}\n\nLa copie reste disponible : {newest['project']}")
+                for candidate in candidates:
+                    candidate["lock"].unlock()
+                return False
+            original = newest["meta"].get("project_path")
+            self.project_path = Path(original) if original and Path(original).suffix == ".manta" else None
+            self.undo_stack.clear()
+            self.undo_stack.resetClean()  # restored work is unsaved
+            self._reset_selection()
+            self.canvas.fit_document()
+            self.update_title()
+            restored = True
+        for candidate in candidates:
+            self._discard_recovery(candidate["id"])
+            candidate["lock"].unlock()
+        return restored
+
+    def _close_recovery(self):
+        self.autosave_timer.stop()
+        self._discard_recovery(self._session_id)
+        if self._recovery_lock is not None:
+            self._recovery_lock.unlock()
+            self._recovery_lock = None
+
     def closeEvent(self, event):
         if self.maybe_save():
             self.refreshing = True
+            self._close_recovery()
             event.accept()
         else:
             event.ignore()

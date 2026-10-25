@@ -999,6 +999,14 @@ class CanvasView(QGraphicsView):
             self.window.delete_selection_or_layer()
             event.accept()
             return
+        arrows = {Qt.Key.Key_Left: (-1, 0), Qt.Key.Key_Right: (1, 0),
+                  Qt.Key.Key_Up: (0, -1), Qt.Key.Key_Down: (0, 1)}
+        if event.key() in arrows and not self.window.any_tool_active():
+            step = 10 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1
+            dx, dy = arrows[event.key()]
+            if self.window.nudge_layer(dx * step, dy * step):
+                event.accept()
+                return
         if event.key() == Qt.Key.Key_BracketLeft:
             self.window.adjust_eraser_size(-1)
             event.accept()
