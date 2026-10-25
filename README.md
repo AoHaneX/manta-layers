@@ -15,26 +15,28 @@ Pour refaire l'installation à la main, lancez `installer_dependances.bat`. Les 
 
 ### Linux / macOS (développement)
 
-Le script `lancer_linux_mac.sh` est fourni à titre expérimental. Cible principale : Windows 11.
+Le script `lancer_linux_mac.sh` est fourni à titre expérimental (Python 3.11 ou plus récent requis ; lancer avec `bash lancer_linux_mac.sh`). Cible principale : Windows 11.
 
 ## Fonctionnalités implémentées
 
 | Fonctionnalité | État |
 |---|---|
 | Création de projet aux dimensions souhaitées, fond transparent/blanc/noir | ✅ |
-| Import PNG, JPG/JPEG, WebP, BMP et GIF fixe (première image) | ✅ |
+| Import PNG, JPG/JPEG, WebP, BMP et GIF fixe (première image), jusqu'à 67 mégapixels par image (8192 × 8192) | ✅ |
 | Calques indépendants, sélection, renommage, duplication, suppression | ✅ |
 | Réorganisation, masquage, verrouillage, opacité | ✅ |
 | Déplacement à la souris, redimensionnement par quatre poignées, rotation par poignée | ✅ |
 | Coordonnées, échelles et angles ajustables précisément dans le panneau de propriétés | ✅ |
-| Calques de texte simples : contenu, police, taille, couleur, rotation | ✅ |
+| Calques de texte multilignes : contenu, police, taille, couleur, fond, rotation | ✅ |
 | Annuler/rétablir, onglet Historique des actions (jusqu'à 100) | ✅ |
 | Projet modifiable sauvegardé dans un fichier `.manta` (ZIP/JSON + PNG d'origine) | ✅ |
+| Modèles locaux réutilisables avec galerie, miniature et ressources intégrées | ✅ |
 | Export image composite PNG avec alpha, JPEG sur fond blanc, WebP | ✅ |
 | Mascotte et ressources graphiques incluses ; exemple `.manta` | ✅ |
 | Texte courbé et texte sur trajectoire éditables | ✅ |
 | Déformation Warp réelle des formes de lettres | **Pas encore** — architecture préparée |
-| Effets colorimétriques, recadrage, masques, IA | **Pas encore** — après V0.1 |
+| Pots de peinture, recolorisation et gomme non destructifs | ✅ |
+| Filtres et réglages d'image (luminosité, contraste…), recadrage, masques, IA | **Pas encore** — après V0.1 |
 | Historique conservé après fermeture du logiciel | **Pas encore** — historique de session uniquement |
 | Installation sous forme de `.exe` autonome | **Pas encore** — lancement `.bat` + Python |
 
@@ -43,33 +45,36 @@ Le script `lancer_linux_mac.sh` est fourni à titre expérimental. Cible princip
 - **Déplacement** : sélectionne le calque dans l'image, puis fais-le glisser avec le bouton gauche.
 - **Redimensionnement** : sélectionne le calque ; tire sur les **petits carrés cyan** aux quatre coins. Pour un contrôle plus précis, modifie Échelle X / Y dans le panneau de droite.
 - **Rotation** : tire sur la **poignée jaune** située au-dessus de l'objet, ou ajuste l'angle à droite ; **Maj** contraint l'angle par pas de 15°.
-- **Panoramique** : maintiens le **bouton central** de la souris et glisse sur le canvas ; **molette** pour zoomer ; bouton « Cadrer le document » pour recentrer.
+- **Panoramique** : maintiens le **bouton central** de la souris et glisse sur le canvas ; **molette** pour zoomer, de 1 % à 6400 % ; bouton « Cadrer le document » pour recentrer.
 - **Opacité** : 0 % = invisible, 100 % = opaque.
 - **Visibilité** : clique sur l'œil à gauche du nom. Son fond devient cyan lorsque le calque est visible et transparent lorsqu'il est masqué.
 - **Type de calque** : une petite image ou un `T`, placé entre l'œil et le nom, identifie respectivement les calques image et texte.
 - **Import rapide** : glisse une ou plusieurs images depuis l'Explorateur directement sur le canvas ; un calque est créé pour chaque image.
 - **Ordre** : utilise les flèches ↑ et ↓ directement sur la ligne du calque.
 - **Ordre manuel** : maintiens la poignée ≡ d'un calque puis fais-la glisser vers sa nouvelle position dans la liste.
-- **Verrouillage** : clique sur le cadenas de la ligne. Le bouton devient bleu et le calque ne peut plus être transformé, modifié, dupliqué ou supprimé jusqu'à son déverrouillage.
+- **Verrouillage** : clique sur le cadenas de la ligne. Le bouton devient bleu et le calque ne peut plus être transformé, modifié, déplacé dans la liste, dupliqué ou supprimé jusqu'à son déverrouillage.
 - **Menu contextuel** : clic droit sur le canvas pour copier, couper, coller, verrouiller, retourner ou supprimer un calque.
 - **Symétrie** : retourne un calque image horizontalement ou verticalement sans modifier son fichier source.
 - **Propriétés contextuelles** : contenu, police, taille, couleur et édition ne sont affichés que lorsqu'un calque texte est sélectionné.
-- **Texte lisible** : les nouveaux calques texte utilisent le noir par défaut. Le contenu se modifie dans une zone multiligne avec curseur et défilement vertical ; la couleur des caractères et la couleur de fond disposent de contrôles séparés, avec un fond transparent par défaut.
-- **Texte sur trajectoire** : les calques texte proposent Droit, Arc vers le haut, Arc vers le bas, U, U inversé et Vague. L'intensité, l'espacement, l'alignement et l'orientation des caractères restent modifiables sans rasteriser le texte.
-- **Manipulation directe** : sélectionne un texte courbé pour afficher sa trajectoire pointillée et sa poignée cyan. Fais glisser la poignée pour régler la courbure en temps réel ; tout le glissement constitue une seule opération dans l'historique. Le guide peut être masqué et n'apparaît jamais dans les exports.
-- **Polices personnalisées** : utilise `Fichier > Importer une police…` pour copier durablement des fichiers TTF, OTF ou TTC dans le dossier `fonts`. Ils sont rechargés aux lancements suivants.
+- **Texte lisible** : les nouveaux calques texte utilisent le noir par défaut. Le contenu se modifie dans une zone multiligne avec curseur et défilement vertical ; chaque ligne est conservée au rendu. La couleur des caractères et la couleur de fond disposent de contrôles séparés, avec un fond transparent par défaut ; le fond épouse le texte.
+- **Texte sur trajectoire** : le curseur de -100 à +100 règle une courbure continue vers le bas ou vers le haut ; chaque ligne suit la même courbe. Le réglage au clavier ou à la molette est enregistré après une courte pause, en une seule étape d'historique. L'espacement et l'alignement restent modifiables sans rasteriser le texte.
+- **Manipulation directe** : sélectionne un texte courbé pour afficher sa trajectoire pointillée et sa poignée cyan. Fais glisser la poignée pour régler la courbure en temps réel ; tout le glissement constitue une seule opération dans l'historique. Le guide n'apparaît jamais dans les exports.
+- **Polices personnalisées** : utilise `Fichier > Importer une police…` pour copier durablement des fichiers TTF, OTF ou TTC dans ton dossier utilisateur (`%LOCALAPPDATA%\MantaLayers\fonts` sous Windows, `~/.local/share/MantaLayers/fonts` ailleurs). Elles sont rechargées aux lancements suivants, de même que les polices placées dans le dossier `fonts` de l'application. Les polices ne sont pas intégrées au fichier `.manta` : à l'ouverture d'un projet, Manta Layers signale celles qui manquent et conserve leur nom tant que tu n'en choisis pas une autre.
+- **Modèles** : utilise `Fichier > Enregistrer comme modèle…`, puis `Nouveau projet > Depuis un modèle`. Chaque modèle contient ses images et sa miniature ; les calques instanciés sont verrouillés par défaut et le modèle original reste inchangé.
+- **Police mémorisée** : la dernière police choisie devient celle des prochains calques texte, y compris après redémarrage. Une police système de remplacement est utilisée si elle n'est plus disponible.
 - **Panneau contextuel** : les propriétés du calque sont visibles uniquement dans l'onglet Calques.
 - **Espace de travail** : replie ou rouvre le panneau d'outils gauche avec sa languette ou avec `F9`.
-- **Dimensions finales** : clique sur les dimensions affichées sous le titre pour modifier la largeur et la hauteur du document. La zone de travail et l'export utilisent immédiatement ce nouveau format.
-- **Pipette et couleur** : le petit bouton pipette placé sous chaque aperçu de couleur permet de prélever directement un pixel du canvas. Dans Outils, l'aperçu et les champs HEX, RVB et HSL restent synchronisés et peuvent tous être modifiés ; sous la couleur d'un texte, la pipette applique le prélèvement au texte sélectionné.
-- **Pots de peinture** : le pot simple remplit uniquement la zone de pixels similaires contigus ; le pot accompagné d'un `+` remplace les pixels similaires partout sur le calque. La tolérance RVB est réglable de 0 à 255 (15 par défaut, 0 pour une correspondance exacte) et ignore les pixels entièrement transparents.
+- **Dimensions finales** : clique sur les dimensions affichées sous le titre pour modifier, dans une seule fenêtre, la largeur et la hauteur du document. La zone de travail et l'export utilisent immédiatement ce nouveau format.
+- **Pipette et couleur** : le petit bouton pipette placé sous chaque aperçu de couleur permet de prélever directement un pixel d'un calque image du canvas. Dans Outils, la couleur prélevée devient la couleur courante ; l'aperçu et les champs HEX, RVB et HSL restent synchronisés et peuvent tous être modifiés. Sous la couleur d'un texte, la pipette applique le prélèvement au texte sélectionné.
+- **Calque visé par les outils** : la gomme et les pots agissent sur le calque sélectionné, ou à défaut sur le dernier calque choisi. Un clic d'outil sur le canvas ne change jamais la sélection.
+- **Pots de peinture** : clique sur une couleur du calque visé pour la remplacer par la couleur courante. Le pot simple remplit uniquement la zone de pixels similaires contigus ; le pot accompagné d'un `+` remplace les pixels similaires partout sur le calque. La tolérance RVB est réglable de 0 à 255 (15 par défaut, 0 pour une correspondance exacte) et ignore les pixels entièrement transparents, y compris ceux déjà gommés.
 - **Recolorisation intelligente** : l'option « Préserver ombres et reflets » applique la nouvelle teinte tout en conservant les différences de luminosité de l'image d'origine. Les contours du pixel art restent nets, sans anticrénelage ajouté.
 - **Modifications non destructives** : les remplissages et remplacements de couleur sont conservés comme réglages du calque, annulables dans l'historique, sans altérer l'image source intégrée au projet.
 - **Gomme** : active-la avec `E` ou son icône. Les tailles prédéfinies 1, 2, 4, 8, 16 et 32 px restent exprimées dans les pixels réels du calque, quel que soit le zoom ; une taille personnalisée jusqu'à 2048 px est également disponible.
-- **Gomme Pixel Art ou classique** : le mode Pixel Art efface sans anticrénelage avec une empreinte carrée ou circulaire. Le mode classique utilise une gomme ronde avec dureté et opacité réglables. L'effacement est visible en temps réel pendant le glissement ; maintiens le clic pour tracer sans trous, ou utilise Maj + clic pour relier le dernier point en ligne droite.
+- **Gomme Pixel Art ou classique** : le mode Pixel Art efface sans anticrénelage avec une empreinte carrée ou circulaire. Le mode classique utilise une gomme ronde avec dureté réglable. Dans les deux modes, l'opacité s'applique une fois par trait : un trait à 25 % retire 25 % de l'opacité, même en repassant au même endroit pendant le glissement. L'effacement est visible en temps réel pendant le glissement ; maintiens le clic pour tracer sans trous, ou utilise Maj + clic pour relier le dernier point en ligne droite.
 - **Options contextuelles** : tolérance et recolorisation ne s'affichent que lorsqu'un pot de peinture est actif. Les réglages de taille, forme, mode, dureté et opacité de gomme ne s'affichent que lorsque la gomme est active.
 - **Historique de gomme** : un glissement complet correspond à une seule opération Annuler/Rétablir. Les traits restent non destructifs dans le projet `.manta`, respectent le verrouillage et l'export conserve leur transparence.
-- **Calque texte** : bouton « Ajouter du texte », puis onglet « Propriétés ».
+- **Calque texte** : bouton « Ajouter du texte », puis section « Propriétés du calque » sous l'onglet « Calques ».
 - **Historique** : onglet « Historique » ; clique sur une ancienne étape pour revenir à cet état.
 - **Fond transparent** : damier visible dans l'éditeur ; export PNG et WebP conservent la transparence.
 
@@ -109,23 +114,32 @@ MantaLayers/
 ├── assets/
 │   ├── manta.png               # illustration originale PNG RGBA
 │   ├── manta_icon.png          # ancienne déclinaison d'icône conservée
-│   └── manta.ico               # icône Windows
-├── fonts/                           # polices personnalisées importées
+│   ├── manta.ico               # icône Windows
+│   └── sidebar_ocean.png       # fond du panneau gauche
+├── fonts/                      # polices livrées avec l'application (facultatif)
 ├── app/
 │   ├── model.py                # document/calques, pas de dépendance Qt
 │   ├── storage.py              # format natif de projet .manta
+│   ├── templates.py            # bibliothèque locale de modèles
+│   ├── paths.py                # dossier de données de l'utilisateur
 │   ├── graphics.py             # canvas Qt, transformation et rendu
 │   ├── theme.py                # tokens et feuille de style ReefKit centralisés
+│   ├── icons.py                # pictogrammes vectoriels
+│   ├── widgets.py              # widgets de la liste des calques et du panneau
+│   ├── dialogs.py              # nouveau projet et dimensions du document
 │   └── window.py               # fenêtre, actions, historique, contrôles
 ├── exemples/
 │   └── Manta_Demo.manta        # projet modifiable avec la mascotte
 └── tests/
     ├── test_model.py           # tests du modèle et du format de projet
-    ├── test_color_fill.py      # tolérance, zones contiguës, alpha et recolorisation
+    ├── test_templates.py       # bibliothèque de modèles
+    ├── test_color_fill.py      # tolérance, zones contiguës, alpha, gomme et recolorisation
     └── test_gui_smoke.py       # tests d'intégration GUI Qt (offscreen)
 ```
 
-**Choix architecturaux :** modèle `Document`/`Layer` isolé de Qt ; affichage `QGraphicsScene` ; chaque modification validée crée un `QUndoCommand` dans `QUndoStack` ; historique de snapshots du modèle (plus facile à comprendre pour cette première version, à remplacer par des commandes ciblées lorsque le volume devient important) ; export via scène temporaire sans handles ni rectangles de sélection ; fichiers projet en ZIP avec manifeste JSON et les images PNG sources.
+**Choix architecturaux :** modèle `Document`/`Layer` isolé de Qt ; affichage `QGraphicsScene` ; chaque modification validée crée un `QUndoCommand` dans `QUndoStack` ; historique de snapshots du modèle (plus facile à comprendre pour cette première version, à remplacer par des commandes ciblées lorsque le volume devient important) ; rendu des calques image mis en cache, si bien qu'une action ne recalcule que les calques modifiés ; une action dont le rendu échoue est annoncée et n'entre pas dans l'historique ; export via scène temporaire sans handles ni rectangles de sélection ; fichiers projet en ZIP avec manifeste JSON et les images PNG sources.
+
+Les modèles et les polices importées sont rangés dans le dossier de données de l'utilisateur (`%LOCALAPPDATA%\MantaLayers` sous Windows), jamais dans le dossier de l'application.
 
 L'interface applique la charte ReefKit commune : palette bleu nuit/cyan, composants légers sans aplats derrière les libellés, focus clavier visible, action d'import principale et suppression clairement signalée comme destructive. Les valeurs partagées sont regroupées dans `app/theme.py`.
 
@@ -135,7 +149,7 @@ Le panneau droit conserve la taille utile de ses onglets et de ses champs. Lorsq
 
 ## Tests
 
-Une fois les dépendances installées, ouvre un terminal dans ce dossier et exécute :
+Une fois les dépendances installées, ouvre un terminal dans ce dossier et exécute (ou double-clique sur `tests_windows.bat`) :
 
 ```bat
 .venv\Scripts\python.exe -m unittest discover -s tests -v
@@ -148,8 +162,9 @@ Avant toute modification majeure : création d'un projet vide, import de 3 image
 - La déformation par enveloppe Warp des formes de lettres n'est pas encore implémentée ; le modèle prévoit déjà un emplacement distinct pour ce futur moteur.
 - L'historique est limité à 100 commandes et **n'est pas sérialisé** dans `.manta`.
 - Les commandes mémorisent des snapshots du modèle ; c'est simple pour démarrer, mais à optimiser avant les très gros documents.
-- Pas de redimensionnement du canvas après sa création, ni de recadrage, masques, filtres, calques de réglage ou PSD.
-- Gestion de très grandes images potentiellement lente (rendu Qt simple, pas de cache de tuiles).
+- Le redimensionnement du document change la zone de travail sans déplacer les calques ; pas encore de recadrage, masques, filtres, calques de réglage ou PSD.
+- Images limitées à 67 mégapixels par calque ; le premier affichage d'une très grande image reste lent (pas de cache de tuiles).
+- Les polices ne sont pas intégrées aux projets `.manta`.
 - La présentation du canvas n'effectue pas d'anti-aliasing des images pour préserver le pixel-art ; le rendu de texte dépend des polices installées.
 - L'application a été conçue pour Windows mais cette archive **ne contient pas de binaire `.exe` autonome**.
 
@@ -161,3 +176,13 @@ Avant toute modification majeure : création d'un projet vide, import de 3 image
 4. Quand les fonctionnalités sont stables, envisager **PyInstaller** et intégration dans le launcher ReefKit.
 
 Les images de mascotte restent les ressources provisoires fournies par le propriétaire du projet ; aucune licence de redistribution distincte n'est présumée.
+
+## Licence
+
+Ce projet est distribué sous la licence **PolyForm Strict 1.0.0**.
+
+Le code source est accessible publiquement. Son utilisation non commerciale est autorisée.
+
+La modification, la redistribution et l'exploitation commerciale du logiciel sont interdites sans autorisation préalable.
+
+Les mascottes, illustrations et logos du projet restent protégés et ne sont pas librement réutilisables.

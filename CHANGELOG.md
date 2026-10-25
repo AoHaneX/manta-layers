@@ -1,5 +1,31 @@
 # Journal des versions
 
+## Non publié
+
+### Corrections
+- Une image impossible à afficher n'entre plus dans l'historique et ne bloque plus l'interface ; les images de plus de 67 mégapixels sont refusées dès l'import.
+- Le zoom n'est plus bloqué sur les très petits ou très grands documents ; plage portée de 1 % à 6400 %.
+- L'opacité de la gomme s'applique une fois par trait au lieu de s'additionner à chaque empreinte (aperçu et rendu final).
+- Les retours à la ligne du texte sont conservés au rendu ; chaque ligne suit la courbure.
+- Le fond et le cadre de sélection d'un texte épousent les lettres au lieu d'être quatre fois trop hauts.
+- La courbure réglée au clavier, à la molette ou par clic sur le curseur est enregistrée.
+- La pipette fournit la couleur de remplissage : le pot remplace la couleur cliquée par celle-ci, sans blocage « déjà appliquée ».
+- Modifier un champ des propriétés n'arrondit plus les autres valeurs (position, échelle, courbure).
+- Un calque verrouillé ne peut plus être déplacé dans la liste par glisser-déposer.
+- Un remplissage contigu ne traverse plus une zone gommée auparavant ; les anciens projets gardent leur rendu.
+- Le chemin du projet ne change qu'après un enregistrement réussi ; une police invalide n'est plus copiée.
+
+### Améliorations
+- Rendu des calques image mis en cache : une action ne recalcule plus que les calques modifiés.
+- Damier de transparence dessiné par motif, beaucoup plus rapide.
+- La gomme et les pots visent le dernier calque sélectionné, même après un clic dans le vide.
+- Poignée de rotation à distance constante à l'écran, quels que soient l'échelle et le zoom.
+- Polices importées rangées dans le dossier de l'utilisateur ; les polices absentes d'un projet ouvert sont signalées.
+- Dimensions du document modifiables dans une seule fenêtre.
+- Validation renforcée des fichiers `.manta` corrompus.
+- Scripts : vérification de Python 3.11+, mise à jour de pip non bloquante, reprise d'une installation interrompue sous Linux/macOS.
+- Code : `window.py` découpé (`icons.py`, `widgets.py`, `dialogs.py`, `paths.py`), couleurs centralisées dans le thème, code mort retiré, tests de non-régression ajoutés et isolés des réglages de l'utilisateur.
+
 ## 0.1.0 — 22 octobre 2026
 
 - Création de l'éditeur PySide6 et interface ReefKit.
@@ -70,12 +96,13 @@
 - Séparation contextuelle des options : tolérance/recolorisation pour les seaux, réglages de brosse pour la gomme.
 - Passage du texte nouvellement créé au noir par défaut et ajout d'une zone d'édition multiligne défilable.
 - Séparation des propriétés Couleur du texte et Couleur de fond, avec fond transparent réversible.
-- Ajout du texte éditable sur trajectoire : droit, arcs haut/bas, U, U inversé et vague.
+- Ajout du texte éditable sur trajectoire, avec une courbure unique signée de -100 (vers le bas) à +100 (vers le haut) ; les anciens modes arcs, U et vague sont convertis automatiquement.
 - Réglages non destructifs d'intensité, d'espacement, d'alignement et d'orientation des caractères.
 - Ajout d'une courbe guide pointillée et d'une poignée cyan manipulable directement sur le canvas.
 - Regroupement d'un glissement complet de poignée en une seule commande Annuler/Rétablir.
 - Conservation des trajectoires dans les projets `.manta` et utilisation du même rendu pour le canvas et l'export.
 - Préparation du modèle pour une future déformation Warp sans rasterisation du texte.
+- Bibliothèque locale de modèles : enregistrement, galerie avec miniatures, renommage, duplication, suppression et création d'un projet depuis un modèle.
 
 ## Prévu ensuite
 

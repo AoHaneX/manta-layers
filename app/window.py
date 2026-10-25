@@ -1,289 +1,57 @@
 """Fenêtre principale de Manta Layers, éditeur simple à calques pour Windows."""
 from __future__ import annotations
 
-from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
 from shutil import copy2
 
 from PIL import Image
-from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QSize, QRectF, Signal, QTimer
-from PySide6.QtGui import QAction, QColor, QDrag, QFont, QFontDatabase, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut, QUndoCommand, QUndoStack
+from PySide6.QtCore import QPointF, Qt, QSize, QSettings, QTimer
+from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QImage, QKeySequence, QPixmap, QShortcut, QUndoCommand, QUndoStack
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
-    QFontComboBox, QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLayout, QListWidget,
+    QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
+    QFontComboBox, QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLayout,
     QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
     QSlider, QSpinBox, QSplitter, QGraphicsPixmapItem, QTabWidget, QToolButton,
     QUndoView, QVBoxLayout, QWidget, QLineEdit, QPlainTextEdit,
 )
 
+from . import __version__
+from .dialogs import NewProjectDialog, ResizeDocumentDialog
 from .graphics import CanvasView, make_scene, qimage_png, render_document
+from .icons import (
+    alignment_icon, color_tool_icon, eye_icon, history_arrow_icon, layer_kind_icon, lock_icon,
+    sidebar_arrow_icon,
+)
 from .model import Document
+from .paths import user_data_directory
 from .storage import open_project, save_project
-from .theme import COLORS, STYLE
+from .templates import list_templates, save_template
+from .theme import COLORS, STYLE, dialog_button_style
+from .widgets import CommitPlainTextEdit, LayerDragHandle, LayerListWidget, SidebarBackground
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 FONT_SUFFIXES = {".ttf", ".otf", ".ttc"}
-FONTS_DIR = ROOT / "fonts"
+# Polices livrées avec l'application (lecture seule) puis polices importées
+# par l'utilisateur, rangées dans son dossier de données.
+BUNDLED_FONTS_DIR = ROOT / "fonts"
+USER_FONTS_DIR = user_data_directory() / "fonts"
+PROPERTY_LABELS = {
+    "name": "Renommer le calque",
+    "x": "Position X", "y": "Position Y",
+    "sx": "Échelle X", "sy": "Échelle Y",
+    "rotation": "Rotation",
+    "opacity": "Opacité",
+    "text": "Contenu du texte",
+    "font_family": "Police du texte",
+    "font_size": "Taille du texte",
+    "curve_intensity": "Courbure du texte",
+    "character_spacing": "Espacement des caractères",
+    "path_alignment": "Alignement du texte",
+}
 
-
-class CommitPlainTextEdit(QPlainTextEdit):
-    """Zone multiligne qui valide une seule fois lorsque l'utilisateur la quitte."""
-
-    editingFinished = Signal()
-
-    def focusOutEvent(self, event):
-        super().focusOutEvent(event)
-        self.editingFinished.emit()
-
-
-def lock_icon(locked: bool) -> QIcon:
-    """Cadenas vectoriel lisible, indépendant des emojis installés."""
-    pixmap = QPixmap(18, 18)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    # Sur l'état verrouillé, le bouton est cyan : le cadenas doit donc rester
-    # bleu nuit pour conserver un contraste net au lieu de disparaître dans le fond.
-    color = QColor("#00192D" if locked else "#ACC9D4")
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.setPen(QPen(color, 2))
-    painter.setBrush(color if locked else Qt.BrushStyle.NoBrush)
-    painter.drawRoundedRect(QRectF(3, 8, 12, 8), 2, 2)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.drawArc(QRectF(5, 2, 8, 11), 0, 180 * 16)
-    painter.end()
-    return QIcon(pixmap)
-
-
-def eye_icon(visible: bool) -> QIcon:
-    """Icône de visibilité lisible sur les deux états du bouton."""
-    pixmap = QPixmap(18, 18)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    color = QColor("#00192D" if visible else "#ACC9D4")
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.setPen(QPen(color, 1.8))
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.drawEllipse(QRectF(2, 5, 14, 8))
-    painter.setBrush(color)
-    painter.drawEllipse(QRectF(7, 7, 4, 4))
-    if not visible:
-        painter.setPen(QPen(color, 2))
-        painter.drawLine(3, 3, 15, 15)
-    painter.end()
-    return QIcon(pixmap)
-
-
-def layer_kind_icon(kind: str) -> QPixmap:
-    """Pictogramme stable pour différencier image et texte sans dépendre d'un emoji."""
-    pixmap = QPixmap(18, 18)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    color = QColor("#ACC9D4")
-    painter.setPen(QPen(color, 1.6))
-    if kind == "text":
-        font = painter.font()
-        font.setBold(True)
-        font.setPixelSize(15)
-        painter.setFont(font)
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "T")
-    else:
-        painter.drawRoundedRect(QRectF(2, 3, 14, 12), 2, 2)
-        painter.drawEllipse(QRectF(11, 5, 2, 2))
-        painter.drawLine(4, 13, 8, 9)
-        painter.drawLine(8, 9, 11, 12)
-        painter.drawLine(11, 12, 14, 9)
-    painter.end()
-    return pixmap
-
-
-def alignment_icon(alignment: str) -> QIcon:
-    """Petite icône d'alignement indépendante de la police du système."""
-    pixmap = QPixmap(20, 20)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setPen(QPen(QColor("#ACC9D4"), 1.8))
-    widths = (13, 9, 13, 7)
-    for index, width in enumerate(widths):
-        if alignment == "left":
-            x = 3
-        elif alignment == "right":
-            x = 17 - width
-        else:
-            x = (20 - width) / 2
-        y = 4 + index * 4
-        painter.drawLine(QPointF(x, y), QPointF(x + width, y))
-    painter.end()
-    return QIcon(pixmap)
-
-
-def sidebar_arrow_icon(points_right: bool) -> QIcon:
-    """Flèche vectorielle nette pour la languette du panneau gauche."""
-    pixmap = QPixmap(18, 18)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    pen = QPen(QColor("#001219"), 2.6)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    if points_right:
-        painter.drawLine(QPointF(6, 3.5), QPointF(11.5, 9))
-        painter.drawLine(QPointF(11.5, 9), QPointF(6, 14.5))
-    else:
-        painter.drawLine(QPointF(12, 3.5), QPointF(6.5, 9))
-        painter.drawLine(QPointF(6.5, 9), QPointF(12, 14.5))
-    painter.end()
-    return QIcon(pixmap)
-
-
-def history_arrow_icon(redo: bool) -> QIcon:
-    """Flèche d'historique courbe et antialiasée."""
-    pixmap = QPixmap(24, 24)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    pen = QPen(QColor("#ACC9D4"), 2.2)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    path = QPainterPath(QPointF(5 if not redo else 19, 15))
-    path.cubicTo(
-        QPointF(7 if not redo else 17, 7),
-        QPointF(15 if not redo else 9, 6),
-        QPointF(19 if not redo else 5, 12),
-    )
-    painter.drawPath(path)
-    painter.setBrush(QColor("#ACC9D4"))
-    if redo:
-        arrow = QPainterPath(QPointF(19, 15))
-        arrow.lineTo(QPointF(13.5, 14))
-        arrow.lineTo(QPointF(17.5, 10))
-    else:
-        arrow = QPainterPath(QPointF(5, 15))
-        arrow.lineTo(QPointF(10.5, 14))
-        arrow.lineTo(QPointF(6.5, 10))
-    arrow.closeSubpath()
-    painter.drawPath(arrow)
-    painter.end()
-    return QIcon(pixmap)
-
-
-def color_tool_icon(tool: str) -> QIcon:
-    """Dessine les outils couleur sans dépendre des emojis du système."""
-    pixmap = QPixmap(20, 20)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    color = QColor("#ACC9D4")
-    painter.setPen(QPen(color, 2))
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    if tool == "picker":
-        painter.drawLine(5, 15, 15, 5)
-        painter.drawLine(4, 12, 8, 16)
-        painter.drawEllipse(QRectF(13, 3, 4, 4))
-    elif tool == "eraser":
-        painter.save()
-        painter.translate(10, 10)
-        painter.rotate(-35)
-        painter.setBrush(QColor("#ACC9D4"))
-        painter.drawRoundedRect(QRectF(-6, -4, 12, 8), 2, 2)
-        painter.setPen(QPen(QColor("#00192D"), 1.4))
-        painter.drawLine(1, -4, 1, 4)
-        painter.restore()
-    else:
-        painter.save()
-        painter.translate(9, 9)
-        painter.rotate(-25)
-        painter.drawRoundedRect(QRectF(-5, -5, 10, 11), 2, 2)
-        painter.restore()
-        painter.drawLine(5, 16, 15, 16)
-        if tool == "bucket_global":
-            painter.drawLine(15, 4, 19, 4)
-            painter.drawLine(17, 2, 17, 6)
-    painter.end()
-    return QIcon(pixmap)
-
-
-LAYER_MIME_TYPE = "application/x-manta-layers-layer"
-
-
-class LayerDragHandle(QToolButton):
-    """Poignée qui démarre le glissement d'une ligne de calque."""
-
-    def __init__(self, layer_id: str, parent=None):
-        super().__init__(parent)
-        self.layer_id = layer_id
-        self._press_position: QPoint | None = None
-        self.setObjectName("layerDragHandle")
-        self.setText("≡")
-        self.setToolTip("Maintenir et glisser pour réordonner le calque")
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
-        self.setFixedSize(24, 27)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._press_position = event.position().toPoint()
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if (self._press_position is None or
-                not event.buttons() & Qt.MouseButton.LeftButton or
-                (event.position().toPoint() - self._press_position).manhattanLength() < QApplication.startDragDistance()):
-            super().mouseMoveEvent(event)
-            return
-        drag = QDrag(self)
-        mime = QMimeData()
-        mime.setData(LAYER_MIME_TYPE, self.layer_id.encode("utf-8"))
-        drag.setMimeData(mime)
-        drag.exec(Qt.DropAction.MoveAction)
-        self._press_position = None
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
-
-    def mouseReleaseEvent(self, event):
-        self._press_position = None
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
-        super().mouseReleaseEvent(event)
-
-
-class LayerListWidget(QListWidget):
-    """Liste recevant les calques déplacés depuis leur poignée."""
-
-    def __init__(self, window):
-        super().__init__()
-        self.window = window
-        self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True)
-
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasFormat(LAYER_MIME_TYPE):
-            event.acceptProposedAction()
-        else:
-            super().dragEnterEvent(event)
-
-    def dragMoveEvent(self, event):
-        if event.mimeData().hasFormat(LAYER_MIME_TYPE):
-            event.acceptProposedAction()
-        else:
-            super().dragMoveEvent(event)
-
-    def dropEvent(self, event):
-        if not event.mimeData().hasFormat(LAYER_MIME_TYPE):
-            super().dropEvent(event)
-            return
-        layer_id = bytes(event.mimeData().data(LAYER_MIME_TYPE)).decode("utf-8")
-        target_item = self.itemAt(event.position().toPoint())
-        if target_item is None:
-            insertion = self.count()
-        else:
-            target_row = self.row(target_item)
-            insertion = target_row + (event.position().y() > self.visualItemRect(target_item).center().y())
-        self.window.move_layer_to_display_position(layer_id, insertion)
-        event.acceptProposedAction()
 
 class DocumentCommand(QUndoCommand):
     def __init__(self, win: "MainWindow", before: Document, after: Document,
@@ -295,19 +63,28 @@ class DocumentCommand(QUndoCommand):
         self.selected_before = selected_before
         self.selected_after = selected_after
 
+    def _apply(self, document: Document, selected: str | None):
+        try:
+            self.win.install_document(document.clone(), selected)
+        except Exception as exc:
+            self.win.command_failed(self, exc)
+
     def undo(self):
-        self.win.install_document(self.before.clone(), self.selected_before)
+        self._apply(self.before, self.selected_before)
 
     def redo(self):
-        self.win.install_document(self.after.clone(), self.selected_after)
+        self._apply(self.after, self.selected_after)
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, settings: QSettings | None = None):
         super().__init__()
         self.document = Document()
         self.project_path: Path | None = None
         self.selected_id: str | None = None
+        # Dernier calque choisi : les outils continuent de le viser même si la
+        # sélection est vidée, par exemple après un clic dans le vide.
+        self.last_selected_id: str | None = None
         self.refreshing = False
         self.picker_active = False
         self.picker_target = "tools"
@@ -316,12 +93,15 @@ class MainWindow(QMainWindow):
         self.eraser_active = False
         self.last_eraser_point: tuple[float, float] | None = None
         self.last_eraser_layer_id: str | None = None
-        self.sampled_color: str | None = None
-        self.replacement_color = "#4DD6E7"
+        self.replacement_color = COLORS["primary"]
         self._updating_color_fields = False
+        self._pushing_command: DocumentCommand | None = None
+        self._push_error: Exception | None = None
         self.variation_colors: list[str] = []
         self.left_sidebar_expanded = True
-        self.left_sidebar_width = 190
+        self.left_sidebar_width = 245
+        self.settings = settings if settings is not None else QSettings("Blue Shrimp", "Manta Layers")
+        self.last_font_family = str(self.settings.value("text/last_font", "Arial"))
         self.undo_stack = QUndoStack(self)
         self.undo_stack.setUndoLimit(100)
         self.custom_font_ids: list[int] = []
@@ -338,16 +118,17 @@ class MainWindow(QMainWindow):
         self._load_demo()
 
     def load_custom_fonts(self):
-        """Charge les polices conservées dans le répertoire local de l'application."""
-        try:
-            FONTS_DIR.mkdir(exist_ok=True)
-            for path in sorted(FONTS_DIR.iterdir()):
+        """Charge les polices livrées avec l'application puis celles importées."""
+        for directory in (BUNDLED_FONTS_DIR, USER_FONTS_DIR):
+            try:
+                paths = sorted(directory.iterdir()) if directory.is_dir() else []
+            except OSError:
+                continue
+            for path in paths:
                 if path.is_file() and path.suffix.lower() in FONT_SUFFIXES:
                     font_id = QFontDatabase.addApplicationFont(str(path))
                     if font_id >= 0:
                         self.custom_font_ids.append(font_id)
-        except OSError:
-            pass
 
     def import_fonts(self):
         paths, _ = QFileDialog.getOpenFileNames(
@@ -356,12 +137,11 @@ class MainWindow(QMainWindow):
         if not paths:
             return
         imported = []
-        FONTS_DIR.mkdir(exist_ok=True)
         for raw_path in paths:
             source = Path(raw_path)
             if source.suffix.lower() not in FONT_SUFFIXES:
                 continue
-            destination = FONTS_DIR / source.name
+            destination = USER_FONTS_DIR / source.name
             if destination.exists():
                 answer = QMessageBox.question(
                     self, "Police déjà présente",
@@ -372,10 +152,13 @@ class MainWindow(QMainWindow):
                 if answer != QMessageBox.StandardButton.Yes:
                     continue
             try:
-                copy2(source, destination)
-                font_id = QFontDatabase.addApplicationFont(str(destination))
+                # La police est validée avant la copie : un fichier invalide
+                # n'est jamais laissé dans le dossier des polices.
+                font_id = QFontDatabase.addApplicationFontFromData(source.read_bytes())
                 if font_id < 0:
                     raise ValueError("format de police non pris en charge")
+                USER_FONTS_DIR.mkdir(parents=True, exist_ok=True)
+                copy2(source, destination)
                 self.custom_font_ids.append(font_id)
                 imported.extend(QFontDatabase.applicationFontFamilies(font_id))
             except Exception as exc:
@@ -453,11 +236,11 @@ class MainWindow(QMainWindow):
         self.main_splitter = splitter
         self.setCentralWidget(splitter)
 
-        left = QWidget()
+        left = SidebarBackground(ASSETS / "sidebar_ocean.png")
         self.left_panel = left
         left.setObjectName("sidePanel")
-        left.setMinimumWidth(155)
-        left.setMaximumWidth(225)
+        left.setMinimumWidth(220)
+        left.setMaximumWidth(285)
         left_layout = QVBoxLayout(left)
         self.left_layout = left_layout
         left_layout.setSpacing(9)
@@ -505,7 +288,7 @@ class MainWindow(QMainWindow):
             ("flip_vertical", "⇅ Retourner verticalement", self.flip_layer_vertical),
             ("lock", "▣ Verrouiller le calque", self.toggle_lock),
             ("delete", "× Supprimer le calque", self.delete_layer),
-            ("fit", "▣ Cadrer le document", lambda: self.canvas.fit_document()),
+            ("fit", "⤢ Cadrer le document", lambda: self.canvas.fit_document()),
         ]:
             btn = QPushButton(text)
             if text.startswith("+ Importer"):
@@ -596,6 +379,24 @@ class MainWindow(QMainWindow):
         self.history = QUndoView(self.undo_stack)
         self.history.setEmptyLabel("Document initial")
         self.tabs.addTab(self.history, "Historique")
+        self.tabs.addTab(self._build_tools_tab(), "Outils")
+        self.tabs.currentChanged.connect(self.update_properties_panel_visibility)
+        right_content_layout.addWidget(self.tabs)
+        self._build_properties_panel()
+        right_content_layout.addWidget(self.properties_label)
+        right_content_layout.addWidget(self.properties_panel)
+        right_content_layout.addStretch(1)
+        right_scroll.setWidget(right_content)
+        r_layout.addWidget(right_scroll)
+        self._schedule_right_panel_layout()
+        splitter.addWidget(right)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([245, 870, 315])
+        self.zoom_label = QLabel("100 %")
+        self.statusBar().addPermanentWidget(self.zoom_label)
+        self.statusBar().showMessage("Prêt · Déplacez les objets sur le canvas")
+
+    def _build_tools_tab(self) -> QWidget:
         tools = QWidget()
         tools_layout = QVBoxLayout(tools)
         tools_layout.setContentsMargins(10, 12, 10, 12)
@@ -628,7 +429,6 @@ class MainWindow(QMainWindow):
         self.picker_btn.clicked.connect(
             lambda checked: self.activate_picker("tools", checked)
         )
-        preview_layout.addWidget(self.picker_btn)
         color_layout.addWidget(preview_column)
         color_fields = QWidget()
         color_fields_layout = QFormLayout(color_fields)
@@ -637,7 +437,7 @@ class MainWindow(QMainWindow):
         self.sampled_color_input = QLineEdit()
         self.sampled_rgb_input = QLineEdit()
         self.sampled_hsl_input = QLineEdit()
-        self.sampled_color_input.setPlaceholderText("#4DD6E7")
+        self.sampled_color_input.setPlaceholderText(COLORS["primary"])
         self.sampled_rgb_input.setPlaceholderText("77, 214, 231")
         self.sampled_hsl_input.setPlaceholderText("187, 76 %, 60 %")
         self.sampled_color_input.textChanged.connect(self.update_color_from_hex)
@@ -649,13 +449,21 @@ class MainWindow(QMainWindow):
         color_layout.addWidget(color_fields, stretch=1)
         tools_layout.addWidget(color_editor)
         paint_tools = QWidget()
-        paint_tools_layout = QHBoxLayout(paint_tools)
+        paint_tools_layout = QVBoxLayout(paint_tools)
         paint_tools_layout.setContentsMargins(0, 0, 0, 0)
+        paint_tools_layout.setSpacing(6)
+        self.picker_btn.setText("Pipette")
+        self.picker_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.picker_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        paint_tools_layout.addWidget(self.picker_btn)
         self.paint_bucket_btn = QToolButton()
         self.paint_bucket_btn.setObjectName("colorTool")
         self.paint_bucket_btn.setCheckable(True)
         self.paint_bucket_btn.setIcon(color_tool_icon("bucket"))
         self.paint_bucket_btn.setIconSize(QSize(20, 20))
+        self.paint_bucket_btn.setText("Remplissage")
+        self.paint_bucket_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.paint_bucket_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.paint_bucket_btn.setToolTip("Pot de peinture : remplir les pixels contigus")
         self.paint_bucket_btn.clicked.connect(
             lambda checked: self.toggle_paint_mode("contiguous", checked)
@@ -665,6 +473,9 @@ class MainWindow(QMainWindow):
         self.paint_global_btn.setCheckable(True)
         self.paint_global_btn.setIcon(color_tool_icon("bucket_global"))
         self.paint_global_btn.setIconSize(QSize(20, 20))
+        self.paint_global_btn.setText("Remplissage +")
+        self.paint_global_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.paint_global_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.paint_global_btn.setToolTip("Pot + : remplacer cette couleur partout sur le calque")
         self.paint_global_btn.clicked.connect(
             lambda checked: self.toggle_paint_mode("global", checked)
@@ -676,10 +487,12 @@ class MainWindow(QMainWindow):
         self.eraser_btn.setCheckable(True)
         self.eraser_btn.setIcon(color_tool_icon("eraser"))
         self.eraser_btn.setIconSize(QSize(20, 20))
+        self.eraser_btn.setText("Gomme")
+        self.eraser_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.eraser_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.eraser_btn.setToolTip("Gomme (E)")
         self.eraser_btn.clicked.connect(self.set_eraser_active)
         paint_tools_layout.addWidget(self.eraser_btn)
-        paint_tools_layout.addStretch(1)
         tools_layout.addWidget(paint_tools)
         self.paint_settings = QWidget()
         paint_settings_layout = QFormLayout(self.paint_settings)
@@ -755,12 +568,11 @@ class MainWindow(QMainWindow):
         self.update_tool_options_visibility()
         tools_layout.addStretch(1)
         self.tools_tab = tools
-        self.tabs.addTab(tools, "Outils")
-        self.tabs.currentChanged.connect(self.update_properties_panel_visibility)
-        right_content_layout.addWidget(self.tabs)
+        return tools
+
+    def _build_properties_panel(self):
         self.properties_label = QLabel("PROPRIÉTÉS DU CALQUE")
         self.properties_label.setObjectName("sectionTitle")
-        right_content_layout.addWidget(self.properties_label)
         self.properties_panel = QWidget()
         self.properties_panel.setObjectName("propertyCard")
         self.properties_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
@@ -783,18 +595,18 @@ class MainWindow(QMainWindow):
             w.setDecimals(decimals)
             w.setSingleStep(step)
             w.setKeyboardTracking(False)
-            w.editingFinished.connect(self.commit_properties)
+            w.editingFinished.connect(lambda key=key: self.commit_property(key))
             self.property_form.addRow(label, w)
             self.inputs[key] = w
         self.name_input = QLineEdit()
-        self.name_input.editingFinished.connect(self.commit_properties)
+        self.name_input.editingFinished.connect(lambda: self.commit_property("name"))
         self.property_form.insertRow(0, "Nom du calque", self.name_input)
         self.text_input = CommitPlainTextEdit()
         self.text_input.setMinimumHeight(76)
         self.text_input.setMaximumHeight(120)
         self.text_input.setPlaceholderText("Saisissez le texte…")
         self.text_input.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.text_input.editingFinished.connect(self.commit_properties)
+        self.text_input.editingFinished.connect(lambda: self.commit_property("text"))
         self.property_form.addRow("Contenu texte", self.text_input)
         self.text_alignment_control = QWidget()
         alignment_layout = QHBoxLayout(self.text_alignment_control)
@@ -814,7 +626,7 @@ class MainWindow(QMainWindow):
             button.setIcon(alignment_icon(alignment))
             button.setIconSize(QSize(20, 20))
             button.setToolTip(tooltip)
-            button.clicked.connect(self.commit_properties)
+            button.clicked.connect(lambda _checked=False: self.commit_property("path_alignment"))
             self.text_alignment_group.addButton(button)
             self.text_alignment_buttons[alignment] = button
             alignment_layout.addWidget(button)
@@ -822,12 +634,12 @@ class MainWindow(QMainWindow):
         self.text_alignment_buttons["center"].setChecked(True)
         self.property_form.addRow("Alignement", self.text_alignment_control)
         self.font_combo = QFontComboBox()
-        self.font_combo.currentFontChanged.connect(lambda _: self.commit_properties())
+        self.font_combo.currentFontChanged.connect(self.on_font_changed)
         self.property_form.addRow("Police", self.font_combo)
         self.font_size = QSpinBox()
         self.font_size.setRange(8, 300)
         self.font_size.setKeyboardTracking(False)
-        self.font_size.editingFinished.connect(self.commit_properties)
+        self.font_size.editingFinished.connect(lambda: self.commit_property("font_size"))
         self.property_form.addRow("Taille du texte", self.font_size)
         self.text_color_swatch = QPushButton()
         self.text_color_swatch.setFixedSize(36, 28)
@@ -900,14 +712,20 @@ class MainWindow(QMainWindow):
         self.curve_intensity.setValue(0)
         self.curve_intensity.setToolTip("Courbure : négatif vers le bas, positif vers le haut")
         self.curve_intensity.valueChanged.connect(self.preview_curve_intensity)
-        self.curve_intensity.sliderReleased.connect(self.commit_properties)
+        self.curve_intensity.sliderReleased.connect(lambda: self.commit_property("curve_intensity"))
+        # Clavier, molette et clic sur la rainure ne passent pas par sliderReleased :
+        # leur changement est validé après une courte pause, en une seule étape.
+        self.curve_commit_timer = QTimer(self)
+        self.curve_commit_timer.setSingleShot(True)
+        self.curve_commit_timer.setInterval(350)
+        self.curve_commit_timer.timeout.connect(lambda: self.commit_property("curve_intensity"))
         self.curve_value = QSpinBox()
         self.curve_value.setRange(-100, 100)
         self.curve_value.setFixedWidth(66)
         self.curve_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.curve_value.setToolTip("Valeur de courbure")
         self.curve_value.valueChanged.connect(self.set_curve_from_value)
-        self.curve_value.editingFinished.connect(self.commit_properties)
+        self.curve_value.editingFinished.connect(lambda: self.commit_property("curve_intensity"))
         self.curve_reset_btn = QToolButton()
         self.curve_reset_btn.setText("0")
         self.curve_reset_btn.setToolTip("Remettre le texte droit")
@@ -921,7 +739,7 @@ class MainWindow(QMainWindow):
         self.character_spacing.setDecimals(1)
         self.character_spacing.setSuffix(" px")
         self.character_spacing.setKeyboardTracking(False)
-        self.character_spacing.editingFinished.connect(self.commit_properties)
+        self.character_spacing.editingFinished.connect(lambda: self.commit_property("character_spacing"))
         self.property_form.addRow("Espacement", self.character_spacing)
         self.lock_btn = QPushButton("Verrouiller / déverrouiller")
         self.lock_btn.clicked.connect(self.toggle_lock)
@@ -932,17 +750,6 @@ class MainWindow(QMainWindow):
             self.character_spacing,
             self.lock_btn
         )
-        right_content_layout.addWidget(self.properties_panel)
-        right_content_layout.addStretch(1)
-        right_scroll.setWidget(right_content)
-        r_layout.addWidget(right_scroll)
-        self._schedule_right_panel_layout()
-        splitter.addWidget(right)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([190, 925, 315])
-        self.zoom_label = QLabel("100 %")
-        self.statusBar().addPermanentWidget(self.zoom_label)
-        self.statusBar().showMessage("Prêt · Déplacez les objets sur le canvas")
 
     def _action(self, menu, label: str, callback, shortcut=None, icon=None):
         act = QAction(label, self)
@@ -956,16 +763,17 @@ class MainWindow(QMainWindow):
 
     def _build_actions(self):
         f = self.menuBar().addMenu("Fichier")
-        new = self._action(f, "Nouveau projet…", self.new_document, "Ctrl+N")
-        op = self._action(f, "Ouvrir un projet…", self.open_document, "Ctrl+O")
+        self._action(f, "Nouveau projet…", self.new_document, "Ctrl+N")
+        self._action(f, "Ouvrir un projet…", self.open_document, "Ctrl+O")
         f.addSeparator()
-        imp = self._action(f, "Importer une image…", self.add_images, "Ctrl+I")
+        self._action(f, "Importer une image…", self.add_images, "Ctrl+I")
         self._action(f, "Ajouter du texte…", self.add_text, "Ctrl+T")
         self._action(f, "Importer une police…", self.import_fonts)
         f.addSeparator()
-        ex = self._action(f, "Sauvegarder l'image…", self.export_image, "Ctrl+S")
-        sv = self._action(f, "Sauvegarder le projet", self.save_document, "Ctrl+Shift+S")
+        self._action(f, "Sauvegarder l'image…", self.export_image, "Ctrl+S")
+        self._action(f, "Sauvegarder le projet", self.save_document, "Ctrl+Shift+S")
         self._action(f, "Sauvegarder le projet sous…", self.save_as_document)
+        self._action(f, "Enregistrer comme modèle…", self.save_as_template)
         f.addSeparator()
         self._action(f, "Quitter", self.close, "Alt+F4")
 
@@ -1015,31 +823,54 @@ class MainWindow(QMainWindow):
             self.left_toggle.setIcon(sidebar_arrow_icon(False))
             self.left_toggle.setToolTip("Replier le panneau d'utilitaires")
         else:
-            self.left_sidebar_width = max(155, self.main_splitter.sizes()[0])
+            self.left_sidebar_width = max(220, self.main_splitter.sizes()[0])
             self.left_panel.hide()
             self.left_toggle.setIcon(sidebar_arrow_icon(True))
             self.left_toggle.setToolTip("Ouvrir le panneau d'utilitaires")
 
     def _load_demo(self):
         demo = ROOT / "exemples" / "Manta_Demo.manta"
+        document = Document()
         if demo.exists():
             try:
-                self.document = open_project(demo)
+                document = open_project(demo)
             except Exception:
-                self.document = Document()
-        self.install_document(self.document, self.document.layers[-1].id if self.document.layers else None)
+                document = Document()
+        try:
+            self.install_document(document, document.layers[-1].id if document.layers else None)
+        except Exception:
+            self.install_document(Document(), None)
         self.undo_stack.clear()
         self.undo_stack.setClean()
         self.canvas.fit_document()
         self.update_title()
 
     def install_document(self, doc: Document, selected: str | None):
+        """Affiche un document. Si son rendu échoue, l'état courant reste intact."""
+        scene = make_scene(doc, interactive=True)
         self.refreshing = True
-        self.document = doc
-        self.selected_id = selected if doc.layer(selected) else None
-        self.canvas_scene = make_scene(doc, interactive=True)
-        self.canvas.setScene(self.canvas_scene)
-        self.canvas_scene.selectionChanged.connect(self.on_scene_select)
+        try:
+            self.document = doc
+            self.selected_id = selected if doc.layer(selected) else None
+            if self.selected_id:
+                self.last_selected_id = self.selected_id
+            self.canvas_scene = scene
+            self.canvas.setScene(self.canvas_scene)
+            self.canvas_scene.selectionChanged.connect(self.on_scene_select)
+            self._rebuild_layer_list(doc)
+            for item in self.canvas_scene.items():
+                if item.data(0) == self.selected_id:
+                    item.setSelected(True)
+                    break
+            self.doc_info.setText(f"{doc.width} × {doc.height} px · {len(doc.layers)} calque(s)")
+            self._refresh_properties()
+            self.update_utility_buttons()
+        finally:
+            self.refreshing = False
+        self.canvas.viewport().update()
+        self.update_title()
+
+    def _rebuild_layer_list(self, doc: Document):
         self.layer_list.clear()
         for layer in reversed(doc.layers):
             row = QListWidgetItem()
@@ -1050,6 +881,7 @@ class MainWindow(QMainWindow):
             controls_layout.setContentsMargins(3, 1, 3, 1)
             controls_layout.setSpacing(3)
             drag_handle = LayerDragHandle(layer.id)
+            drag_handle.setEnabled(not layer.locked)
             controls_layout.addWidget(drag_handle)
             visible = QToolButton()
             visible.setObjectName("layerAction")
@@ -1106,16 +938,6 @@ class MainWindow(QMainWindow):
             self.layer_list.setItemWidget(row, controls)
             if layer.id == self.selected_id:
                 self.layer_list.setCurrentItem(row)
-        for item in self.canvas_scene.items():
-            if item.data(0) == self.selected_id:
-                item.setSelected(True)
-                break
-        self.doc_info.setText(f"{doc.width} × {doc.height} px · {len(doc.layers)} calque(s)")
-        self._refresh_properties()
-        self.update_utility_buttons()
-        self.refreshing = False
-        self.canvas.viewport().update()
-        self.update_title()
 
     def update_utility_buttons(self):
         """N'affiche dans la colonne gauche que les actions actuellement possibles."""
@@ -1131,27 +953,45 @@ class MainWindow(QMainWindow):
                 "▣ Déverrouiller le calque" if layer.locked
                 else "▣ Verrouiller le calque"
             )
+
     def select_layer(self, layer_id: str | None):
         if self.refreshing:
             return
+        self._flush_pending_curve()
         self.refreshing = True
-        self.selected_id = layer_id if self.document.layer(layer_id) else None
-        for i in range(self.layer_list.count()):
-            row = self.layer_list.item(i)
-            if row.data(Qt.ItemDataRole.UserRole) == self.selected_id:
-                self.layer_list.setCurrentItem(row)
-                break
-        else:
-            self.layer_list.setCurrentRow(-1)
-        scene = self.canvas.scene()
-        if scene is not None:
-            for item in scene.items():
-                if self.document.layer(item.data(0)):
-                    item.setSelected(item.data(0) == self.selected_id)
-        self._refresh_properties()
-        self.update_utility_buttons()
-        self.refreshing = False
+        try:
+            self.selected_id = layer_id if self.document.layer(layer_id) else None
+            if self.selected_id:
+                self.last_selected_id = self.selected_id
+            for i in range(self.layer_list.count()):
+                row = self.layer_list.item(i)
+                if row.data(Qt.ItemDataRole.UserRole) == self.selected_id:
+                    self.layer_list.setCurrentItem(row)
+                    break
+            else:
+                self.layer_list.setCurrentRow(-1)
+            scene = self.canvas.scene()
+            if scene is not None:
+                for item in scene.items():
+                    if self.document.layer(item.data(0)):
+                        item.setSelected(item.data(0) == self.selected_id)
+            self._refresh_properties()
+            self.update_utility_buttons()
+        finally:
+            self.refreshing = False
         self.canvas.viewport().update()
+
+    def tool_target_id(self) -> str | None:
+        """Calque visé par la gomme et les pots : la sélection, sinon le dernier calque choisi."""
+        for candidate in (self.selected_id, self.last_selected_id):
+            if candidate and self.document.layer(candidate):
+                return candidate
+        return None
+
+    def _show_tool_target(self):
+        """Resélectionne le dernier calque choisi quand un outil s'active sans sélection."""
+        if self.selected_id is None and self.tool_target_id():
+            self.select_layer(self.tool_target_id())
 
     def on_scene_select(self):
         if self.refreshing:
@@ -1213,16 +1053,17 @@ class MainWindow(QMainWindow):
         self.text_alignment_buttons.get(
             layer.path_alignment, self.text_alignment_buttons["center"]
         ).setChecked(True)
+        muted = COLORS["muted"]
         self.color_btn.setText(layer.color.upper())
         self.text_color_swatch.setStyleSheet(
-            f"background-color: {layer.color}; border: 1px solid #ACC9D4; border-radius: 5px;"
+            f"background-color: {layer.color}; border: 1px solid {muted}; border-radius: 5px;"
         )
         background = layer.text_background if is_text else None
         self.text_background_btn.setText(background.upper() if background else "Transparent")
         self.text_background_swatch.setStyleSheet(
-            f"background-color: {background}; border: 1px solid #ACC9D4; border-radius: 5px;"
+            f"background-color: {background}; border: 1px solid {muted}; border-radius: 5px;"
             if background else
-            "background-color: transparent; border: 1px dashed #ACC9D4; border-radius: 5px;"
+            f"background-color: transparent; border: 1px dashed {muted}; border-radius: 5px;"
         )
         self.text_background_clear.setEnabled(bool(background) and not layer.locked)
         self.lock_btn.setText("Déverrouiller" if layer.locked else "Verrouiller")
@@ -1231,43 +1072,108 @@ class MainWindow(QMainWindow):
         self.paint_global_btn.setEnabled(can_paint)
         self._schedule_right_panel_layout()
 
-    def mutate(self, description: str, fn, select_after: str | None = None):
+    def mutate(self, description: str, fn, select_after: str | None = None) -> bool:
         before = self.document.clone()
         after = self.document.clone()
-        fn(after)
-        self.undo_stack.push(DocumentCommand(self, before, after, description,
-                                             self.selected_id,
-                                             select_after if select_after is not None else self.selected_id))
+        try:
+            fn(after)
+        except Exception as exc:
+            self._report_failure(description, exc)
+            return False
+        return self._push(DocumentCommand(self, before, after, description,
+                                          self.selected_id,
+                                          select_after if select_after is not None else self.selected_id))
+
+    def _push(self, command: DocumentCommand) -> bool:
+        """Empile une commande ; si son application échoue, elle n'entre pas dans l'historique."""
+        description = command.text()
+        self._pushing_command = command
+        self._push_error = None
+        try:
+            self.undo_stack.push(command)
+        finally:
+            self._pushing_command = None
+        if self._push_error is not None:
+            self._report_failure(description, self._push_error)
+            return False
         self.statusBar().showMessage(description, 3000)
+        return True
+
+    def command_failed(self, command: DocumentCommand, exc: Exception):
+        if command is self._pushing_command:
+            self._push_error = exc
+            # QUndoStack.push supprime une commande devenue obsolète au lieu de l'empiler.
+            command.setObsolete(True)
+        else:
+            self._report_failure("Annuler / rétablir", exc)
+
+    def _report_failure(self, description: str, exc: Exception):
+        QMessageBox.warning(self, "Action impossible", f"{description} : {exc}")
 
     def commit_canvas_transform(self, before, layer_id, state, description):
         after = before.clone()
         layer = after.layer(layer_id)
         layer.x, layer.y, layer.sx, layer.sy, layer.rotation = state
-        self.undo_stack.push(DocumentCommand(self, before, after, description, layer_id, layer_id))
+        self._push(DocumentCommand(self, before, after, description, layer_id, layer_id))
 
-    def commit_properties(self, *_args):
+    def commit_property(self, key: str):
+        """Valide uniquement le champ modifié.
+
+        Les autres champs affichent des valeurs arrondies : les réécrire
+        déplacerait ou redimensionnerait le calque sans que l'utilisateur le veuille.
+        """
+        if key == "curve_intensity":
+            self.curve_commit_timer.stop()
         if self.refreshing:
             return
-        old = self.document.layer(self.selected_id)
-        if not old or old.locked:
+        layer = self.document.layer(self.selected_id)
+        if not layer or layer.locked:
             return
-        settings = {k: (spin.value() / 100 if k == "opacity" else spin.value())
-                    for k, spin in self.inputs.items()}
-        settings.update(name=self.name_input.text().strip() or old.name)
-        if old.kind == "text":
-            settings.update(text=self.text_input.toPlainText(), font_family=self.font_combo.currentFont().family(),
-                            font_size=self.font_size.value(),
-                            text_deformation="curve",
-                            curve_intensity=float(self.curve_intensity.value()),
-                            character_spacing=self.character_spacing.value(),
-                            path_alignment=self.current_text_alignment(),
-                            path_orientation="tangent",
-                            show_curve_guide=True)
-        if all(getattr(old, k) == val for k,val in settings.items()):
+        if key in self.inputs:
+            spin = self.inputs[key]
+            current = layer.opacity * 100 if key == "opacity" else getattr(layer, key)
+            if abs(spin.value() - current) <= 0.5 * 10 ** -spin.decimals() + 1e-9:
+                return
+            value = spin.value() / 100 if key == "opacity" else spin.value()
+        elif key == "name":
+            value = self.name_input.text().strip()
+            if not value:
+                self.name_input.setText(layer.name)
+                return
+        elif layer.kind != "text":
             return
-        self.mutate("Modifier les propriétés", lambda doc: [setattr(doc.layer(old.id), k, v)
-                                                               for k,v in settings.items()], old.id)
+        elif key == "text":
+            value = self.text_input.toPlainText()
+        elif key == "font_family":
+            value = self.font_combo.currentFont().family()
+        elif key == "font_size":
+            value = self.font_size.value()
+        elif key == "curve_intensity":
+            if self.curve_intensity.value() == round(layer.curve_intensity):
+                return
+            value = float(self.curve_intensity.value())
+        elif key == "character_spacing":
+            if abs(self.character_spacing.value() - layer.character_spacing) <= 0.05 + 1e-9:
+                return
+            value = self.character_spacing.value()
+        elif key == "path_alignment":
+            value = self.current_text_alignment()
+        else:
+            return
+        if getattr(layer, key) == value:
+            return
+        self.mutate(PROPERTY_LABELS[key], lambda doc: setattr(doc.layer(layer.id), key, value), layer.id)
+
+    def _flush_pending_curve(self):
+        if self.curve_commit_timer.isActive():
+            self.commit_property("curve_intensity")
+
+    def on_font_changed(self, font: QFont):
+        if self.refreshing:
+            return
+        self.last_font_family = font.family()
+        self.settings.setValue("text/last_font", self.last_font_family)
+        self.commit_property("font_family")
 
     def preview_curve_intensity(self, value: int):
         self.curve_value.blockSignals(True)
@@ -1279,13 +1185,15 @@ class MainWindow(QMainWindow):
         if hasattr(item, "set_curve_intensity"):
             item.set_curve_intensity(value)
             self.canvas.viewport().update()
+        if not self.curve_intensity.isSliderDown():
+            self.curve_commit_timer.start()
 
     def set_curve_from_value(self, value: int):
         self.curve_intensity.setValue(value)
 
     def reset_curve_only(self):
         self.curve_intensity.setValue(0)
-        self.commit_properties()
+        self.commit_property("curve_intensity")
 
     def current_text_alignment(self) -> str:
         for alignment, button in self.text_alignment_buttons.items():
@@ -1293,27 +1201,13 @@ class MainWindow(QMainWindow):
                 return alignment
         return "center"
 
-    def reset_text_deformation(self):
-        layer = self.document.layer(self.selected_id)
-        if not layer or layer.kind != "text" or layer.locked:
-            return
-        def reset(doc):
-            target = doc.layer(layer.id)
-            target.text_deformation = "curve"
-            target.curve_intensity = 0.0
-            target.character_spacing = 0.0
-            target.path_alignment = "center"
-            target.path_orientation = "tangent"
-            target.show_curve_guide = True
-        self.mutate("Réinitialiser la déformation du texte", reset, layer.id)
-
     def commit_curve_handle(self, before: Document, layer_id: str, intensity: float):
         source = before.layer(layer_id)
         if not source or abs(source.curve_intensity - intensity) < 0.01:
             return
         after = before.clone()
         after.layer(layer_id).curve_intensity = intensity
-        self.undo_stack.push(DocumentCommand(
+        self._push(DocumentCommand(
             self, before, after, "Ajuster la courbure du texte", layer_id, layer_id
         ))
 
@@ -1401,6 +1295,7 @@ class MainWindow(QMainWindow):
             self.text_picker_btn.setChecked(False)
             self.text_background_picker_btn.setChecked(False)
             self.paint_mode = mode
+            self._show_tool_target()
             self.paint_bucket_btn.setChecked(mode == "contiguous")
             self.paint_global_btn.setChecked(mode == "global")
             message = (
@@ -1425,6 +1320,7 @@ class MainWindow(QMainWindow):
             self.text_background_picker_btn.setChecked(False)
             self.paint_bucket_btn.setChecked(False)
             self.paint_global_btn.setChecked(False)
+            self._show_tool_target()
             self.tabs.setCurrentWidget(self.tools_tab)
             self.statusBar().showMessage(
                 "Gomme active · glisser pour effacer · [ et ] changent la taille", 4500
@@ -1484,8 +1380,8 @@ class MainWindow(QMainWindow):
 
     def commit_eraser_stroke(self, layer_id: str, points: list[QPointF]):
         layer = self.document.layer(layer_id)
-        item = self.canvas.selected_graphic()
-        if not layer or layer.kind != "image" or layer.locked or item is None:
+        item = self.canvas.graphic_for(layer_id)
+        if not layer or layer.kind != "image" or layer.locked or not isinstance(item, QGraphicsPixmapItem):
             self.statusBar().showMessage("Trait de gomme ignoré : calque non modifiable", 3000)
             return
         width, height = item.pixmap().width(), item.pixmap().height()
@@ -1509,7 +1405,7 @@ class MainWindow(QMainWindow):
         )
 
     def sample_canvas_color(self, item, scene_position) -> bool:
-        layer = self.document.layer(item.data(0))
+        layer = self.document.layer(item.data(0)) if item is not None else None
         if not layer or layer.kind != "image" or not isinstance(item, QGraphicsPixmapItem):
             self.statusBar().showMessage("La pipette fonctionne sur les calques image", 3000)
             return False
@@ -1537,45 +1433,40 @@ class MainWindow(QMainWindow):
                 text_layer.id,
             )
         else:
-            self.select_layer(layer.id)
-            self.sampled_color = sampled
+            # La couleur prélevée devient la couleur de remplissage ; la sélection
+            # reste sur le calque que les outils doivent continuer de viser.
             self.set_current_color(sampled)
         self.deactivate_picker()
         self.statusBar().showMessage(f"Couleur prélevée : {sampled}", 4000)
         return True
 
-    def paint_canvas_color(self, item, scene_position) -> bool:
-        layer = self.document.layer(item.data(0))
+    def paint_canvas_color(self, scene_position) -> bool:
+        layer_id = self.tool_target_id()
+        layer = self.document.layer(layer_id)
+        item = self.canvas.graphic_for(layer_id)
         if not layer or layer.kind != "image" or not isinstance(item, QGraphicsPixmapItem):
-            self.statusBar().showMessage("Le pot fonctionne sur les calques image", 3000)
+            self.statusBar().showMessage("Le pot nécessite un calque image sélectionné", 3000)
             return False
         if layer.locked:
             self.statusBar().showMessage("Déverrouillez le calque pour le modifier", 3000)
-            return True
+            return False
         local = item.mapFromScene(scene_position)
         x, y = int(local.x()), int(local.y())
         image = item.pixmap().toImage()
         if not (0 <= x < image.width() and 0 <= y < image.height()):
+            self.statusBar().showMessage("Cliquez sur le calque sélectionné", 3000)
             return False
         color = image.pixelColor(x, y)
         if color.alpha() == 0:
             self.statusBar().showMessage("Ce pixel est transparent", 3000)
-            return True
-        clicked_source = color.name().upper()
-        source = self.sampled_color or clicked_source
+            return False
+        # La zone à remplacer est toujours celle de la couleur cliquée ; la couleur
+        # courante de l'onglet Outils (pipette, HEX, palette) est la couleur cible.
+        source = color.name().upper()
         target = self.replacement_color.upper()
         if source == target:
             self.statusBar().showMessage("La couleur choisie est déjà appliquée", 3000)
-            return True
-        source_rgb = QColor(source).getRgb()[:3]
-        clicked_rgb = color.getRgb()[:3]
-        tolerance = self.paint_tolerance.value()
-        if any(abs(current - reference) > tolerance
-               for current, reference in zip(clicked_rgb, source_rgb)):
-            self.statusBar().showMessage(
-                "La couleur cliquée est hors de la tolérance de la couleur prélevée", 3500
-            )
-            return True
+            return False
         seed_x = image.width() - 1 - x if layer.flip_horizontal else x
         seed_y = image.height() - 1 - y if layer.flip_vertical else y
         fill = {
@@ -1586,6 +1477,7 @@ class MainWindow(QMainWindow):
             "y": seed_y,
             "tolerance": self.paint_tolerance.value(),
             "preserve_shading": self.preserve_shading.isChecked(),
+            "after_strokes": len(layer.eraser_strokes),
         }
         description = (
             "Recoloriser une zone" if self.preserve_shading.isChecked()
@@ -1594,12 +1486,11 @@ class MainWindow(QMainWindow):
             "Recoloriser le calque" if self.preserve_shading.isChecked()
             else "Remplacer une couleur sur le calque"
         )
-        self.mutate(
+        return self.mutate(
             description,
             lambda doc: doc.layer(layer.id).color_fills.append(fill),
             layer.id,
         )
-        return True
 
     def set_current_color(self, color: str, skip_field: str | None = None):
         selected = QColor(color)
@@ -1607,7 +1498,7 @@ class MainWindow(QMainWindow):
             return
         self.replacement_color = selected.name().upper()
         self.color_preview.setStyleSheet(
-            f"background-color: {self.replacement_color}; border: 1px solid #ACC9D4; border-radius: 6px;"
+            f"background-color: {self.replacement_color}; border: 1px solid {COLORS['muted']}; border-radius: 6px;"
         )
         hue = selected.hslHue() if selected.hslHue() >= 0 else 0
         saturation = round(selected.hslSaturationF() * 100)
@@ -1670,7 +1561,7 @@ class MainWindow(QMainWindow):
             self.variation_colors.append(value)
             button.setToolTip(f"{delta * 100:+.0f} % · {value}")
             button.setStyleSheet(
-                f"background: {value}; border: 1px solid #ACC9D4; border-radius: 5px; padding: 0;"
+                f"background: {value}; border: 1px solid {COLORS['muted']}; border-radius: 5px; padding: 0;"
             )
 
     def choose_variation(self, index: int):
@@ -1751,7 +1642,8 @@ class MainWindow(QMainWindow):
         def add(doc):
             holder["id"] = doc.add_image_bytes(data, "Image collée").id
 
-        self.mutate("Coller une image", add)
+        if not self.mutate("Coller une image", add):
+            return False
         self.select_layer(holder["id"])
         self.tabs.setCurrentIndex(0)
         return True
@@ -1819,26 +1711,22 @@ class MainWindow(QMainWindow):
         self._import_paths(paths)
 
     def _import_paths(self, paths):
-        if not paths:
-            return
-        images = []
-        for p in paths:
+        for raw_path in paths or []:
+            path = Path(raw_path)
             try:
-                images.append((Path(p).read_bytes(), Path(p).stem))
-            except Exception as exc:
-                QMessageBox.warning(self, "Import impossible", f"{p}\n{exc}")
-        for data, name in images:
-            try:
-                # Prévalidation, pour éviter une commande vide si le fichier est corrompu.
-                test = Document(self.document.width, self.document.height)
-                test.add_image_bytes(data, name)
-                def add(doc):
-                    new = doc.add_image_bytes(data, name)
-                    self._last_import_id = new.id
-                self.mutate(f"Importer {name}", add)
-                self.select_layer(self._last_import_id)
-            except Exception as exc:
-                QMessageBox.warning(self, "Image non prise en charge", f"{name}\n{exc}")
+                data = path.read_bytes()
+            except OSError as exc:
+                QMessageBox.warning(self, "Import impossible", f"{raw_path}\n{exc}")
+                continue
+            holder = {}
+
+            def add(doc, data=data, name=path.stem):
+                holder["id"] = doc.add_image_bytes(data, name).id
+
+            # Un fichier illisible ou trop grand est signalé par mutate et
+            # n'ajoute aucune étape à l'historique.
+            if self.mutate(f"Importer {path.stem}", add):
+                self.select_layer(holder["id"])
 
     def add_text(self):
         content, ok = QInputDialog.getText(self, "Nouveau calque texte", "Votre texte :")
@@ -1846,16 +1734,21 @@ class MainWindow(QMainWindow):
             return
         holder = {}
         def add(doc):
-            holder['id'] = doc.add_text(content).id
-        self.mutate("Ajouter un texte", add)
-        self.select_layer(holder['id'])
-        self.tabs.setCurrentIndex(0)
+            layer = doc.add_text(content)
+            available = {family.casefold(): family for family in QFontDatabase.families()}
+            layer.font_family = available.get(
+                self.last_font_family.casefold(), QFont().defaultFamily()
+            )
+            holder['id'] = layer.id
+        if self.mutate("Ajouter un texte", add):
+            self.select_layer(holder['id'])
+            self.tabs.setCurrentIndex(0)
 
     def delete_layer(self):
         layer = self.document.layer(self.selected_id)
         if layer and not layer.locked:
-            self.mutate("Supprimer le calque", lambda doc: doc.layers.remove(doc.layer(layer.id)))
-            self.select_layer(None)
+            if self.mutate("Supprimer le calque", lambda doc: doc.layers.remove(doc.layer(layer.id))):
+                self.select_layer(None)
         elif layer:
             self.statusBar().showMessage("Déverrouillez le calque avant de le supprimer", 3000)
 
@@ -1863,8 +1756,8 @@ class MainWindow(QMainWindow):
         layer = self.document.layer(self.selected_id)
         if layer and not layer.locked:
             result = {}
-            self.mutate("Dupliquer le calque", lambda doc: result.update(id=doc.duplicate_layer(layer.id).id))
-            self.select_layer(result['id'])
+            if self.mutate("Dupliquer le calque", lambda doc: result.update(id=doc.duplicate_layer(layer.id).id)):
+                self.select_layer(result['id'])
         elif layer:
             self.statusBar().showMessage("Déverrouillez le calque avant de le dupliquer", 3000)
 
@@ -1877,9 +1770,13 @@ class MainWindow(QMainWindow):
 
     def move_layer_to_display_position(self, layer_id: str, insertion: int):
         """Convertit une position visuelle haut->bas vers l'ordre interne bas->haut."""
-        display_ids = [layer.id for layer in reversed(self.document.layers)]
-        if layer_id not in display_ids:
+        layer = self.document.layer(layer_id)
+        if layer is None:
             return
+        if layer.locked:
+            self.statusBar().showMessage("Déverrouillez le calque avant de le déplacer", 3000)
+            return
+        display_ids = [layer.id for layer in reversed(self.document.layers)]
         current = display_ids.index(layer_id)
         insertion = max(0, min(insertion, len(display_ids)))
         display_ids.pop(current)
@@ -1899,69 +1796,39 @@ class MainWindow(QMainWindow):
     def new_document(self):
         if not self.maybe_save():
             return
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Nouveau projet")
-        dialog.setMinimumWidth(340)
-        layout = QVBoxLayout(dialog)
-        form = QFormLayout()
-        width_input = QSpinBox()
-        width_input.setRange(1, 16384)
-        width_input.setValue(1280)
-        width_input.setSuffix(" px")
-        height_input = QSpinBox()
-        height_input.setRange(1, 16384)
-        height_input.setValue(720)
-        height_input.setSuffix(" px")
-        background_input = QComboBox()
-        background_input.addItems(["Transparent", "Blanc", "Noir"])
-        form.addRow("Largeur", width_input)
-        form.addRow("Hauteur", height_input)
-        form.addRow("Fond", background_input)
-        layout.addLayout(form)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        create_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        create_button.setText("Créer")
-        create_button.setProperty("variant", "primary")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Annuler")
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
+        dialog = NewProjectDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        width = width_input.value()
-        height = height_input.value()
-        choice = background_input.currentText()
-        background = {"Transparent": None, "Blanc": "#FFFFFF", "Noir": "#000000"}[choice]
+        try:
+            document = dialog.document()
+            self.install_document(document, None)
+        except Exception as exc:
+            QMessageBox.critical(self, "Création impossible", str(exc))
+            return
         self.project_path = None
         self.undo_stack.clear()
-        self.install_document(Document(width, height, background), None)
         self.undo_stack.setClean()
         self.canvas.fit_document()
+        self.update_title()
+        self._warn_missing_fonts(document)
 
     def resize_document(self):
-        width, ok = QInputDialog.getInt(
-            self, "Dimensions du document", "Largeur finale (pixels) :",
-            self.document.width, 1, 16384
-        )
-        if not ok:
+        dialog = ResizeDocumentDialog(self.document.width, self.document.height, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        height, ok = QInputDialog.getInt(
-            self, "Dimensions du document", "Hauteur finale (pixels) :",
-            self.document.height, 1, 16384
-        )
-        if not ok or (width == self.document.width and height == self.document.height):
+        width, height = dialog.dimensions()
+        if (width, height) == (self.document.width, self.document.height):
             return
 
         def resize(doc):
             doc.width = width
             doc.height = height
 
-        self.mutate(f"Redimensionner le document en {width} × {height} px", resize, self.selected_id)
-        self.canvas.fit_document()
+        if self.mutate(f"Redimensionner le document en {width} × {height} px", resize, self.selected_id):
+            self.canvas.fit_document()
 
     def maybe_save(self) -> bool:
+        self._flush_pending_curve()
         if self.undo_stack.isClean():
             return True
         box = QMessageBox(self)
@@ -1973,38 +1840,8 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Discard |
             QMessageBox.StandardButton.Cancel
         )
-        save_button = box.button(QMessageBox.StandardButton.Save)
-        discard_button = box.button(QMessageBox.StandardButton.Discard)
-        save_button.setObjectName("saveButton")
-        discard_button.setObjectName("discardButton")
-        save_button.setProperty("variant", "primary")
-        discard_button.setProperty("variant", "danger")
-        save_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {COLORS['primary']};
-                border: 1px solid {COLORS['primary']};
-                border-radius: 8px;
-                color: {COLORS['background']};
-                font-weight: 600;
-                min-width: 72px;
-                padding: 8px 14px;
-            }}
-            QPushButton:hover {{ background-color: {COLORS['primary_hover']}; }}
-            QPushButton:pressed {{ background-color: {COLORS['primary_pressed']}; }}
-        """)
-        discard_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {COLORS['danger']};
-                border: 1px solid {COLORS['danger']};
-                border-radius: 8px;
-                color: {COLORS['background']};
-                font-weight: 600;
-                min-width: 72px;
-                padding: 8px 14px;
-            }}
-            QPushButton:hover {{ color: {COLORS['text']}; }}
-            QPushButton:pressed {{ background-color: #C95760; }}
-        """)
+        box.button(QMessageBox.StandardButton.Save).setStyleSheet(dialog_button_style("primary"))
+        box.button(QMessageBox.StandardButton.Discard).setStyleSheet(dialog_button_style("danger"))
         box.setDefaultButton(QMessageBox.StandardButton.Save)
         box.setEscapeButton(QMessageBox.StandardButton.Cancel)
         box.exec()
@@ -2026,27 +1863,38 @@ class MainWindow(QMainWindow):
             return
         try:
             doc = open_project(path)
-            opened_path = Path(path)
-            self.project_path = opened_path if opened_path.suffix.lower() == ".manta" else None
-            self.undo_stack.clear()
             self.install_document(doc, None)
-            self.undo_stack.setClean()
-            self.canvas.fit_document()
-            self.statusBar().showMessage(f"Projet chargé : {Path(path).name}", 5000)
         except Exception as exc:
             QMessageBox.critical(self, "Projet illisible", str(exc))
+            return
+        opened_path = Path(path)
+        self.project_path = opened_path if opened_path.suffix.lower() == ".manta" else None
+        self.undo_stack.clear()
+        self.undo_stack.setClean()
+        self.canvas.fit_document()
+        self.update_title()
+        self.statusBar().showMessage(f"Projet chargé : {opened_path.name}", 5000)
+        self._warn_missing_fonts(doc)
+
+    def _warn_missing_fonts(self, doc: Document):
+        available = {family.casefold() for family in QFontDatabase.families()}
+        missing = sorted({layer.font_family for layer in doc.layers
+                          if layer.kind == "text" and layer.font_family.casefold() not in available})
+        if not missing:
+            return
+        QMessageBox.information(
+            self, "Polices absentes",
+            "Ces polices ne sont pas disponibles sur cet ordinateur :\n\n"
+            + "\n".join(f"• {name}" for name in missing)
+            + "\n\nLe texte s'affiche avec une police de remplacement. Le nom d'origine reste "
+            "enregistré dans le projet tant que vous ne choisissez pas une autre police. "
+            "Pour retrouver le rendu exact, utilisez Fichier > Importer une police…",
+        )
 
     def save_document(self) -> bool:
         if self.project_path is None:
             return self.save_as_document()
-        try:
-            save_project(self.document, self.project_path)
-            self.undo_stack.setClean()
-            self.statusBar().showMessage(f"Enregistré : {self.project_path.name}", 5000)
-            return True
-        except Exception as exc:
-            QMessageBox.critical(self, "Enregistrement impossible", str(exc))
-            return False
+        return self._write_project(self.project_path)
 
     def save_as_document(self) -> bool:
         path, _ = QFileDialog.getSaveFileName(
@@ -2054,8 +1902,62 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return False
-        self.project_path = Path(path).with_suffix(".manta")
-        return self.save_document()
+        destination = Path(path)
+        if destination.suffix.lower() != ".manta":
+            destination = destination.with_name(destination.name + ".manta")
+        # Le chemin du projet ne change qu'après un enregistrement réussi.
+        if not self._write_project(destination):
+            return False
+        self.project_path = destination
+        self.update_title()
+        return True
+
+    def _write_project(self, destination: Path) -> bool:
+        self._flush_pending_curve()
+        try:
+            save_project(self.document, destination)
+        except Exception as exc:
+            QMessageBox.critical(self, "Enregistrement impossible", str(exc))
+            return False
+        self.undo_stack.setClean()
+        self.statusBar().showMessage(f"Enregistré : {destination.name}", 5000)
+        return True
+
+    def save_as_template(self):
+        default_name = self.project_path.stem if self.project_path else "Nouveau modèle"
+        name, accepted = QInputDialog.getText(
+            self, "Enregistrer comme modèle", "Nom du modèle :", text=default_name
+        )
+        if not accepted or not name.strip():
+            return
+        try:
+            destination = None
+            existing = next(
+                (info for info in list_templates() if info.name.casefold() == name.strip().casefold()),
+                None,
+            )
+            if existing is not None:
+                answer = QMessageBox.question(
+                    self, "Remplacer le modèle",
+                    f"Un modèle nommé « {existing.name} » existe déjà. Le remplacer ?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+                destination = existing.path
+            preview = render_document(self.document).scaled(
+                320, 180, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            path = save_template(
+                self.document, name, qimage_png(preview), destination=destination
+            )
+            self.statusBar().showMessage(
+                f"Modèle enregistré : {name.strip()} · {path.parent}", 6000
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Enregistrement du modèle impossible", str(exc))
 
     def export_image(self):
         path, filter_ = QFileDialog.getSaveFileName(self, "Exporter l'image", "MantaLayers.png",
@@ -2118,22 +2020,20 @@ class MainWindow(QMainWindow):
     def update_title(self, *_):
         name = self.project_path.name if self.project_path else "Sans titre"
         modified = " *" if not self.undo_stack.isClean() else ""
-        self.setWindowTitle(f"{name}{modified} — Manta Layers 0.1.0 | ReefKit")
+        self.setWindowTitle(f"{name}{modified} — Manta Layers {__version__} | ReefKit")
 
     def update_zoom(self):
         self.zoom_label.setText(f"{self.canvas.transform().m11() * 100:.0f} %")
 
     def change_zoom(self, factor):
-        now = self.canvas.transform().m11()
-        if 0.08 <= now * factor <= 8:
-            self.canvas.scale(factor, factor)
-            self.update_zoom()
+        self.canvas.zoom_by(factor)
 
     def about(self):
-        QMessageBox.about(self, "À propos de Manta Layers", """<h3>Manta Layers 0.1.0</h3>
+        QMessageBox.about(self, "À propos de Manta Layers", f"""<h3>Manta Layers {__version__}</h3>
         <p>Éditeur d'images local à calques · Univers Blue Shrimp / ReefKit.</p>
-        <p>Images, textes droits, calques, transformations, historique, projets natifs et exports.</p>
-        <p>Le texte courbé et les masques sont prévus pour les prochaines versions.</p>""")
+        <p>Images, textes multilignes courbés sur trajectoire, calques, transformations,
+        gomme et remplissages non destructifs, modèles, historique, projets natifs et exports.</p>
+        <p>La déformation Warp des lettres, le recadrage et les masques sont prévus pour les prochaines versions.</p>""")
 
     def dragEnterEvent(self, event):
         if self.image_paths_from_mime(event.mimeData()):

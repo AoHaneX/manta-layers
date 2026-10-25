@@ -4,6 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields
 from io import BytesIO
+from math import isfinite
 from pathlib import Path
 from uuid import uuid4
 
@@ -11,11 +12,41 @@ from PIL import Image
 
 PROJECT_VERSION = 1
 MAX_DIMENSION = 16384
-LEGACY_PROJECT_FORMAT = "Manta" + "Crab"
+# Au-delà, le décodage et l'affichage d'un calque deviennent trop coûteux en mémoire
+# (une image RGBA de 8192 × 8192 occupe déjà 256 Mo une fois décodée).
+MAX_PIXELS = 8192 * 8192
+# Ancien nom du logiciel : les projets .mcrab portent encore cet identifiant.
+LEGACY_PROJECT_FORMAT = "MantaCrab"
 
 
 def new_id() -> str:
     return uuid4().hex
+
+
+def is_hex_color(value) -> bool:
+    """Vrai pour une couleur « #RRGGBB »."""
+    if not isinstance(value, str) or len(value) != 7 or not value.startswith("#"):
+        return False
+    try:
+        int(value[1:], 16)
+        return True
+    except ValueError:
+        return False
+
+
+def _number(value, default: float, minimum: float | None = None, maximum: float | None = None) -> float:
+    """Nombre fini borné ; une valeur corrompue reprend la valeur par défaut."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not isfinite(number):
+        return default
+    if minimum is not None:
+        number = max(minimum, number)
+    if maximum is not None:
+        number = min(maximum, number)
+    return number
 
 
 @dataclass
@@ -35,7 +66,10 @@ class Layer:
     path_alignment: str = "center"
     path_orientation: str = "tangent"
     show_curve_guide: bool = True
+    # Réservés : futur moteur Warp et rôles des calques de modèle. Ils sont
+    # conservés tels quels dans les projets mais pas encore exploités.
     text_warp: dict | None = None
+    template_role: str = "fixed"
     x: float = 0.0
     y: float = 0.0
     sx: float = 1.0
@@ -52,19 +86,38 @@ class Layer:
 
     @classmethod
     def from_dict(cls, raw: dict) -> Layer:
+        if not isinstance(raw, dict):
+            raise ValueError("Calque invalide dans le projet")
         permitted = {f.name for f in fields(cls)}
         layer = cls(**{k: v for k, v in raw.items() if k in permitted})
+        defaults = cls()
         if layer.kind not in ("image", "text"):
             raise ValueError(f"Type de calque non reconnu : {layer.kind}")
-        layer.sx = max(0.05, min(float(layer.sx), 50.0))
-        layer.sy = max(0.05, min(float(layer.sy), 50.0))
-        layer.opacity = max(0.0, min(float(layer.opacity), 1.0))
-        if layer.text_background is not None and not QColorName.is_hex(layer.text_background):
+        if not isinstance(layer.id, str) or not layer.id:
+            raise ValueError("Identifiant de calque invalide")
+        if layer.asset is not None and not isinstance(layer.asset, str):
+            raise ValueError("Référence d'image invalide")
+        for name in ("name", "text", "font_family"):
+            if not isinstance(getattr(layer, name), str):
+                setattr(layer, name, getattr(defaults, name))
+        for name in ("visible", "locked", "flip_horizontal", "flip_vertical", "show_curve_guide"):
+            if not isinstance(getattr(layer, name), bool):
+                setattr(layer, name, getattr(defaults, name))
+        layer.x = _number(layer.x, 0.0)
+        layer.y = _number(layer.y, 0.0)
+        layer.rotation = _number(layer.rotation, 0.0)
+        layer.sx = _number(layer.sx, 1.0, 0.05, 50.0)
+        layer.sy = _number(layer.sy, 1.0, 0.05, 50.0)
+        layer.opacity = _number(layer.opacity, 1.0, 0.0, 1.0)
+        layer.font_size = int(_number(layer.font_size, defaults.font_size, 8, 300))
+        if not is_hex_color(layer.color):
+            layer.color = defaults.color
+        if layer.text_background is not None and not is_hex_color(layer.text_background):
             layer.text_background = None
         # Les anciens projets utilisaient un mode + une intensité positive.
         # Ils sont convertis vers l'unique courbure signée sans perdre le sens.
-        legacy_deformation = layer.text_deformation
-        layer.curve_intensity = float(layer.curve_intensity)
+        legacy_deformation = layer.text_deformation if isinstance(layer.text_deformation, str) else "curve"
+        layer.curve_intensity = _number(layer.curve_intensity, 0.0)
         if legacy_deformation in {"arc_up", "u_inverted", "wave"}:
             layer.curve_intensity = abs(layer.curve_intensity)
         elif legacy_deformation in {"arc_down", "u"}:
@@ -73,19 +126,21 @@ class Layer:
             layer.curve_intensity = 0.0
         layer.text_deformation = "curve"
         layer.curve_intensity = max(-100.0, min(100.0, layer.curve_intensity))
-        layer.character_spacing = max(-50.0, min(200.0, float(layer.character_spacing)))
-        if layer.path_alignment not in {"left", "center", "right"}:
+        layer.character_spacing = _number(layer.character_spacing, 0.0, -50.0, 200.0)
+        if layer.path_alignment not in ("left", "center", "right"):
             layer.path_alignment = "center"
-        if layer.path_orientation not in {"tangent", "horizontal"}:
+        if layer.path_orientation not in ("tangent", "horizontal"):
             layer.path_orientation = "tangent"
         if not isinstance(layer.text_warp, (dict, type(None))):
             layer.text_warp = None
+        if layer.template_role not in ("fixed", "replaceable_text", "replaceable_image"):
+            layer.template_role = "fixed"
         if not isinstance(layer.color_replacements, dict):
             layer.color_replacements = {}
         layer.color_replacements = {
             str(source).upper(): str(target).upper()
             for source, target in layer.color_replacements.items()
-            if QColorName.is_hex(source) and QColorName.is_hex(target)
+            if is_hex_color(source) and is_hex_color(target)
         }
         if not isinstance(layer.color_fills, list):
             layer.color_fills = []
@@ -94,12 +149,13 @@ class Layer:
             if not isinstance(raw_fill, dict):
                 continue
             source, target = raw_fill.get("source"), raw_fill.get("target")
-            if not QColorName.is_hex(source) or not QColorName.is_hex(target):
+            if not is_hex_color(source) or not is_hex_color(target):
                 continue
             try:
                 tolerance = max(0, min(255, int(raw_fill.get("tolerance", 0))))
                 x, y = int(raw_fill.get("x", -1)), int(raw_fill.get("y", -1))
-            except (TypeError, ValueError):
+                after_strokes = max(0, int(raw_fill.get("after_strokes", 0)))
+            except (TypeError, ValueError, OverflowError):
                 continue
             valid_fills.append({
                 "mode": "global" if raw_fill.get("mode") == "global" else "contiguous",
@@ -109,6 +165,9 @@ class Layer:
                 "y": y,
                 "tolerance": tolerance,
                 "preserve_shading": bool(raw_fill.get("preserve_shading", False)),
+                # Nombre de traits de gomme déjà présents lors du remplissage :
+                # le rendu rejoue ainsi gomme et remplissages dans leur ordre réel.
+                "after_strokes": after_strokes,
             })
         layer.color_fills = valid_fills
         if not isinstance(layer.eraser_strokes, list):
@@ -123,8 +182,9 @@ class Layer:
                 size = max(1, min(2048, int(raw_stroke.get("size", 1))))
                 hardness = max(0, min(100, int(raw_stroke.get("hardness", 100))))
                 opacity = max(1, min(100, int(raw_stroke.get("opacity", 100))))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 continue
+            points = [point for point in points if isfinite(point[0]) and isfinite(point[1])]
             if not points:
                 continue
             valid_strokes.append({
@@ -139,18 +199,6 @@ class Layer:
         return layer
 
 
-class QColorName:
-    @staticmethod
-    def is_hex(value) -> bool:
-        if not isinstance(value, str) or len(value) != 7 or not value.startswith("#"):
-            return False
-        try:
-            int(value[1:], 16)
-            return True
-        except ValueError:
-            return False
-
-
 @dataclass
 class Document:
     width: int = 1280
@@ -160,9 +208,13 @@ class Document:
     assets: dict[str, bytes] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not (1 <= int(self.width) <= MAX_DIMENSION and 1 <= int(self.height) <= MAX_DIMENSION):
+        try:
+            width, height = int(self.width), int(self.height)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Dimensions du document invalides") from exc
+        if not (1 <= width <= MAX_DIMENSION and 1 <= height <= MAX_DIMENSION):
             raise ValueError("Dimensions du document hors limites")
-        self.width, self.height = int(self.width), int(self.height)
+        self.width, self.height = width, height
 
     def clone(self) -> Document:
         return Document(self.width, self.height, self.background, deepcopy(self.layers), self.assets.copy())
@@ -172,9 +224,14 @@ class Document:
 
     def add_image_bytes(self, contents: bytes, name: str, center: bool = True) -> Layer:
         with Image.open(BytesIO(contents)) as source:
-            source.load()
             if source.width > MAX_DIMENSION or source.height > MAX_DIMENSION:
                 raise ValueError("Image trop grande (maximum 16 384 px par dimension)")
+            if source.width * source.height > MAX_PIXELS:
+                raise ValueError(
+                    f"Image trop grande ({source.width} × {source.height} px) : "
+                    "maximum 67 mégapixels, soit 8192 × 8192 px"
+                )
+            source.load()
             rgba = source.convert("RGBA")
         output = BytesIO()
         rgba.save(output, format="PNG")
@@ -191,7 +248,8 @@ class Document:
         return self.add_image_bytes(p.read_bytes(), p.stem)
 
     def add_text(self, text: str) -> Layer:
-        layer = Layer(name=f"Texte : {text[:28]}", kind="text", text=text,
+        first_line = text.split("\n", 1)[0]
+        layer = Layer(name=f"Texte : {first_line[:28]}", kind="text", text=text,
                       x=self.width * 0.2, y=self.height * 0.42)
         self.layers.append(layer)
         return layer
@@ -227,12 +285,18 @@ class Document:
 
     @classmethod
     def from_manifest(cls, manifest: dict, assets: dict[str, bytes]) -> Document:
+        if not isinstance(manifest, dict):
+            raise ValueError("Manifeste de projet invalide")
         # L'ancien identifiant reste accepté pour ne pas casser les projets existants.
         if manifest.get("format") not in ("MantaLayers", LEGACY_PROJECT_FORMAT) or manifest.get("version") != PROJECT_VERSION:
             raise ValueError("Format ou version de projet non pris en charge")
-        doc = cls(width=manifest["width"], height=manifest["height"],
-                  background=manifest.get("background"),
-                  layers=[Layer.from_dict(item) for item in manifest["layers"]], assets=assets)
+        raw_layers = manifest.get("layers")
+        if not isinstance(raw_layers, list):
+            raise ValueError("Liste de calques invalide")
+        background = manifest.get("background")
+        doc = cls(width=manifest.get("width"), height=manifest.get("height"),
+                  background=background if is_hex_color(background) else None,
+                  layers=[Layer.from_dict(item) for item in raw_layers], assets=assets)
         for layer in doc.layers:
             if layer.kind == "image" and layer.asset not in assets:
                 raise ValueError(f"Image manquante pour le calque « {layer.name} »")

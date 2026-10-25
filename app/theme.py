@@ -12,7 +12,14 @@ COLORS = {
     "muted": "#ACC9D4",
     "copper": "#D6A06A",
     "danger": "#F07178",
+    "danger_pressed": "#C95760",
     "disabled": "#587887",
+    # Zone de travail du canvas et accessoires d'édition.
+    "canvas": "#071221",
+    "canvas_border": "#4A6883",
+    "rotation_handle": "#FFD86B",
+    "checker_light": "#F9FCFF",
+    "checker_dark": "#DDE4EC",
 }
 
 RADIUS = {"control": 8, "panel": 12}
@@ -213,20 +220,6 @@ QPushButton[variant="danger"]:hover {{
     background-color: {COLORS['danger']};
     color: {COLORS['background']};
 }}
-QMessageBox QPushButton#saveButton {{
-    background-color: {COLORS['primary']};
-    border-color: {COLORS['primary']};
-    color: {COLORS['background']};
-    font-weight: 600;
-}}
-QMessageBox QPushButton#saveButton:hover {{ background-color: {COLORS['primary_hover']}; }}
-QMessageBox QPushButton#discardButton {{
-    background-color: {COLORS['danger']};
-    border-color: {COLORS['danger']};
-    color: {COLORS['background']};
-    font-weight: 600;
-}}
-QMessageBox QPushButton#discardButton:hover {{ color: {COLORS['text']}; }}
 QToolButton:disabled, QPushButton:disabled {{
     background-color: {COLORS['background']};
     border-color: {COLORS['border']};
@@ -320,4 +313,29 @@ QScrollBar:vertical {{ background: {COLORS['background']}; width: 10px; margin: 
 QScrollBar::handle:vertical {{ background: {COLORS['border']}; min-height: 28px; border-radius: 5px; }}
 QScrollBar::handle:vertical:hover {{ background: {COLORS['primary_pressed']}; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+"""
+
+
+def dialog_button_style(variant: str) -> str:
+    """Style posé directement sur un bouton de QMessageBox.
+
+    Sous Windows, le style natif de la boîte ignore la feuille globale : les
+    boutons Enregistrer (primary) et Ignorer (danger) reçoivent donc le leur.
+    """
+    danger = variant == "danger"
+    base = COLORS["danger"] if danger else COLORS["primary"]
+    hover = f"color: {COLORS['text']};" if danger else f"background-color: {COLORS['primary_hover']};"
+    pressed = COLORS["danger_pressed"] if danger else COLORS["primary_pressed"]
+    return f"""
+QPushButton {{
+    background-color: {base};
+    border: 1px solid {base};
+    border-radius: {RADIUS['control']}px;
+    color: {COLORS['background']};
+    font-weight: 600;
+    min-width: 72px;
+    padding: 8px 14px;
+}}
+QPushButton:hover {{ {hover} }}
+QPushButton:pressed {{ background-color: {pressed}; }}
 """

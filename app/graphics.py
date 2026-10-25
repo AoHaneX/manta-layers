@@ -1,32 +1,26 @@
 """Canvas interactif et rendu sans les accessoires d'édition."""
 from __future__ import annotations
 
+from collections import OrderedDict
+from hashlib import sha1
 from io import BytesIO
-from math import atan2, cos, degrees, radians, sin
+from math import atan2, cos, degrees, hypot, radians, sin
+
 from PIL import Image, ImageChops, ImageDraw
 from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QPointF, QRectF, Qt
 from PySide6.QtGui import (
-    QBrush, QColor, QFont, QFontMetricsF, QImage, QKeySequence, QPainter,
+    QBrush, QColor, QFont, QFontDatabase, QFontMetricsF, QImage, QKeySequence, QPainter,
     QPainterPath, QPen, QPixmap, QRadialGradient, QTransform,
 )
-from PySide6.QtWidgets import (
-    QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsTextItem, QGraphicsView,
-)
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
-from .model import Document, Layer
+from .model import MAX_PIXELS, Document, Layer
+from .theme import COLORS
 
-
-class TextGraphicItem(QGraphicsTextItem):
-    """Texte éditable conservant un fond distinct de la couleur des caractères."""
-
-    def __init__(self, text: str, background: str | None = None):
-        super().__init__(text)
-        self.background = QColor(background) if background else QColor()
-
-    def paint(self, painter, option, widget=None):
-        if self.background.isValid() and self.background.alpha() > 0:
-            painter.fillRect(self.boundingRect(), self.background)
-        super().paint(painter, option, widget)
+MIN_ZOOM = 0.01
+MAX_ZOOM = 64.0
+CHECKER_TILE = 18
+ROTATION_HANDLE_DISTANCE = 35  # pixels écran au-dessus du cadre
 
 
 class CurvedTextGraphicItem(QGraphicsItem):
@@ -34,8 +28,10 @@ class CurvedTextGraphicItem(QGraphicsItem):
 
     def __init__(self, layer: Layer):
         super().__init__()
-        self.text = layer.text.replace("\n", " ")
-        self.font = QFont(layer.font_family, layer.font_size)
+        self.lines = layer.text.split("\n")
+        available = {family.casefold(): family for family in QFontDatabase.families()}
+        family = available.get(layer.font_family.casefold(), QFont().defaultFamily())
+        self.font = QFont(family, layer.font_size)
         self.color = QColor(layer.color)
         self.background = QColor(layer.text_background) if layer.text_background else QColor()
         self.curve_intensity = float(layer.curve_intensity)
@@ -51,50 +47,68 @@ class CurvedTextGraphicItem(QGraphicsItem):
         # positive produit donc un arc vers le haut, et une négative vers le bas.
         return -4.0 * t * (1.0 - t)
 
+    def _line_path(self, baseline: float, samples: int) -> QPainterPath:
+        path = QPainterPath(QPointF(self.path_start_x, baseline))
+        for index in range(1, samples + 1):
+            t = index / samples
+            path.lineTo(
+                self.path_start_x + self.path_width * t,
+                baseline + self.amplitude * self._shape_value(t),
+            )
+        return path
+
     def _rebuild_geometry(self):
         self.prepareGeometryChange()
         metrics = QFontMetricsF(self.font)
-        advances = [metrics.horizontalAdvance(char) for char in self.text]
-        positive_advances = [advance for advance in advances if advance > 0]
+        line_advances = [[metrics.horizontalAdvance(char) for char in line] for line in self.lines]
+        positive_advances = [advance for advances in line_advances for advance in advances if advance > 0]
         minimum_advance = min(positive_advances, default=1.0)
         # L'espacement négatif peut rapprocher les lettres sans jamais faire
         # repartir le curseur en arrière ni inverser leur ordre.
         effective_spacing = max(self.spacing, -minimum_advance * 0.8)
-        self.text_width = sum(advances) + max(0, len(advances) - 1) * effective_spacing
+        widths = [sum(advances) + max(0, len(advances) - 1) * effective_spacing
+                  for advances in line_advances]
+        self.text_width = max(widths, default=0.0)
         self.max_amplitude = max(1.0, self.font.pointSizeF() * 2.0)
         self.amplitude = self.max_amplitude * self.curve_intensity / 100.0
         margin = max(4.0, self.font.pointSizeF())
         self.path_start_x = -margin
         self.path_width = max(1.0, self.text_width + margin * 2)
-        # Géométrie stable pendant le glissement de la poignée : la ligne de
-        # base et le cadre ne sautent pas quand l'intensité évolue.
-        # La ligne droite reste au même emplacement que l'ancien texte droit.
-        # La marge de courbure s'étend autour d'elle au lieu de décaler le texte.
+        # La première ligne de base reste à l'emplacement historique du texte
+        # droit ; les lignes suivantes suivent la même courbe, décalées vers le bas.
         self.baseline = metrics.ascent() + 2
-        self._bounds = QRectF(
-            self.path_start_x, -self.max_amplitude, self.path_width,
-            metrics.height() + self.max_amplitude * 2 + 4,
-        )
-        self.guide_path = QPainterPath(QPointF(self.path_start_x, self.baseline))
+        line_height = metrics.lineSpacing()
+        block_height = metrics.height() + line_height * (len(self.lines) - 1) + 4
+        # Centre de retournement indépendant de la courbure : le texte retourné
+        # ne saute pas pendant le glissement de la poignée.
+        self._flip_center = QPointF(self.path_start_x + self.path_width / 2, block_height / 2)
         samples = max(32, min(256, int(self.path_width / 4)))
-        for index in range(1, samples + 1):
-            t = index / samples
-            self.guide_path.lineTo(
-                self.path_start_x + self.path_width * t,
-                self.baseline + self.amplitude * self._shape_value(t),
-            )
-        length = max(1.0, self.guide_path.length())
-        spare = max(0.0, length - self.text_width)
-        offset = 0.0 if self.alignment == "left" else spare if self.alignment == "right" else spare / 2
         self.placements = []
-        cursor = offset
-        for char, advance in zip(self.text, advances):
-            center = cursor + advance / 2
-            percent = self.guide_path.percentAtLength(max(0.0, min(length, center)))
-            point = self.guide_path.pointAtPercent(percent)
-            angle = -self.guide_path.angleAtPercent(percent) if self.orientation == "tangent" else 0.0
-            self.placements.append((char, advance, point, angle))
-            cursor += max(advance * 0.2, advance + effective_spacing)
+        content = None
+        for index, (line, advances, width) in enumerate(zip(self.lines, line_advances, widths)):
+            path = self._line_path(self.baseline + index * line_height, samples)
+            if index == 0:
+                self.guide_path = path
+            length = max(1.0, path.length())
+            spare = max(0.0, length - width)
+            offset = 0.0 if self.alignment == "left" else spare if self.alignment == "right" else spare / 2
+            cursor = offset
+            for char, advance in zip(line, advances):
+                center = cursor + advance / 2
+                percent = path.percentAtLength(max(0.0, min(length, center)))
+                point = path.pointAtPercent(percent)
+                angle = -path.angleAtPercent(percent) if self.orientation == "tangent" else 0.0
+                self.placements.append((char, advance, point, angle))
+                glyph = QRectF(-advance / 2, -metrics.ascent(), advance, metrics.height())
+                placed = QTransform().translate(point.x(), point.y()).rotate(angle).mapRect(glyph)
+                content = placed if content is None else content.united(placed)
+                cursor += max(advance * 0.2, advance + effective_spacing)
+        if content is None:
+            content = QRectF(self.path_start_x, 0, self.path_width, metrics.height())
+        # Le cadre suit les glyphes réellement placés : le fond et les poignées
+        # restent collés au texte au lieu d'englober toute l'amplitude possible.
+        self._content_bounds = content.adjusted(-2, -2, 2, 2)
+        self._bounds = self._visual_transform().mapRect(self._content_bounds)
 
     def boundingRect(self):
         return self._bounds
@@ -102,13 +116,10 @@ class CurvedTextGraphicItem(QGraphicsItem):
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
-        center = self._bounds.center()
         painter.save()
-        painter.translate(center)
-        painter.scale(-1 if self.flip_horizontal else 1, -1 if self.flip_vertical else 1)
-        painter.translate(-center)
+        painter.setTransform(self._visual_transform(), True)
         if self.background.isValid() and self.background.alpha() > 0:
-            painter.fillRect(self._bounds, self.background)
+            painter.fillRect(self._content_bounds, self.background)
         painter.setFont(self.font)
         painter.setPen(self.color)
         for char, advance, point, angle in self.placements:
@@ -122,7 +133,7 @@ class CurvedTextGraphicItem(QGraphicsItem):
         painter.restore()
 
     def _visual_transform(self) -> QTransform:
-        center = self._bounds.center()
+        center = self._flip_center
         transform = QTransform()
         transform.translate(center.x(), center.y())
         transform.scale(-1 if self.flip_horizontal else 1,
@@ -158,25 +169,37 @@ class CurvedTextGraphicItem(QGraphicsItem):
         ))
 
 
-def image_with_replacements(
-    contents: bytes, replacements: dict[str, str], fills: list[dict] | None = None
-) -> bytes:
-    """Applique les remplacements au rendu sans modifier l'image source du projet."""
+def render_layer_image(
+    contents: bytes,
+    replacements: dict[str, str],
+    fills: list[dict] | None = None,
+    strokes: list[dict] | None = None,
+) -> Image.Image:
+    """Rend un calque image sans modifier l'image source du projet.
+
+    Remplissages et traits de gomme sont rejoués dans l'ordre où ils ont été
+    faits : un remplissage contigu ne traverse donc pas une zone déjà gommée.
+    """
     fills = fills or []
-    if not replacements and not fills:
-        return contents
+    strokes = strokes or []
     with Image.open(BytesIO(contents)) as source:
+        if source.width * source.height > MAX_PIXELS:
+            raise ValueError(f"image trop grande ({source.width} × {source.height} px)")
         image = source.convert("RGBA")
     mapping = {tuple(QColor(old).getRgb()[:3]): tuple(QColor(new).getRgb()[:3])
                for old, new in replacements.items()
                if QColor(old).isValid() and QColor(new).isValid()}
     for source_rgb, target_rgb in mapping.items():
         image = _apply_color_fill(image, source_rgb, target_rgb, 0, "global", None, False)
+    applied_strokes = 0
     for fill in fills:
         source = QColor(str(fill.get("source", "")))
         target_color = QColor(str(fill.get("target", "")))
         if not source.isValid() or not target_color.isValid():
             continue
+        due = max(applied_strokes, min(len(strokes), int(fill.get("after_strokes", 0))))
+        image = apply_eraser_strokes(image, strokes[applied_strokes:due])
+        applied_strokes = due
         source_rgb = source.getRgb()[:3]
         target_rgb = target_color.getRgb()[:3]
         tolerance = max(0, min(255, int(fill.get("tolerance", 0))))
@@ -186,9 +209,7 @@ def image_with_replacements(
             image, source_rgb, target_rgb, tolerance, mode, seed,
             bool(fill.get("preserve_shading", False)),
         )
-    output = BytesIO()
-    image.save(output, format="PNG")
-    return output.getvalue()
+    return apply_eraser_strokes(image, strokes[applied_strokes:])
 
 
 def _similar_color_mask(image: Image.Image, source_rgb: tuple[int, int, int], tolerance: int) -> Image.Image:
@@ -319,9 +340,11 @@ def apply_eraser_strokes(image: Image.Image, strokes: list[dict]) -> Image.Image
         coverage = Image.new("L", result.size, 0)
         offset = (size - 1) / 2
         spacing = 0.5 if pixel_art else max(0.5, size * 0.2)
+        # Les empreintes d'un même trait se combinent par maximum : l'opacité
+        # choisie reste celle du trait, au lieu de s'additionner à chaque pas.
         for x, y in _interpolated_points(points, spacing):
             left, top = round(x - offset), round(y - offset)
-            coverage.paste(ImageChops.screen(coverage.crop((
+            coverage.paste(ImageChops.lighter(coverage.crop((
                 left, top, left + size, top + size
             )), dab), (left, top))
         inverse = ImageChops.invert(coverage)
@@ -330,26 +353,86 @@ def apply_eraser_strokes(image: Image.Image, strokes: list[dict]) -> Image.Image
     return result
 
 
+class _PixmapCache:
+    """Rendus de calques image déjà calculés, limités par un budget mémoire.
+
+    Une modification de calque reconstruit toute la scène : sans ce cache,
+    chaque action décodait et recolorait de nouveau toutes les images.
+    """
+
+    def __init__(self, budget_bytes: int = 512 * 1024 * 1024):
+        self._entries: OrderedDict[str, tuple[QPixmap, int]] = OrderedDict()
+        self._budget = budget_bytes
+        self._used = 0
+
+    def get(self, key: str) -> QPixmap | None:
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        self._entries.move_to_end(key)
+        return entry[0]
+
+    def put(self, key: str, pixmap: QPixmap) -> None:
+        size = pixmap.width() * pixmap.height() * 4
+        if key in self._entries:
+            self._used -= self._entries.pop(key)[1]
+        if size > self._budget:
+            return
+        self._entries[key] = (pixmap, size)
+        self._used += size
+        while self._used > self._budget:
+            _key, (_pixmap, freed) = self._entries.popitem(last=False)
+            self._used -= freed
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self._used = 0
+
+
+PIXMAP_CACHE = _PixmapCache()
+
+
+def _render_key(layer: Layer) -> str:
+    # Un identifiant d'image désigne toujours le même contenu : seuls les
+    # réglages non destructifs et les retournements font varier le rendu.
+    state = (layer.asset, sorted(layer.color_replacements.items()), layer.color_fills,
+             layer.eraser_strokes, layer.flip_horizontal, layer.flip_vertical)
+    return sha1(repr(state).encode("utf-8")).hexdigest()
+
+
+def _qimage_from_pil(image: Image.Image) -> QImage:
+    data = image.tobytes("raw", "RGBA")
+    return QImage(data, image.width, image.height, image.width * 4,
+                  QImage.Format.Format_RGBA8888).copy()
+
+
+def layer_pixmap(layer: Layer, document: Document) -> QPixmap:
+    key = _render_key(layer)
+    pixmap = PIXMAP_CACHE.get(key)
+    if pixmap is not None:
+        return pixmap
+    try:
+        image = render_layer_image(
+            document.assets[layer.asset], layer.color_replacements,
+            layer.color_fills, layer.eraser_strokes,
+        )
+        pixmap = QPixmap.fromImage(_qimage_from_pil(image))
+    except Exception as exc:
+        raise ValueError(f"Image illisible pour le calque « {layer.name} » : {exc}") from exc
+    if pixmap.isNull():
+        raise ValueError(f"Image illisible pour le calque « {layer.name} »")
+    if layer.flip_horizontal or layer.flip_vertical:
+        pixmap = pixmap.transformed(QTransform().scale(
+            -1 if layer.flip_horizontal else 1,
+            -1 if layer.flip_vertical else 1,
+        ))
+    PIXMAP_CACHE.put(key, pixmap)
+    return pixmap
+
+
 def create_graphic(layer: Layer, document: Document) -> QGraphicsItem:
     if layer.kind == "image":
-        pixmap = QPixmap()
-        rendered = image_with_replacements(
-            document.assets[layer.asset], layer.color_replacements, layer.color_fills
-        )
-        if layer.eraser_strokes:
-            with Image.open(BytesIO(rendered)) as rendered_source:
-                erased = apply_eraser_strokes(rendered_source.convert("RGBA"), layer.eraser_strokes)
-            output = BytesIO()
-            erased.save(output, format="PNG")
-            rendered = output.getvalue()
-        if not pixmap.loadFromData(rendered):
-            raise ValueError(f"Image illisible pour le calque {layer.name}")
-        if layer.flip_horizontal or layer.flip_vertical:
-            pixmap = pixmap.transformed(QTransform().scale(
-                -1 if layer.flip_horizontal else 1,
-                -1 if layer.flip_vertical else 1,
-            ))
-        item = QGraphicsPixmapItem(pixmap)
+        item = QGraphicsPixmapItem(layer_pixmap(layer, document))
         item.setTransformationMode(Qt.TransformationMode.FastTransformation)
     else:
         # Un même item vectoriel rend le texte droit et courbé. Le texte reste
@@ -401,6 +484,19 @@ def qimage_png(image: QImage) -> bytes:
     return bytes(data)
 
 
+def _checker_brush() -> QBrush:
+    """Motif de damier dessiné une fois, puis répété par Qt."""
+    tile = CHECKER_TILE
+    pixmap = QPixmap(tile * 2, tile * 2)
+    pixmap.fill(QColor(COLORS["checker_light"]))
+    painter = QPainter(pixmap)
+    dark = QColor(COLORS["checker_dark"])
+    painter.fillRect(tile, 0, tile, tile, dark)
+    painter.fillRect(0, tile, tile, tile, dark)
+    painter.end()
+    return QBrush(pixmap)
+
+
 class CanvasView(QGraphicsView):
     """Sélection, déplacement à la souris, quatre poignées et rotation."""
 
@@ -416,7 +512,8 @@ class CanvasView(QGraphicsView):
         self._pan_last = None
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
-        self.setBackgroundBrush(QColor("#071221"))
+        self.setBackgroundBrush(QColor(COLORS["canvas"]))
+        self._checker = _checker_brush()
         self.mode = None
         self.old_layer = None
         self.drag_item = None
@@ -430,6 +527,8 @@ class CanvasView(QGraphicsView):
         self.eraser_points: list[QPointF] = []
         self.eraser_cursor_local: QPointF | None = None
         self.eraser_preview_image: QImage | None = None
+        self.eraser_source_image: QImage | None = None
+        self.eraser_mask: QImage | None = None
         self.eraser_original_pixmap: QPixmap | None = None
         self.eraser_preview_last: QPointF | None = None
         self.setMouseTracking(True)
@@ -439,20 +538,16 @@ class CanvasView(QGraphicsView):
         super().drawBackground(painter, rect)
         if not self.scene():
             return
-        region = QRectF(0, 0, self.window.document.width, self.window.document.height)
-        painter.save()
-        painter.setClipRect(region)
+        area = QRectF(0, 0, self.window.document.width, self.window.document.height).intersected(rect)
+        if area.isEmpty():
+            return
         background = self.window.document.background
+        painter.save()
         if background:
-            painter.fillRect(region, QColor(background))
+            painter.fillRect(area, QColor(background))
         else:
-            tile = 18
-            start_x = max(0, int(rect.left() // tile) * tile)
-            start_y = max(0, int(rect.top() // tile) * tile)
-            for y in range(start_y, min(int(rect.bottom()) + tile, self.window.document.height), tile):
-                for x in range(start_x, min(int(rect.right()) + tile, self.window.document.width), tile):
-                    color = "#DDE4EC" if (x // tile + y // tile) % 2 else "#F9FCFF"
-                    painter.fillRect(QRectF(x, y, tile, tile), QColor(color))
+            painter.setBrushOrigin(0, 0)
+            painter.fillRect(area, self._checker)
         painter.restore()
 
     def selected_graphic(self):
@@ -461,21 +556,39 @@ class CanvasView(QGraphicsView):
                 return item
         return None
 
+    def graphic_for(self, layer_id: str | None):
+        if not layer_id or self.scene() is None:
+            return None
+        return next((item for item in self.scene().items() if item.data(0) == layer_id), None)
+
+    def tool_target_graphic(self):
+        """Graphique du calque visé par les outils, même s'il n'est plus sélectionné."""
+        return self.graphic_for(self.window.tool_target_id())
+
     def local_handles(self, item):
         bounds = item.boundingRect()
         x, y, w, h = bounds.x(), bounds.y(), bounds.width(), bounds.height()
         return [QPointF(x, y), QPointF(x + w, y), QPointF(x + w, y + h), QPointF(x, y + h)]
 
     def rotation_point(self, item):
-        b = item.boundingRect()
-        return item.mapToScene(QPointF(b.center().x(), b.top() - 35))
+        # Distance constante à l'écran, quels que soient l'échelle du calque et le zoom.
+        bounds = item.boundingRect()
+        top = item.mapToScene(QPointF(bounds.center().x(), bounds.top()))
+        center = item.mapToScene(bounds.center())
+        direction = top - center
+        length = hypot(direction.x(), direction.y())
+        if length < 1e-9:
+            direction, length = QPointF(0, -1), 1.0
+        distance = ROTATION_HANDLE_DISTANCE / self.transform().m11()
+        return top + direction * (distance / length)
 
     def drawForeground(self, painter: QPainter, rect: QRectF) -> None:
         super().drawForeground(painter, rect)
         if not self.scene():
             return
         painter.save()
-        border_pen = QPen(QColor("#4A6883"), 1)
+        factor = self.transform().m11()
+        border_pen = QPen(QColor(COLORS["canvas_border"]), 1)
         border_pen.setCosmetic(True)
         painter.setPen(border_pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -484,30 +597,29 @@ class CanvasView(QGraphicsView):
         layer = self.window.document.layer(item.data(0)) if item else None
         if isinstance(item, CurvedTextGraphicItem) and layer:
             if layer.show_curve_guide:
-                guide_pen = QPen(QColor("#4DD6E7"), 1)
+                guide_pen = QPen(QColor(COLORS["primary"]), 1)
                 guide_pen.setCosmetic(True)
                 guide_pen.setStyle(Qt.PenStyle.DashLine)
                 painter.setPen(guide_pen)
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawPath(item.sceneTransform().map(item.visual_guide_path()))
             handle = item.mapToScene(item.curve_handle_local())
-            factor = max(0.08, self.transform().m11())
             radius = 7 / factor
-            painter.setPen(QPen(QColor("#00192D"), 1 / factor))
-            painter.setBrush(QColor("#4DD6E7"))
+            painter.setPen(QPen(QColor(COLORS["background"]), 1 / factor))
+            painter.setBrush(QColor(COLORS["primary"]))
             painter.drawEllipse(handle, radius, radius)
         if item and not self.window.eraser_active:
-            factor = max(0.08, self.transform().m11())
             size = 9 / factor
-            painter.setBrush(QColor("#36D7FF"))
-            painter.setPen(QPen(QColor("#03182C"), 1 / factor))
+            painter.setBrush(QColor(COLORS["primary"]))
+            painter.setPen(QPen(QColor(COLORS["background"]), 1 / factor))
             for local in self.local_handles(item):
                 p = item.mapToScene(local)
                 painter.drawRect(QRectF(p.x() - size/2, p.y() - size/2, size, size))
             p = self.rotation_point(item)
-            painter.setBrush(QColor("#FFD86B"))
+            painter.setBrush(QColor(COLORS["rotation_handle"]))
             painter.drawEllipse(p, size/2, size/2)
-        if self.window.eraser_active and item and isinstance(item, QGraphicsPixmapItem):
+        target = self.eraser_item or self.tool_target_graphic()
+        if self.window.eraser_active and isinstance(target, QGraphicsPixmapItem):
             local = self.eraser_cursor_local
             if local is not None:
                 size = self.window.eraser_size.value()
@@ -522,18 +634,22 @@ class CanvasView(QGraphicsView):
                     path.addRect(bounds)
                 else:
                     path.addEllipse(bounds)
-                scene_path = item.sceneTransform().map(path)
-                preview_pen = QPen(QColor("#4DD6E7"), 1)
+                scene_path = target.sceneTransform().map(path)
+                preview_pen = QPen(QColor(COLORS["primary"]), 1)
                 preview_pen.setCosmetic(True)
                 painter.setPen(preview_pen)
-                painter.setBrush(QColor(77, 214, 231, 45))
+                fill = QColor(COLORS["primary"])
+                fill.setAlpha(45)
+                painter.setBrush(fill)
                 painter.drawPath(scene_path)
             if len(self.eraser_points) > 1:
                 path = QPainterPath(self.eraser_points[0])
                 for point in self.eraser_points[1:]:
                     path.lineTo(point)
-                scene_path = item.sceneTransform().map(path)
-                stroke_pen = QPen(QColor(77, 214, 231, 150), 2)
+                scene_path = target.sceneTransform().map(path)
+                stroke_color = QColor(COLORS["primary"])
+                stroke_color.setAlpha(150)
+                stroke_pen = QPen(stroke_color, 2)
                 stroke_pen.setCosmetic(True)
                 painter.setPen(stroke_pen)
                 painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -552,6 +668,41 @@ class CanvasView(QGraphicsView):
                 return mode, index
         return None, None
 
+    def _start_eraser_stroke(self, event) -> None:
+        layer_id = self.window.tool_target_id()
+        item = self.graphic_for(layer_id)
+        layer = self.window.document.layer(layer_id)
+        if not layer or not isinstance(item, QGraphicsPixmapItem):
+            self.window.statusBar().showMessage(
+                "La gomme nécessite un calque image sélectionné", 3000
+            )
+            return
+        if layer.locked:
+            self.window.statusBar().showMessage(
+                "Déverrouillez le calque pour utiliser la gomme", 3000
+            )
+            return
+        local = item.mapFromScene(self.mapToScene(event.position().toPoint()))
+        if not item.boundingRect().contains(local):
+            return
+        self.eraser_item = item
+        self.eraser_original_pixmap = item.pixmap()
+        source = item.pixmap().toImage().convertToFormat(
+            QImage.Format.Format_ARGB32_Premultiplied
+        )
+        self.eraser_source_image = source
+        self.eraser_preview_image = source.copy()
+        self.eraser_mask = None
+        if (event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                and self.window.last_eraser_point
+                and self.window.last_eraser_layer_id == layer.id):
+            self.eraser_points = [QPointF(*self.window.last_eraser_point), local]
+        else:
+            self.eraser_points = [local]
+        self._apply_eraser_preview_segment(self.eraser_points[0], local)
+        self.eraser_preview_last = local
+        self.eraser_cursor_local = local
+
     def mousePressEvent(self, event):
         self.setFocus()
         if event.button() == Qt.MouseButton.MiddleButton:
@@ -560,53 +711,22 @@ class CanvasView(QGraphicsView):
             event.accept()
             return
         if event.button() == Qt.MouseButton.LeftButton:
+            # Un outil actif ne modifie jamais la sélection : il continue de
+            # viser le dernier calque choisi.
             if self.window.eraser_active:
-                item = self.selected_graphic()
-                layer = self.window.document.layer(item.data(0)) if item else None
-                if not item or not isinstance(item, QGraphicsPixmapItem) or not layer:
-                    self.window.statusBar().showMessage(
-                        "La gomme nécessite un calque image sélectionné", 3000
-                    )
-                    event.accept()
-                    return
-                if layer.locked:
-                    self.window.statusBar().showMessage(
-                        "Déverrouillez le calque pour utiliser la gomme", 3000
-                    )
-                    event.accept()
-                    return
-                local = item.mapFromScene(self.mapToScene(event.position().toPoint()))
-                if not item.boundingRect().contains(local):
-                    event.accept()
-                    return
-                self.eraser_item = item
-                self.eraser_original_pixmap = item.pixmap()
-                self.eraser_preview_image = item.pixmap().toImage().convertToFormat(
-                    QImage.Format.Format_ARGB32
-                )
-                if (event.modifiers() & Qt.KeyboardModifier.ShiftModifier
-                        and self.window.last_eraser_point
-                        and self.window.last_eraser_layer_id == layer.id):
-                    self.eraser_points = [QPointF(*self.window.last_eraser_point), local]
-                else:
-                    self.eraser_points = [local]
-                start = self.eraser_points[0]
-                self._apply_eraser_preview_segment(start, local)
-                self.eraser_preview_last = local
-                self.eraser_cursor_local = local
+                self._start_eraser_stroke(event)
                 self.viewport().update()
                 event.accept()
                 return
             if self.window.picker_active:
                 item = self.itemAt(event.position().toPoint())
-                if item and self.window.sample_canvas_color(item, self.mapToScene(event.position().toPoint())):
-                    event.accept()
-                    return
+                self.window.sample_canvas_color(item, self.mapToScene(event.position().toPoint()))
+                event.accept()
+                return
             if self.window.paint_mode:
-                item = self.itemAt(event.position().toPoint())
-                if item and self.window.paint_canvas_color(item, self.mapToScene(event.position().toPoint())):
-                    event.accept()
-                    return
+                self.window.paint_canvas_color(self.mapToScene(event.position().toPoint()))
+                event.accept()
+                return
             item = self.selected_graphic()
             layer = self.window.document.layer(item.data(0)) if item else None
             if item and layer and not layer.locked:
@@ -699,7 +819,7 @@ class CanvasView(QGraphicsView):
             event.accept()
             return
         if self.window.eraser_active:
-            item = self.eraser_item or self.selected_graphic()
+            item = self.eraser_item or self.tool_target_graphic()
             if item and isinstance(item, QGraphicsPixmapItem):
                 local = item.mapFromScene(self.mapToScene(event.position().toPoint()))
                 self.eraser_cursor_local = local
@@ -760,15 +880,14 @@ class CanvasView(QGraphicsView):
         if (event.button() == Qt.MouseButton.LeftButton and self.window.eraser_active
                 and self.eraser_item and self.eraser_points):
             layer_id = self.eraser_item.data(0)
-            self.window.commit_eraser_stroke(layer_id, self.eraser_points)
-            last = self.eraser_points[-1]
+            points = self.eraser_points
+            last = points[-1]
+            # L'aperçu est retiré avant validation : si le trait est refusé,
+            # le calque ne garde pas un effacement absent du document.
+            self.cancel_eraser_preview()
+            self.window.commit_eraser_stroke(layer_id, points)
             self.window.last_eraser_point = (last.x(), last.y())
             self.window.last_eraser_layer_id = layer_id
-            self.eraser_item = None
-            self.eraser_points = []
-            self.eraser_preview_image = None
-            self.eraser_original_pixmap = None
-            self.eraser_preview_last = None
             self.viewport().update()
             event.accept()
             return
@@ -805,10 +924,12 @@ class CanvasView(QGraphicsView):
         """Met à jour uniquement l'aperçu affiché pendant le trait courant."""
         if self.eraser_preview_image is None or self.eraser_item is None:
             return
-        painter = QPainter(self.eraser_preview_image)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationOut)
+        if self.eraser_mask is None or self.eraser_mask.size() != self.eraser_preview_image.size():
+            self.eraser_source_image = self.eraser_preview_image.copy()
+            self.eraser_mask = QImage(self.eraser_preview_image.size(),
+                                      QImage.Format.Format_ARGB32_Premultiplied)
+            self.eraser_mask.fill(Qt.GlobalColor.transparent)
         pixel_art = self.window.eraser_pixel_art.isChecked()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, not pixel_art)
         size = self.window.eraser_size.value()
         opacity = self.window.eraser_opacity.value() / 100
         dx, dy = end.x() - start.x(), end.y() - start.y()
@@ -816,30 +937,53 @@ class CanvasView(QGraphicsView):
         spacing = 0.5 if pixel_art else max(0.5, size * 0.2)
         steps = max(1, int(distance / spacing) + 1)
         offset = (size - 1) / 2
+        # Le masque mémorise la forme du trait à pleine intensité ; l'opacité est
+        # appliquée une seule fois, comme dans le rendu final du calque.
+        painter = QPainter(self.eraser_mask)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, not pixel_art)
+        painter.setPen(Qt.PenStyle.NoPen)
+        dirty = None
         for index in range(steps + 1):
             ratio = index / steps
             x, y = start.x() + dx * ratio, start.y() + dy * ratio
             if pixel_art:
                 bounds = QRectF(round(x - offset), round(y - offset), size, size)
-                painter.setBrush(QColor(0, 0, 0, round(255 * opacity)))
-                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(0, 0, 0, 255))
                 if self.window.eraser_shape.currentData() == "square":
                     painter.drawRect(bounds)
                 else:
                     painter.drawEllipse(bounds)
             else:
                 radius = size / 2
+                bounds = QRectF(x - radius, y - radius, size, size)
                 gradient = QRadialGradient(QPointF(x, y), radius)
-                strength = round(255 * opacity)
                 hardness = self.window.eraser_hardness.value() / 100
-                gradient.setColorAt(0, QColor(0, 0, 0, strength))
-                gradient.setColorAt(hardness, QColor(0, 0, 0, strength))
+                gradient.setColorAt(0, QColor(0, 0, 0, 255))
+                gradient.setColorAt(hardness, QColor(0, 0, 0, 255))
                 gradient.setColorAt(1, QColor(0, 0, 0, 0))
                 painter.setBrush(QBrush(gradient))
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.drawEllipse(QRectF(x - radius, y - radius, size, size))
+                painter.drawEllipse(bounds)
+            dirty = bounds if dirty is None else dirty.united(bounds)
         painter.end()
+        area = dirty.toAlignedRect().adjusted(-1, -1, 1, 1).intersected(self.eraser_preview_image.rect())
+        if not area.isEmpty():
+            painter = QPainter(self.eraser_preview_image)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+            painter.drawImage(area.topLeft(), self.eraser_source_image, area)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationOut)
+            painter.setOpacity(opacity)
+            painter.drawImage(area.topLeft(), self.eraser_mask, area)
+            painter.end()
         self.eraser_item.setPixmap(QPixmap.fromImage(self.eraser_preview_image))
+
+    def _reset_eraser_preview(self) -> None:
+        self.eraser_item = None
+        self.eraser_points = []
+        self.eraser_preview_image = None
+        self.eraser_source_image = None
+        self.eraser_mask = None
+        self.eraser_original_pixmap = None
+        self.eraser_preview_last = None
 
     def cancel_eraser_preview(self) -> None:
         if self.eraser_item is not None and self.eraser_original_pixmap is not None:
@@ -847,21 +991,27 @@ class CanvasView(QGraphicsView):
                 self.eraser_item.setPixmap(self.eraser_original_pixmap)
             except RuntimeError:
                 pass
-        self.eraser_item = None
-        self.eraser_points = []
-        self.eraser_preview_image = None
-        self.eraser_original_pixmap = None
-        self.eraser_preview_last = None
+        self._reset_eraser_preview()
+
+    def zoom_by(self, factor: float) -> None:
+        """Zoom borné : le pas est raccourci au lieu d'être refusé près des limites."""
+        current = self.transform().m11()
+        target = max(MIN_ZOOM, min(MAX_ZOOM, current * factor))
+        if abs(target - current) > 1e-9:
+            self.scale(target / current, target / current)
+        self.window.update_zoom()
 
     def wheelEvent(self, event):
-        zoom = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
-        current = self.transform().m11()
-        if 0.08 <= current * zoom <= 8:
-            self.scale(zoom, zoom)
-            self.window.update_zoom()
+        self.zoom_by(1.15 if event.angleDelta().y() > 0 else 1 / 1.15)
         event.accept()
 
     def fit_document(self):
         if self.scene():
-            self.fitInView(QRectF(0,0,self.window.document.width,self.window.document.height), Qt.AspectRatioMode.KeepAspectRatio)
+            region = QRectF(0, 0, self.window.document.width, self.window.document.height)
+            self.fitInView(region, Qt.AspectRatioMode.KeepAspectRatio)
+            current = self.transform().m11()
+            clamped = max(MIN_ZOOM, min(MAX_ZOOM, current))
+            if clamped != current:
+                self.scale(clamped / current, clamped / current)
+                self.centerOn(region.center())
             self.window.update_zoom()
