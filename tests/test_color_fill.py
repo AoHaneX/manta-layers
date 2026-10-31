@@ -4,7 +4,7 @@ import unittest
 
 from PIL import Image
 
-from app.graphics import _apply_color_fill, apply_eraser_strokes, render_layer_image
+from app.graphics import _apply_color_fill, _eraser_dab, apply_eraser_strokes, render_layer_image
 
 
 class ColorFillTests(unittest.TestCase):
@@ -47,6 +47,12 @@ class ColorFillTests(unittest.TestCase):
         )
         self.assertEqual(result.getpixel((0, 0)), (20, 80, 140, 255))
         self.assertEqual(result.getpixel((1, 0)), (30, 90, 150, 128))
+
+    def test_soft_eraser_dabs_are_computed_once(self):
+        first = _eraser_dab(64, "circle", False, 40, 80)
+        self.assertIs(_eraser_dab(64, "circle", False, 40, 80), first)
+        self.assertIsNot(_eraser_dab(64, "circle", False, 41, 80), first)
+        self.assertEqual(first.getpixel((32, 32)), round(255 * 0.8))
 
     def test_pixel_eraser_sizes_are_exact_and_keep_rgb(self):
         for size in (1, 4, 8):

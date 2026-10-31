@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from functools import lru_cache
 from hashlib import sha1
 from io import BytesIO
 from math import atan2, cos, degrees, hypot, radians, sin
@@ -325,8 +326,13 @@ def _interpolated_points(points: list[list[float]], spacing: float):
             yield start[0] + dx * ratio, start[1] + dy * ratio
 
 
+@lru_cache(maxsize=32)
 def _eraser_dab(size: int, shape: str, pixel_art: bool, hardness: int, opacity: int) -> Image.Image:
-    """Crée une empreinte sans anticrénelage en pixel art, douce en mode classique."""
+    """Crée une empreinte sans anticrénelage en pixel art, douce en mode classique.
+
+    The soft dab is computed pixel by pixel (about 1 s at 2048 px), so dabs are
+    cached; callers only read them and must never modify the returned image.
+    """
     size = max(1, int(size))
     maximum = round(255 * opacity / 100)
     dab = Image.new("L", (size, size), 0)
