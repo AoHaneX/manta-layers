@@ -206,28 +206,19 @@ class CurvedTextGraphicItem(QGraphicsItem):
         self.update()
 
 
-def render_layer_image(
-    contents: bytes,
-    replacements: dict[str, str],
-    fills: list[dict] | None = None,
-    strokes: list[dict] | None = None,
-) -> Image.Image:
-    """Rend un calque image sans modifier l'image source du projet.
+def _render_operations(replacements: dict[str, str], fills: list[dict], strokes: list[dict]) -> list[tuple]:
+    """Non-destructive edits of an image layer, flattened in their replay order.
 
-    Remplissages et traits de gomme sont rejoués dans l'ordre où ils ont été
-    faits : un remplissage contigu ne traverse donc pas une zone déjà gommée.
+    Colour replacements come first, then eraser strokes and fills interleaved
+    by ``after_strokes``. Each operation only depends on the image before it,
+    which lets renders resume from a cached prefix.
     """
-    fills = fills or []
-    strokes = strokes or []
-    with Image.open(BytesIO(contents), formats=ASSET_FORMATS) as source:
-        if source.width * source.height > MAX_PIXELS:
-            raise ValueError(f"image trop grande ({source.width} × {source.height} px)")
-        image = source.convert("RGBA")
+    operations: list[tuple] = []
     mapping = {tuple(QColor(old).getRgb()[:3]): tuple(QColor(new).getRgb()[:3])
                for old, new in replacements.items()
                if QColor(old).isValid() and QColor(new).isValid()}
     for source_rgb, target_rgb in mapping.items():
-        image = _apply_color_fill(image, source_rgb, target_rgb, 0, "global", None, False)
+        operations.append(("fill", source_rgb, target_rgb, 0, "global", None, False))
     applied_strokes = 0
     for fill in fills:
         source = QColor(str(fill.get("source", "")))
@@ -235,18 +226,67 @@ def render_layer_image(
         if not source.isValid() or not target_color.isValid():
             continue
         due = max(applied_strokes, min(len(strokes), int(fill.get("after_strokes", 0))))
-        image = apply_eraser_strokes(image, strokes[applied_strokes:due])
+        operations.extend(("stroke", stroke) for stroke in strokes[applied_strokes:due])
         applied_strokes = due
-        source_rgb = source.getRgb()[:3]
-        target_rgb = target_color.getRgb()[:3]
-        tolerance = max(0, min(255, int(fill.get("tolerance", 0))))
-        mode = "global" if fill.get("mode") == "global" else "contiguous"
-        seed = (int(fill.get("x", -1)), int(fill.get("y", -1)))
-        image = _apply_color_fill(
-            image, source_rgb, target_rgb, tolerance, mode, seed,
+        operations.append((
+            "fill", source.getRgb()[:3], target_color.getRgb()[:3],
+            max(0, min(255, int(fill.get("tolerance", 0)))),
+            "global" if fill.get("mode") == "global" else "contiguous",
+            (int(fill.get("x", -1)), int(fill.get("y", -1))),
             bool(fill.get("preserve_shading", False)),
-        )
-    return apply_eraser_strokes(image, strokes[applied_strokes:])
+        ))
+    operations.extend(("stroke", stroke) for stroke in strokes[applied_strokes:])
+    return operations
+
+
+def _apply_operation(image: Image.Image, operation: tuple) -> Image.Image:
+    # Both helpers return a new image (or the input untouched): cached images are never modified.
+    if operation[0] == "stroke":
+        return apply_eraser_strokes(image, [operation[1]])
+    return _apply_color_fill(image, *operation[1:])
+
+
+def render_layer_image(
+    contents: bytes,
+    replacements: dict[str, str],
+    fills: list[dict] | None = None,
+    strokes: list[dict] | None = None,
+    cache_key: str | None = None,
+) -> Image.Image:
+    """Rend un calque image sans modifier l'image source du projet.
+
+    Remplissages et traits de gomme sont rejoués dans l'ordre où ils ont été
+    faits : un remplissage contigu ne traverse donc pas une zone déjà gommée.
+
+    With a ``cache_key`` identifying ``contents`` (the asset id), the render
+    resumes from the longest already rendered prefix of the operations: a new
+    stroke or fill only costs itself, and undoing one is immediate.
+    """
+    operations = _render_operations(replacements, fills or [], strokes or [])
+    keys: list[str] = []
+    if cache_key is not None:
+        digest = sha1(repr(cache_key).encode("utf-8"))
+        keys.append(digest.hexdigest())
+        for operation in operations:
+            digest.update(repr(operation).encode("utf-8"))
+            keys.append(digest.hexdigest())
+    image, start = None, 0
+    for index in range(len(keys) - 1, -1, -1):
+        image = RENDER_CACHE.get(keys[index])
+        if image is not None:
+            start = index
+            break
+    if image is None:
+        with Image.open(BytesIO(contents), formats=ASSET_FORMATS) as source:
+            if source.width * source.height > MAX_PIXELS:
+                raise ValueError(f"image trop grande ({source.width} × {source.height} px)")
+            image = source.convert("RGBA")
+    for operation in operations[start:]:
+        image = _apply_operation(image, operation)
+    if not keys:
+        return image
+    RENDER_CACHE.put(keys[-1], image)
+    return image.copy()  # callers may modify their copy, never the cached image
 
 
 def _similar_color_mask(image: Image.Image, source_rgb: tuple[int, int, int], tolerance: int) -> Image.Image:
@@ -395,35 +435,36 @@ def apply_eraser_strokes(image: Image.Image, strokes: list[dict]) -> Image.Image
     return result
 
 
-class _PixmapCache:
+class _ImageCache:
     """Rendus de calques image déjà calculés, limités par un budget mémoire.
 
     Une modification de calque reconstruit toute la scène : sans ce cache,
     chaque action décodait et recolorait de nouveau toutes les images.
+    Works for QPixmap and Pillow images alike (4 bytes per pixel).
     """
 
-    def __init__(self, budget_bytes: int = 512 * 1024 * 1024):
-        self._entries: OrderedDict[str, tuple[QPixmap, int]] = OrderedDict()
+    def __init__(self, budget_bytes: int):
+        self._entries: OrderedDict[str, tuple[object, int]] = OrderedDict()
         self._budget = budget_bytes
         self._used = 0
 
-    def get(self, key: str) -> QPixmap | None:
+    def get(self, key: str):
         entry = self._entries.get(key)
         if entry is None:
             return None
         self._entries.move_to_end(key)
         return entry[0]
 
-    def put(self, key: str, pixmap: QPixmap) -> None:
-        size = pixmap.width() * pixmap.height() * 4
+    def put(self, key: str, image) -> None:
+        size = image.width() * image.height() * 4 if isinstance(image, QPixmap) else image.width * image.height * 4
         if key in self._entries:
             self._used -= self._entries.pop(key)[1]
         if size > self._budget:
             return
-        self._entries[key] = (pixmap, size)
+        self._entries[key] = (image, size)
         self._used += size
         while self._used > self._budget:
-            _key, (_pixmap, freed) = self._entries.popitem(last=False)
+            _key, (_image, freed) = self._entries.popitem(last=False)
             self._used -= freed
 
     def clear(self) -> None:
@@ -431,7 +472,11 @@ class _PixmapCache:
         self._used = 0
 
 
-PIXMAP_CACHE = _PixmapCache()
+# Displayed layers (masks and flips applied).
+PIXMAP_CACHE = _ImageCache(512 * 1024 * 1024)
+# Layer renders before their mask, keyed by asset and replayed operations:
+# the starting points of incremental renders (see render_layer_image).
+RENDER_CACHE = _ImageCache(256 * 1024 * 1024)
 
 
 def _render_key(layer: Layer) -> str:
@@ -456,7 +501,7 @@ def layer_pixmap(layer: Layer, document: Document) -> QPixmap:
     try:
         image = render_layer_image(
             document.assets[layer.asset], layer.color_replacements,
-            layer.color_fills, layer.eraser_strokes,
+            layer.color_fills, layer.eraser_strokes, cache_key=layer.asset,
         )
         if layer.mask:
             mask = selection.decode(document.assets[layer.mask])

@@ -2105,7 +2105,7 @@ class MainWindow(QMainWindow):
             return
         # Source pixels with their non-destructive edits, but without the current mask.
         image = render_layer_image(self.document.assets[layer.asset], layer.color_replacements,
-                                   layer.color_fills, layer.eraser_strokes)
+                                   layer.color_fills, layer.eraser_strokes, cache_key=layer.asset)
         dialog = BackgroundRemovalDialog(image, layer.name, bool(layer.mask), self.models_dir, self)
         try:
             accepted = dialog.exec() == QDialog.DialogCode.Accepted

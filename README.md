@@ -168,7 +168,7 @@ MantaLayers/
     └── test_gui_smoke.py                                       # intégration Qt
 ```
 
-**Choix architecturaux :** modèle `Document`/`Layer` isolé de Qt ; affichage `QGraphicsScene` ; chaque modification validée crée un `QUndoCommand` dans `QUndoStack` ; historique de snapshots du modèle (plus facile à comprendre pour cette première version, à remplacer par des commandes ciblées lorsque le volume devient important) ; rendu des calques image mis en cache, si bien qu'une action ne recalcule que les calques modifiés ; une action dont le rendu échoue est annoncée et n'entre pas dans l'historique ; export via scène temporaire sans handles ni rectangles de sélection ; fichiers projet en ZIP avec manifeste JSON et les images PNG sources.
+**Choix architecturaux :** modèle `Document`/`Layer` isolé de Qt ; affichage `QGraphicsScene` ; chaque modification validée crée un `QUndoCommand` dans `QUndoStack` ; historique de snapshots du modèle (plus facile à comprendre pour cette première version, à remplacer par des commandes ciblées lorsque le volume devient important) ; rendu des calques image mis en cache, si bien qu'une action ne recalcule que les calques modifiés, et rendu incrémental : un nouveau trait ou remplissage repart du rendu précédent ; une action dont le rendu échoue est annoncée et n'entre pas dans l'historique ; export via scène temporaire sans handles ni rectangles de sélection ; fichiers projet en ZIP avec manifeste JSON et les images PNG sources.
 
 Les modèles et les polices importées sont rangés dans le dossier de données de l'utilisateur (`%LOCALAPPDATA%\MantaLayers` sous Windows), jamais dans le dossier de l'application.
 
