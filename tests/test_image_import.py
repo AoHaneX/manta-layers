@@ -1,11 +1,13 @@
-"""Image import: accepted formats and EXIF orientation."""
+"""Image import: accepted formats, EXIF orientation and stored size."""
 import io
+from unittest import mock
 
 import pytest
 from PIL import Image, UnidentifiedImageError
 
+from app import storage
 from app.graphics import render_layer_image
-from app.model import Document
+from app.model import MAX_ASSET_BYTES, MAX_PIXELS, Document
 
 
 def encoded(image, fmt, **options):
@@ -50,3 +52,17 @@ def test_exif_orientation_is_applied_to_photos():
     top, bottom = image.getpixel((10, 5)), image.getpixel((10, 35))
     assert top[0] > 150 > top[2]
     assert bottom[2] > 150 > bottom[0]
+
+
+def test_any_importable_image_fits_in_a_project():
+    # A noisy 8192 x 8192 image weighs about 4 bytes per pixel even as PNG:
+    # the project reader must accept what the importer accepts.
+    assert storage.MAX_ASSET_BYTES == MAX_ASSET_BYTES
+    assert MAX_ASSET_BYTES > MAX_PIXELS * 4 * 1.05
+
+
+def test_an_image_too_heavy_for_a_project_is_refused_on_import():
+    noise = Image.effect_noise((64, 64), 100).convert("RGB")
+    with mock.patch("app.model.MAX_ASSET_BYTES", 1000):
+        with pytest.raises(ValueError, match="trop volumineuse"):
+            Document(100, 100).add_image_bytes(encoded(noise, "PNG"), "noise")

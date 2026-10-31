@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED, BadZipFile
 
-from .model import Document
+from .model import MAX_ASSET_BYTES, Document
 
 
 def save_project(
@@ -45,7 +45,6 @@ def save_project(
 
 
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
-MAX_ASSET_BYTES = 150 * 1024 * 1024
 
 
 def read_manifest(archive: ZipFile) -> dict:
