@@ -2586,7 +2586,7 @@ class MainWindow(QMainWindow):
 
     def maybe_save(self) -> bool:
         self._flush_pending_curve()
-        if self.undo_stack.isClean():
+        if not self.is_modified():
             return True
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
@@ -2776,9 +2776,29 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Enregistrement du calque impossible", str(exc))
 
+    @staticmethod
+    def _changes_document(command) -> bool:
+        """True for a document edit, or a macro containing one; False for selections."""
+        if isinstance(command, DocumentCommand):
+            return True
+        return any(MainWindow._changes_document(command.child(index))
+                   for index in range(command.childCount()))
+
+    def is_modified(self) -> bool:
+        """Unsaved document edits; selection changes alone never count.
+
+        The undo stack's clean index marks the saved state; the document is
+        modified when a document edit lies between that state and the current one.
+        """
+        clean, current = self.undo_stack.cleanIndex(), self.undo_stack.index()
+        if clean < 0:
+            return True  # the saved state left the history, or restored unsaved work
+        return any(self._changes_document(self.undo_stack.command(index))
+                   for index in range(min(clean, current), max(clean, current)))
+
     def update_title(self, *_):
         name = self.project_path.name if self.project_path else "Sans titre"
-        modified = " *" if not self.undo_stack.isClean() else ""
+        modified = " *" if self.is_modified() else ""
         self.setWindowTitle(f"{name}{modified} — Manta Layers {__version__} | ReefKit")
 
     def update_zoom(self):
@@ -2876,7 +2896,7 @@ class MainWindow(QMainWindow):
         return (self.recovery_dir / f"{session_id}.manta", self.recovery_dir / f"{session_id}.json")
 
     def autosave_now(self) -> bool:
-        if self._recovery_lock is None or self.undo_stack.isClean():
+        if self._recovery_lock is None or not self.is_modified():
             return False
         if self._autosaved_revision == self._revision:
             return False  # nothing changed since the last copy
