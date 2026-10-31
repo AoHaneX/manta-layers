@@ -9,6 +9,7 @@ MANTA LAYERS 0.1.0 — DÉMARRER ICI
 Le logiciel fonctionne ensuite localement.
 La sauvegarde du projet se fait en .manta, l'image finale en PNG/JPEG/WebP.
 Le texte courbé, la gomme, les pots de peinture et les modèles sont inclus.
-La déformation Warp des lettres, le recadrage, les masques et l'IA ne sont pas encore inclus dans la version 0.1.
+Les sélections, les masques de calque et la suppression de l'arrière-plan (IA locale facultative) sont inclus.
+La déformation Warp des lettres et le recadrage ne sont pas encore inclus dans la version 0.1.
 
 Documentation plus détaillée dans README.md.

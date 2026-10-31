@@ -205,7 +205,7 @@ Avant toute modification majeure : création d'un projet vide, import de 3 image
 - La déformation par enveloppe Warp des formes de lettres n'est pas encore implémentée ; le texte suit une trajectoire, ses glyphes ne sont pas déformés.
 - La sélection n'est pas enregistrée dans le projet. Effacer au pixel près n'est possible que sur les calques image : un texte reste vectoriel.
 - Le détourage supprime le fond entier ; il ne segmente pas un objet choisi au clic. L'IA dépend de dépendances facultatives et d'un modèle présent sur le disque.
-- Les changements de sélection comptent dans l'historique : sélectionner marque le document comme modifié.
+- Les changements de sélection comptent dans l'historique (ils s'annulent comme les autres actions), mais une simple sélection ne marque pas le document comme modifié.
 - L'historique est limité à 100 commandes et **n'est pas sérialisé** dans `.manta`.
 - Les commandes mémorisent des snapshots du modèle ; c'est simple pour démarrer, mais à optimiser avant les très gros documents.
 - Le redimensionnement du document change la zone de travail sans déplacer les calques ; pas encore de recadrage, filtres, calques de réglage ou PSD.
