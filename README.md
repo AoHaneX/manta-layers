@@ -125,7 +125,7 @@ MantaLayers/
 ├── main.py                     # lanceur Python
 ├── lancer_manta_layers.bat     # lanceur Windows (installe au premier démarrage)
 ├── installer_dependances.bat   # installation explicite
-├── requirements.txt            # PySide6 et Pillow
+├── requirements.txt            # PySide6 (modules essentiels) et Pillow
 ├── requirements-dev.txt        # + pytest
 ├── requirements-ai.txt         # facultatif : onnxruntime et numpy pour le détourage IA
 ├── pyproject.toml              # réglages de pytest, ruff et mypy
