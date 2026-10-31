@@ -1,4 +1,4 @@
-"""Image import: accepted formats."""
+"""Image import: accepted formats and EXIF orientation."""
 import io
 
 import pytest
@@ -36,3 +36,17 @@ def test_project_assets_must_be_png():
     jpeg = encoded(Image.new("RGB", (8, 6)), "JPEG")
     with pytest.raises(UnidentifiedImageError):
         render_layer_image(jpeg, {})
+
+
+def test_exif_orientation_is_applied_to_photos():
+    # Left half red, right half blue; orientation 6 means "rotate 90 degrees clockwise".
+    photo = Image.new("RGB", (40, 20), (220, 0, 0))
+    photo.paste((0, 0, 220), (20, 0, 40, 20))
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    doc = Document(100, 100)
+    image = stored(doc, doc.add_image_bytes(encoded(photo, "JPEG", exif=exif.tobytes()), "photo"))
+    assert image.size == (20, 40)
+    top, bottom = image.getpixel((10, 5)), image.getpixel((10, 35))
+    assert top[0] > 150 > top[2]
+    assert bottom[2] > 150 > bottom[0]
