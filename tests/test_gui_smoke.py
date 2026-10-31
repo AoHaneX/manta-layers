@@ -323,6 +323,13 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertEqual(win.undo_stack.count(), count)
         self.assertEqual(win.document.layer(layer.id).x, far)
 
+    def test_icon_buttons_have_accessible_names(self):
+        win = self.make_window()
+        names = [button.accessibleName() for button in win.layer_list.findChildren(QToolButton)
+                 if button.objectName() == "layerAction"]
+        self.assertTrue(names and all(names))
+        self.assertEqual(win.left_undo_btn.accessibleName(), "Annuler · Ctrl+Z")
+
     def test_icons_are_drawn_for_high_density_screens(self):
         from app.icons import layer_kind_icon
         pixmap = layer_kind_icon("image")
