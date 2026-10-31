@@ -23,7 +23,6 @@ COLORS = {
 }
 
 RADIUS = {"control": 8, "panel": 12}
-CONTROL_HEIGHT = 38
 
 STYLE = f"""
 QMainWindow {{

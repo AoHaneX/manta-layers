@@ -19,8 +19,6 @@ SHAPE_LABELS = {
 }
 # Two cubic Bézier control points, expressed as fractions of the path width.
 DEFAULT_CONTROLS = ((0.25, -0.2), (0.75, 0.2))
-# Signed shapes accept -100..100; U shapes only use the magnitude (0..100).
-SIGNED_SHAPES = frozenset({"arc"})
 CONTROL_LIMIT = 1.0
 
 
