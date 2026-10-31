@@ -11,7 +11,7 @@ La raie manta bleue fournie pour le projet est intégrée telle quelle en tant q
 3. Double-cliquez sur **`lancer_manta_layers.bat`**. Au premier démarrage, le script crée `.venv`, télécharge les dépendances nécessaires puis démarre l'application. **Connexion internet requise une seule fois pour ces bibliothèques**.
 4. Au démarrage, le document exemple contient ta raie manta sur un calque éditable. Utilise **Fichier > Nouveau projet** pour choisir dans une seule fenêtre la largeur, la hauteur et le fond d'un canvas vide.
 
-Pour refaire l'installation à la main, lancez `installer_dependances.bat`. Les dépendances se trouvent **uniquement dans `.venv`**, sans modifier l'installation Python globale.
+L'application s'ouvre sans fenêtre de console. Pour voir les messages d'erreur éventuels, lancez `lancer_manta_layers.bat --console` depuis un terminal. Pour refaire l'installation à la main, lancez `installer_dependances.bat`. Les dépendances se trouvent **uniquement dans `.venv`**, sans modifier l'installation Python globale.
 
 ### Linux / macOS (développement)
 
