@@ -2096,15 +2096,20 @@ class MainWindow(QMainWindow):
         image = render_layer_image(self.document.assets[layer.asset], layer.color_replacements,
                                    layer.color_fills, layer.eraser_strokes)
         dialog = BackgroundRemovalDialog(image, layer.name, bool(layer.mask), self.models_dir, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.result_mask() is None:
+        try:
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+            mask = dialog.result_mask() if accepted else None
+            keep_existing, as_mask = dialog.keep_existing.isChecked(), dialog.as_mask.isChecked()
+        finally:
+            dialog.dispose()
+        if mask is None:
             return
-        mask = dialog.result_mask()
-        if dialog.keep_existing.isChecked() and layer.mask:
+        if keep_existing and layer.mask:
             current = selection.decode(self.document.assets[layer.mask])
             if current.size != mask.size:
                 current = current.resize(mask.size, Image.Resampling.NEAREST)
             mask = selection.combine(current, mask, "intersect")
-        if dialog.as_mask.isChecked():
+        if as_mask:
             def apply_mask(doc):
                 target = doc.layer(layer.id)
                 target.mask = new_id()
