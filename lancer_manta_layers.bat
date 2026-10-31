@@ -13,8 +13,14 @@ if errorlevel 1 (
   if errorlevel 1 goto error
 )
 echo [Manta Layers] Demarrage...
-"%~dp0.venv\Scripts\python.exe" "%~dp0main.py"
-if errorlevel 1 goto error
+rem Run without a console: closing a console window would kill the application
+rem without asking to save. "lancer_manta_layers.bat --console" keeps the messages visible.
+if /i "%~1"=="--console" (
+  "%~dp0.venv\Scripts\python.exe" "%~dp0main.py"
+  if errorlevel 1 goto error
+  exit /b 0
+)
+start "" "%~dp0.venv\Scripts\pythonw.exe" "%~dp0main.py"
 exit /b 0
 :error
 echo.
