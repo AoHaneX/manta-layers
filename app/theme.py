@@ -73,6 +73,28 @@ QScrollArea#rightPanelScroll QScrollBar::add-page:vertical,
 QScrollArea#rightPanelScroll QScrollBar::sub-page:vertical {{
     background: transparent;
 }}
+QScrollArea#leftPanelScroll {{
+    background: transparent;
+    border: none;
+}}
+QScrollArea#leftPanelScroll QScrollBar:vertical {{
+    background: transparent;
+    width: 10px;
+    margin: 2px;
+}}
+QScrollArea#leftPanelScroll QScrollBar::handle:vertical {{
+    background: {COLORS['primary']};
+    min-height: 34px;
+    border-radius: 3px;
+}}
+QScrollArea#leftPanelScroll QScrollBar::add-line:vertical,
+QScrollArea#leftPanelScroll QScrollBar::sub-line:vertical {{
+    height: 0;
+}}
+QScrollArea#leftPanelScroll QScrollBar::add-page:vertical,
+QScrollArea#leftPanelScroll QScrollBar::sub-page:vertical {{
+    background: transparent;
+}}
 QMenuBar, QMenu, QToolBar, QStatusBar {{
     background-color: {COLORS['panel']};
     color: {COLORS['text']};

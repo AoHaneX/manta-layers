@@ -168,7 +168,7 @@ class MainWindow(QMainWindow):
         self.load_custom_fonts()
         self.setWindowIcon(QIcon(str(ASSETS / "manta.png")))
         self.setAcceptDrops(True)
-        self.setMinimumSize(1060, 680)
+        self.setMinimumSize(960, 600)
         self.resize(1440, 870)
         self.setStyleSheet(STYLE)
         self._build_layout()
@@ -276,7 +276,21 @@ class MainWindow(QMainWindow):
         left.setObjectName("sidePanel")
         left.setMinimumWidth(220)
         left.setMaximumWidth(285)
-        left_layout = QVBoxLayout(left)
+        left_outer = QVBoxLayout(left)
+        left_outer.setContentsMargins(0, 0, 0, 0)
+        # The panel scrolls instead of being cut on short screens
+        # (1080p at 150 % or 768p leave less than 700 px of height).
+        left_scroll = QScrollArea()
+        left_scroll.setObjectName("leftPanelScroll")
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        left_outer.addWidget(left_scroll)
+        left_content = QWidget()
+        # Long button labels are elided by the panel width, as before, rather
+        # than widening the content beyond the visible area.
+        left_content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        left_layout = QVBoxLayout(left_content)
         self.left_layout = left_layout
         left_layout.setSpacing(9)
         self.left_collapsible_widgets = []
@@ -375,6 +389,7 @@ class MainWindow(QMainWindow):
         save_image_btn.clicked.connect(self.export_image)
         left_layout.addWidget(save_image_btn)
         self.left_collapsible_widgets.append(save_image_btn)
+        left_scroll.setWidget(left_content)
         splitter.addWidget(left)
 
         self.canvas = CanvasView(self)
