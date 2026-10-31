@@ -25,6 +25,7 @@ from PySide6.QtGui import (
     QUndoStack,
 )
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QApplication,
     QButtonGroup,
     QCheckBox,
@@ -221,6 +222,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(STYLE)
         self._build_layout()
         self._build_actions()
+        self._name_icon_buttons(self)
         self.undo_stack.indexChanged.connect(self.update_title)
         self.undo_stack.cleanChanged.connect(self.update_title)
         self._revision = 0
@@ -1209,9 +1211,18 @@ class MainWindow(QMainWindow):
             )
             controls_layout.addWidget(lock)
             row.setSizeHint(QSize(row.sizeHint().width(), 34))
+            self._name_icon_buttons(controls)
             self.layer_list.setItemWidget(row, controls)
             if layer.id == self.selected_id:
                 self.layer_list.setCurrentItem(row)
+
+    @staticmethod
+    def _name_icon_buttons(root: QWidget) -> None:
+        """Give screen readers a name for buttons that only show an icon or a symbol."""
+        for button in root.findChildren(QAbstractButton):
+            if (not button.accessibleName() and button.toolTip()
+                    and not any(character.isalpha() for character in button.text())):
+                button.setAccessibleName(button.toolTip())
 
     def update_utility_buttons(self):
         """N'affiche dans la colonne gauche que les actions actuellement possibles."""
