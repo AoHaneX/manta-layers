@@ -10,7 +10,7 @@ from shutil import copy2
 from uuid import uuid4
 
 from PIL import Image
-from PySide6.QtCore import QLockFile, QPointF, QRectF, QSettings, QSize, Qt, QTimer
+from PySide6.QtCore import QLockFile, QPointF, QRectF, QSettings, QSize, Qt, QThread, QTimer
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -172,6 +172,33 @@ class SelectionCommand(QUndoCommand):
 
     def redo(self):
         self.win._install_selection(self.after)
+
+
+class RecoveryWriter(QThread):
+    """Writes a recovery copy and its metadata; ``run`` may also be called directly."""
+
+    def __init__(self, document: Document, revision: int, project: Path, meta: Path,
+                 project_path: str | None, parent=None):
+        super().__init__(parent)
+        self.document: Document | None = document
+        self.revision = revision
+        self.project = project
+        self.meta = meta
+        self.project_path = project_path
+        self.succeeded = False
+
+    def run(self):
+        if self.document is None:
+            return
+        try:
+            save_project(self.document, self.project)
+            self.meta.write_text(json.dumps({
+                "project_path": self.project_path,
+                "saved_at": time.time(),
+            }), encoding="utf-8")
+        except (OSError, ValueError):
+            return
+        self.succeeded = True
 
 
 class MainWindow(QMainWindow):
@@ -2937,6 +2964,7 @@ class MainWindow(QMainWindow):
         self._session_id = uuid4().hex
         self._recovery_lock = None
         self._autosaved_revision = None
+        self._autosave_task: RecoveryWriter | None = None
         try:
             self.recovery_dir.mkdir(parents=True, exist_ok=True)
             lock = QLockFile(str(self.recovery_dir / f"{self._session_id}.lock"))
@@ -2947,7 +2975,7 @@ class MainWindow(QMainWindow):
         self._remove_orphan_locks()
         self.autosave_timer = QTimer(self)
         self.autosave_timer.setInterval(RECOVERY_INTERVAL_MS)
-        self.autosave_timer.timeout.connect(self.autosave_now)
+        self.autosave_timer.timeout.connect(lambda: self.autosave_now(background=True))
         self.autosave_timer.start()
         QTimer.singleShot(0, self.offer_session_recovery)
 
@@ -2972,24 +3000,55 @@ class MainWindow(QMainWindow):
     def _recovery_files(self, session_id: str) -> tuple[Path, Path]:
         return (self.recovery_dir / f"{session_id}.manta", self.recovery_dir / f"{session_id}.json")
 
-    def autosave_now(self) -> bool:
+    def autosave_now(self, background: bool = False) -> bool:
+        """Write the recovery copy; True when a copy was written (or started).
+
+        The timer passes ``background=True``: the copy is then written by a
+        thread from a snapshot of the document, so that compressing and
+        verifying a large project never freezes the interface.
+        """
         if self._recovery_lock is None or not self.is_modified():
             return False
         if self._autosaved_revision == self._revision:
             return False  # nothing changed since the last copy
+        if self._autosave_task is not None:
+            return False  # the previous copy is still being written
         project, meta = self._recovery_files(self._session_id)
-        try:
-            save_project(self.document, project)
-            meta.write_text(json.dumps({
-                "project_path": str(self.project_path) if self.project_path else None,
-                "saved_at": time.time(),
-            }), encoding="utf-8")
-        except (OSError, ValueError):
-            return False
-        self._autosaved_revision = self._revision
+        # Layers are copied and image bytes never change: the thread reads a stable snapshot.
+        task = RecoveryWriter(self.document.clone(), self._revision, project, meta,
+                              str(self.project_path) if self.project_path else None, self)
+        if not background:
+            task.run()
+            self._finish_autosave(task)
+            return task.succeeded
+        self._autosave_task = task
+        task.finished.connect(lambda: self._autosave_finished(task))
+        task.start()
         return True
 
+    def _autosave_finished(self, task: RecoveryWriter):
+        if task is not self._autosave_task:
+            return  # discarded meanwhile: the copy was already deleted
+        self._autosave_task = None
+        self._finish_autosave(task)
+
+    def _finish_autosave(self, task: RecoveryWriter):
+        if task.succeeded:
+            self._autosaved_revision = task.revision
+        self._release_autosave(task)
+
+    @staticmethod
+    def _release_autosave(task: RecoveryWriter):
+        # The snapshot may keep images the document no longer uses alive.
+        task.document = None
+        task.deleteLater()
+
     def _discard_recovery(self, session_id: str):
+        if session_id == self._session_id and self._autosave_task is not None:
+            # Let a running copy finish first, or it would reappear once deleted.
+            task, self._autosave_task = self._autosave_task, None
+            task.wait()
+            self._release_autosave(task)
         for path in self._recovery_files(session_id):
             try:
                 path.unlink(missing_ok=True)
