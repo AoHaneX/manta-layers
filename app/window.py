@@ -82,7 +82,7 @@ from .icons import (
     lock_icon,
     sidebar_arrow_icon,
 )
-from .model import ASSET_FORMATS, Document, Layer, new_id
+from .model import ASSET_FORMATS, MAX_DIMENSION, Document, Layer, new_id
 from .paths import user_data_directory
 from .selection import COMBINE_LABELS, COMBINE_MODES
 from .storage import open_project, save_project
@@ -784,12 +784,14 @@ class MainWindow(QMainWindow):
         self.property_form.setVerticalSpacing(8)
         self.property_form.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         self.inputs = {}
+        # Positions and angles are not bounded by the model (layers can be dragged
+        # off the canvas, rotations add up): the ranges stay wide.
         for key, label, minimum, maximum, decimals, step in [
-            ("x", "Position X", -16000, 16000, 1, 10),
-            ("y", "Position Y", -16000, 16000, 1, 10),
+            ("x", "Position X", -2 * MAX_DIMENSION, 2 * MAX_DIMENSION, 1, 10),
+            ("y", "Position Y", -2 * MAX_DIMENSION, 2 * MAX_DIMENSION, 1, 10),
             ("sx", "Échelle X", 0.05, 50, 2, .05),
             ("sy", "Échelle Y", 0.05, 50, 2, .05),
-            ("rotation", "Rotation (°)", -3600, 3600, 1, 5),
+            ("rotation", "Rotation (°)", -36000, 36000, 1, 5),
             ("opacity", "Opacité (%)", 0, 100, 0, 5),
         ]:
             w = QDoubleSpinBox()
@@ -1418,6 +1420,9 @@ class MainWindow(QMainWindow):
             current = layer.opacity * 100 if key == "opacity" else getattr(layer, key)
             if abs(spin.value() - current) <= 0.5 * 10 ** -spin.decimals() + 1e-9:
                 return
+            low, high = spin.minimum(), spin.maximum()
+            if not low <= current <= high and spin.value() == min(high, max(low, current)):
+                return  # the field only shows the clamped value: leaving it changes nothing
             value = spin.value() / 100 if key == "opacity" else spin.value()
         elif key == "name":
             value = self.name_input.text().strip()

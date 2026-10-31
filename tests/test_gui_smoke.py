@@ -312,6 +312,16 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertEqual(edited.name, "Nouveau nom")
         self.assertEqual(edited.sx, 0.333)
 
+    def test_leaving_a_field_showing_a_clamped_value_changes_nothing(self):
+        win = self.make_window()
+        layer = next(layer for layer in win.document.layers if layer.kind == "image")
+        far = win.inputs["x"].maximum() + 500
+        win.mutate("Loin", lambda doc: setattr(doc.layer(layer.id), "x", far), layer.id)
+        win.select_layer(layer.id)
+        count = win.undo_stack.count()
+        win.commit_property("x")  # the field shows its maximum, not the real position
+        self.assertEqual(win.undo_stack.count(), count)
+        self.assertEqual(win.document.layer(layer.id).x, far)
     def test_locked_layer_cannot_be_reordered_by_drag(self):
         win = self.make_window()
         document = Document(100, 100)
