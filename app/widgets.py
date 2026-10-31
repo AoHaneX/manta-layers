@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QMimeData, QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QDrag, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QListWidget, QPlainTextEdit, QToolButton, QWidget
+
+if TYPE_CHECKING:
+    from .window import MainWindow
 
 LAYER_MIME_TYPE = "application/x-manta-layers-layer"
 
@@ -107,9 +111,10 @@ class LayerDragHandle(QToolButton):
 class LayerListWidget(QListWidget):
     """Liste recevant les calques déplacés depuis leur poignée."""
 
-    def __init__(self, window):
+    def __init__(self, window: MainWindow):
         super().__init__()
-        self.window = window
+        # Not named "window": that would hide QWidget.window().
+        self.main_window = window
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
 
@@ -138,7 +143,7 @@ class LayerListWidget(QListWidget):
             insertion = target_row + (
                 event.position().y() > self.visualItemRect(target_item).center().y()
             )
-        self.window.move_layer_to_display_position(layer_id, insertion)
+        self.main_window.move_layer_to_display_position(layer_id, insertion)
         event.acceptProposedAction()
 
 

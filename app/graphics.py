@@ -5,6 +5,7 @@ from collections import OrderedDict
 from hashlib import sha1
 from io import BytesIO
 from math import atan2, cos, degrees, hypot, radians, sin
+from typing import TYPE_CHECKING
 
 from PIL import Image, ImageChops, ImageDraw
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRectF, Qt
@@ -30,6 +31,9 @@ from . import selection
 from .model import ASSET_FORMATS, MAX_PIXELS, Document, Layer
 from .textpath import custom_points, drag_handle, handle_points, normalize_controls, normalize_shape, sample_path
 from .theme import COLORS
+
+if TYPE_CHECKING:
+    from .window import MainWindow
 
 MIN_ZOOM = 0.01
 MAX_ZOOM = 64.0
@@ -623,9 +627,10 @@ def checker_brush() -> QBrush:
 class CanvasView(QGraphicsView):
     """Sélection, déplacement à la souris, quatre poignées et rotation."""
 
-    def __init__(self, window):
+    def __init__(self, window: MainWindow):
         super().__init__()
-        self.window = window
+        # Not named "window": that would hide QWidget.window().
+        self.main_window = window
         self.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
@@ -668,10 +673,10 @@ class CanvasView(QGraphicsView):
         super().drawBackground(painter, rect)
         if not self.scene():
             return
-        area = QRectF(0, 0, self.window.document.width, self.window.document.height).intersected(rect)
+        area = QRectF(0, 0, self.main_window.document.width, self.main_window.document.height).intersected(rect)
         if area.isEmpty():
             return
-        background = self.window.document.background
+        background = self.main_window.document.background
         painter.save()
         if background:
             painter.fillRect(area, QColor(background))
@@ -682,7 +687,7 @@ class CanvasView(QGraphicsView):
 
     def selected_graphic(self):
         for item in self.scene().selectedItems() if self.scene() else []:
-            if self.window.document.layer(item.data(0)):
+            if self.main_window.document.layer(item.data(0)):
                 return item
         return None
 
@@ -693,7 +698,7 @@ class CanvasView(QGraphicsView):
 
     def tool_target_graphic(self):
         """Graphique du calque visé par les outils, même s'il n'est plus sélectionné."""
-        return self.graphic_for(self.window.tool_target_id())
+        return self.graphic_for(self.main_window.tool_target_id())
 
     def local_handles(self, item):
         bounds = item.boundingRect()
@@ -722,11 +727,11 @@ class CanvasView(QGraphicsView):
         border_pen.setCosmetic(True)
         painter.setPen(border_pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(QRectF(0, 0, self.window.document.width, self.window.document.height))
+        painter.drawRect(QRectF(0, 0, self.main_window.document.width, self.main_window.document.height))
         self._draw_selection(painter)
         # Transform and shape handles only make sense without an active tool.
-        item = None if self.window.any_tool_active() else self.selected_graphic()
-        layer = self.window.document.layer(item.data(0)) if item else None
+        item = None if self.main_window.any_tool_active() else self.selected_graphic()
+        layer = self.main_window.document.layer(item.data(0)) if item else None
         if isinstance(item, CurvedTextGraphicItem) and layer:
             if layer.show_curve_guide:
                 guide_pen = QPen(QColor(COLORS["primary"]), 1)
@@ -761,18 +766,18 @@ class CanvasView(QGraphicsView):
             painter.setBrush(QColor(COLORS["rotation_handle"]))
             painter.drawEllipse(p, size/2, size/2)
         target = self.eraser_item or self.tool_target_graphic()
-        if self.window.eraser_active and isinstance(target, QGraphicsPixmapItem):
+        if self.main_window.eraser_active and isinstance(target, QGraphicsPixmapItem):
             local = self.eraser_cursor_local
             if local is not None:
-                size = self.window.eraser_size.value()
+                size = self.main_window.eraser_size.value()
                 offset = (size - 1) / 2
                 path = QPainterPath()
-                if self.window.eraser_pixel_art.isChecked():
+                if self.main_window.eraser_pixel_art.isChecked():
                     left, top = round(local.x() - offset), round(local.y() - offset)
                     bounds = QRectF(left, top, size, size)
                 else:
                     bounds = QRectF(local.x() - offset, local.y() - offset, size, size)
-                if self.window.eraser_shape.currentData() == "square" and self.window.eraser_pixel_art.isChecked():
+                if self.main_window.eraser_shape.currentData() == "square" and self.main_window.eraser_pixel_art.isChecked():
                     path.addRect(bounds)
                 else:
                     path.addEllipse(bounds)
@@ -817,7 +822,7 @@ class CanvasView(QGraphicsView):
         return under, over
 
     def _draw_selection(self, painter: QPainter) -> None:
-        document = self.window.document
+        document = self.main_window.document
         if self.selection_overlay_image is not None:
             painter.drawImage(QRectF(0, 0, document.width, document.height), self.selection_overlay_image)
         outlines = []
@@ -842,7 +847,7 @@ class CanvasView(QGraphicsView):
 
     def _drag_rect(self) -> QRectF:
         rect = QRectF(self.selection_drag["start"], self.selection_drag["end"]).normalized()
-        if self.window.selection_pixel_perfect.isChecked():
+        if self.main_window.selection_pixel_perfect.isChecked():
             rect = QRectF(round(rect.left()), round(rect.top()),
                           round(rect.right()) - round(rect.left()), round(rect.bottom()) - round(rect.top()))
         return rect
@@ -860,14 +865,14 @@ class CanvasView(QGraphicsView):
         scene_position = self.mapToScene(event.position().toPoint())
         modifiers = event.modifiers()
         if modifiers & Qt.KeyboardModifier.ControlModifier:
-            lift = self.window.lift_selection(scene_position)
+            lift = self.main_window.lift_selection(scene_position)
             if lift is not None:
                 self.lift = {**lift, "start": scene_position, "delta": QPointF(0, 0)}
             return
-        if self.window.selection_tool == "wand":
-            self.window.apply_magic_wand(scene_position, modifiers)
+        if self.main_window.selection_tool == "wand":
+            self.main_window.apply_magic_wand(scene_position, modifiers)
             return
-        self.selection_drag = {"tool": self.window.selection_tool, "start": scene_position,
+        self.selection_drag = {"tool": self.main_window.selection_tool, "start": scene_position,
                                "end": scene_position, "modifiers": modifiers}
 
     def _hit_handle(self, item, viewport_pos):
@@ -883,16 +888,16 @@ class CanvasView(QGraphicsView):
         return None, None
 
     def _start_eraser_stroke(self, event) -> None:
-        layer_id = self.window.tool_target_id()
+        layer_id = self.main_window.tool_target_id()
         item = self.graphic_for(layer_id)
-        layer = self.window.document.layer(layer_id)
+        layer = self.main_window.document.layer(layer_id)
         if not layer or not isinstance(item, QGraphicsPixmapItem):
-            self.window.statusBar().showMessage(
+            self.main_window.statusBar().showMessage(
                 "La gomme nécessite un calque image sélectionné", 3000
             )
             return
         if layer.locked:
-            self.window.statusBar().showMessage(
+            self.main_window.statusBar().showMessage(
                 "Déverrouillez le calque pour utiliser la gomme", 3000
             )
             return
@@ -908,9 +913,9 @@ class CanvasView(QGraphicsView):
         self.eraser_preview_image = source.copy()
         self.eraser_mask = None
         if (event.modifiers() & Qt.KeyboardModifier.ShiftModifier
-                and self.window.last_eraser_point
-                and self.window.last_eraser_layer_id == layer.id):
-            self.eraser_points = [QPointF(*self.window.last_eraser_point), local]
+                and self.main_window.last_eraser_point
+                and self.main_window.last_eraser_layer_id == layer.id):
+            self.eraser_points = [QPointF(*self.main_window.last_eraser_point), local]
         else:
             self.eraser_points = [local]
         self._apply_eraser_preview_segment(self.eraser_points[0], local)
@@ -927,36 +932,36 @@ class CanvasView(QGraphicsView):
         if event.button() == Qt.MouseButton.LeftButton:
             # Un outil actif ne modifie jamais la sélection : il continue de
             # viser le dernier calque choisi.
-            if self.window.eraser_active:
+            if self.main_window.eraser_active:
                 self._start_eraser_stroke(event)
                 self.viewport().update()
                 event.accept()
                 return
-            if self.window.picker_active:
+            if self.main_window.picker_active:
                 item = self.itemAt(event.position().toPoint())
-                self.window.sample_canvas_color(item, self.mapToScene(event.position().toPoint()))
+                self.main_window.sample_canvas_color(item, self.mapToScene(event.position().toPoint()))
                 event.accept()
                 return
-            if self.window.paint_mode:
-                self.window.paint_canvas_color(self.mapToScene(event.position().toPoint()))
+            if self.main_window.paint_mode:
+                self.main_window.paint_canvas_color(self.mapToScene(event.position().toPoint()))
                 event.accept()
                 return
-            if self.window.text_tool_active:
-                self.window.begin_inline_text_create(self.mapToScene(event.position().toPoint()))
+            if self.main_window.text_tool_active:
+                self.main_window.begin_inline_text_create(self.mapToScene(event.position().toPoint()))
                 event.accept()
                 return
-            if self.window.selection_tool:
+            if self.main_window.selection_tool:
                 self._selection_press(event)
                 self.viewport().update()
                 event.accept()
                 return
             item = self.selected_graphic()
-            layer = self.window.document.layer(item.data(0)) if item else None
+            layer = self.main_window.document.layer(item.data(0)) if item else None
             if item and layer and not layer.locked:
                 mode, handle = self._hit_handle(item, event.position().toPoint())
                 if mode:
                     self.mode = mode
-                    self.old_layer = self.window.document.clone()
+                    self.old_layer = self.main_window.document.clone()
                     self.drag_item = item
                     self.handle_index = handle
                     if mode == "resize":
@@ -971,22 +976,22 @@ class CanvasView(QGraphicsView):
                     event.accept()
                     return
             at = self.itemAt(event.position().toPoint())
-            at_layer = self.window.document.layer(at.data(0)) if at else None
+            at_layer = self.main_window.document.layer(at.data(0)) if at else None
             if at_layer and not at_layer.locked:
                 self.mode = "move"
-                self.old_layer = self.window.document.clone()
+                self.old_layer = self.main_window.document.clone()
                 self.drag_item = at
         super().mousePressEvent(event)
         self.viewport().update()
 
     def mouseDoubleClickEvent(self, event):
         # Double-clicking a text edits its content directly on the canvas.
-        if event.button() == Qt.MouseButton.LeftButton and not self.window.any_tool_active():
+        if event.button() == Qt.MouseButton.LeftButton and not self.main_window.any_tool_active():
             item = self.itemAt(event.position().toPoint())
-            layer = self.window.document.layer(item.data(0)) if item else None
+            layer = self.main_window.document.layer(item.data(0)) if item else None
             if isinstance(item, CurvedTextGraphicItem) and layer and not layer.locked:
                 self.mode = self.drag_item = self.old_layer = None
-                self.window.begin_inline_text_edit(layer.id)
+                self.main_window.begin_inline_text_edit(layer.id)
                 event.accept()
                 return
         super().mouseDoubleClickEvent(event)
@@ -997,50 +1002,50 @@ class CanvasView(QGraphicsView):
         # alias, for a canvas whose window is not shown (its shortcuts are inactive).
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             # With an active selection, Delete erases its content instead of the layer.
-            self.window.delete_selection_or_layer()
+            self.main_window.delete_selection_or_layer()
             event.accept()
             return
         arrows = {Qt.Key.Key_Left: (-1, 0), Qt.Key.Key_Right: (1, 0),
                   Qt.Key.Key_Up: (0, -1), Qt.Key.Key_Down: (0, 1)}
-        if event.key() in arrows and not self.window.any_tool_active():
+        if event.key() in arrows and not self.main_window.any_tool_active():
             step = 10 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1
             dx, dy = arrows[event.key()]
-            if self.window.nudge_layer(dx * step, dy * step):
+            if self.main_window.nudge_layer(dx * step, dy * step):
                 event.accept()
                 return
         if event.key() == Qt.Key.Key_BracketLeft:
-            self.window.adjust_eraser_size(-1)
+            self.main_window.adjust_eraser_size(-1)
             event.accept()
             return
         if event.key() == Qt.Key.Key_BracketRight:
-            self.window.adjust_eraser_size(1)
+            self.main_window.adjust_eraser_size(1)
             event.accept()
             return
         super().keyPressEvent(event)
 
     def contextMenuEvent(self, event):
         item = self.itemAt(event.pos())
-        if item and self.window.document.layer(item.data(0)):
-            self.window.select_layer(item.data(0))
-        self.window.show_canvas_context_menu(event.globalPos())
+        if item and self.main_window.document.layer(item.data(0)):
+            self.main_window.select_layer(item.data(0))
+        self.main_window.show_canvas_context_menu(event.globalPos())
         event.accept()
 
     def dragEnterEvent(self, event):
-        if self.window.image_paths_from_mime(event.mimeData()):
+        if self.main_window.image_paths_from_mime(event.mimeData()):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
-        if self.window.image_paths_from_mime(event.mimeData()):
+        if self.main_window.image_paths_from_mime(event.mimeData()):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event):
-        paths = self.window.image_paths_from_mime(event.mimeData())
+        paths = self.main_window.image_paths_from_mime(event.mimeData())
         if paths:
-            self.window._import_paths(paths)
+            self.main_window._import_paths(paths)
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -1064,7 +1069,7 @@ class CanvasView(QGraphicsView):
             self.viewport().update()
             event.accept()
             return
-        if self.window.eraser_active:
+        if self.main_window.eraser_active:
             item = self.eraser_item or self.tool_target_graphic()
             if item and isinstance(item, QGraphicsPixmapItem):
                 local = item.mapFromScene(self.mapToScene(event.position().toPoint()))
@@ -1084,7 +1089,7 @@ class CanvasView(QGraphicsView):
             if self.mode == "shape" and isinstance(item, CurvedTextGraphicItem):
                 # Live deformation; the model is only updated on release.
                 item.drag_shape_handle(self.handle_index, item.mapFromScene(mouse))
-                self.window.show_text_shape(item.path_shape, item.curve_intensity)
+                self.main_window.show_text_shape(item.path_shape, item.curve_intensity)
             elif self.mode == "resize":
                 d = mouse - self.fixed_world
                 r = radians(old.rotation)
@@ -1117,7 +1122,7 @@ class CanvasView(QGraphicsView):
             self.unsetCursor()
             event.accept()
             return
-        if (event.button() == Qt.MouseButton.LeftButton and self.window.eraser_active
+        if (event.button() == Qt.MouseButton.LeftButton and self.main_window.eraser_active
                 and self.eraser_item and self.eraser_points):
             layer_id = self.eraser_item.data(0)
             points = self.eraser_points
@@ -1125,28 +1130,28 @@ class CanvasView(QGraphicsView):
             # L'aperçu est retiré avant validation : si le trait est refusé,
             # le calque ne garde pas un effacement absent du document.
             self.cancel_eraser_preview()
-            self.window.commit_eraser_stroke(layer_id, points)
-            self.window.last_eraser_point = (last.x(), last.y())
-            self.window.last_eraser_layer_id = layer_id
+            self.main_window.commit_eraser_stroke(layer_id, points)
+            self.main_window.last_eraser_point = (last.x(), last.y())
+            self.main_window.last_eraser_layer_id = layer_id
             self.viewport().update()
             event.accept()
             return
         if event.button() == Qt.MouseButton.LeftButton and self.selection_drag is not None:
             drag, rect = self.selection_drag, self._drag_rect()
             self.selection_drag = None
-            self.window.apply_selection_shape(drag["tool"], rect, drag["modifiers"])
+            self.main_window.apply_selection_shape(drag["tool"], rect, drag["modifiers"])
             self.viewport().update()
             event.accept()
             return
         if event.button() == Qt.MouseButton.LeftButton and self.lift is not None:
             delta, self.lift = self.lift["delta"], None
-            self.window.move_selection_content(int(delta.x()), int(delta.y()))
+            self.main_window.move_selection_content(int(delta.x()), int(delta.y()))
             self.viewport().update()
             event.accept()
             return
         mode, item, before = self.mode, self.drag_item, self.old_layer
         if mode == "shape" and item and before and isinstance(item, CurvedTextGraphicItem):
-            self.window.commit_text_shape(before, item.data(0), item.path_shape,
+            self.main_window.commit_text_shape(before, item.data(0), item.path_shape,
                                           item.curve_intensity, item.controls)
             self.mode = self.drag_item = self.old_layer = None
             self.viewport().update()
@@ -1162,7 +1167,7 @@ class CanvasView(QGraphicsView):
                 state = (item.pos().x(), item.pos().y(), sx, sy, item.rotation())
                 old_state = (src.x, src.y, src.sx, src.sy, src.rotation)
                 if any(abs(a-b) > 0.001 for a,b in zip(state, old_state)):
-                    self.window.commit_canvas_transform(before, src.id, state,
+                    self.main_window.commit_canvas_transform(before, src.id, state,
                                                         "Déplacer" if mode == "move" else "Redimensionner" if mode == "resize" else "Faire pivoter")
         self.mode = self.drag_item = self.old_layer = None
         self.viewport().update()
@@ -1183,9 +1188,9 @@ class CanvasView(QGraphicsView):
             self.eraser_mask = QImage(self.eraser_preview_image.size(),
                                       QImage.Format.Format_ARGB32_Premultiplied)
             self.eraser_mask.fill(Qt.GlobalColor.transparent)
-        pixel_art = self.window.eraser_pixel_art.isChecked()
-        size = self.window.eraser_size.value()
-        opacity = self.window.eraser_opacity.value() / 100
+        pixel_art = self.main_window.eraser_pixel_art.isChecked()
+        size = self.main_window.eraser_size.value()
+        opacity = self.main_window.eraser_opacity.value() / 100
         dx, dy = end.x() - start.x(), end.y() - start.y()
         distance = (dx * dx + dy * dy) ** 0.5
         spacing = 0.5 if pixel_art else max(0.5, size * 0.2)
@@ -1203,7 +1208,7 @@ class CanvasView(QGraphicsView):
             if pixel_art:
                 bounds = QRectF(round(x - offset), round(y - offset), size, size)
                 painter.setBrush(QColor(0, 0, 0, 255))
-                if self.window.eraser_shape.currentData() == "square":
+                if self.main_window.eraser_shape.currentData() == "square":
                     painter.drawRect(bounds)
                 else:
                     painter.drawEllipse(bounds)
@@ -1211,7 +1216,7 @@ class CanvasView(QGraphicsView):
                 radius = size / 2
                 bounds = QRectF(x - radius, y - radius, size, size)
                 gradient = QRadialGradient(QPointF(x, y), radius)
-                hardness = self.window.eraser_hardness.value() / 100
+                hardness = self.main_window.eraser_hardness.value() / 100
                 gradient.setColorAt(0, QColor(0, 0, 0, 255))
                 gradient.setColorAt(hardness, QColor(0, 0, 0, 255))
                 gradient.setColorAt(1, QColor(0, 0, 0, 0))
@@ -1258,7 +1263,7 @@ class CanvasView(QGraphicsView):
         target = max(MIN_ZOOM, min(MAX_ZOOM, current * factor))
         if abs(target - current) > 1e-9:
             self.scale(target / current, target / current)
-        self.window.update_zoom()
+        self.main_window.update_zoom()
 
     def wheelEvent(self, event):
         self.zoom_by(1.15 if event.angleDelta().y() > 0 else 1 / 1.15)
@@ -1266,11 +1271,11 @@ class CanvasView(QGraphicsView):
 
     def fit_document(self):
         if self.scene():
-            region = QRectF(0, 0, self.window.document.width, self.window.document.height)
+            region = QRectF(0, 0, self.main_window.document.width, self.main_window.document.height)
             self.fitInView(region, Qt.AspectRatioMode.KeepAspectRatio)
             current = self.transform().m11()
             clamped = max(MIN_ZOOM, min(MAX_ZOOM, current))
             if clamped != current:
                 self.scale(clamped / current, clamped / current)
                 self.centerOn(region.center())
-            self.window.update_zoom()
+            self.main_window.update_zoom()
