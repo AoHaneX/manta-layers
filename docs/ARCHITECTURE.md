@@ -65,7 +65,7 @@ Un calque texte reste du texte : `text`, police, taille, couleur, et une traject
 - Rendu des calques image : `PIXMAP_CACHE` garde les calques affichés ; `RENDER_CACHE` garde les rendus avant masque, indexés par l'asset et la suite des remplacements, traits et remplissages rejoués. Un nouveau trait ou remplissage repart du plus long préfixe déjà rendu : il ne coûte que lui-même, et son annulation est immédiate.
 - La sauvegarde écrit un fichier temporaire, le force sur le disque (`fsync`), le relit (`open_project`), puis remplace l'ancien fichier.
 - **Récupération de session :**
-  - toutes les 60 s, si le document a des modifications non enregistrées, une copie est écrite dans `%LOCALAPPDATA%\MantaLayers\recovery`, protégée par un `QLockFile` ;
+  - toutes les 60 s, si le document a des modifications non enregistrées, une copie est écrite dans `%LOCALAPPDATA%\MantaLayers\recovery`, protégée par un `QLockFile` ; elle est écrite par un thread (`RecoveryWriter`) à partir d'un instantané du document, sans bloquer l'interface ; un enregistrement ou une fermeture attend la fin d'une copie en cours avant de la supprimer ;
   - au démarrage, les copies dont le verrou est libre (session terminée de façon imprévue) sont proposées à la restauration ;
   - une fermeture normale ou un enregistrement les supprime.
 

@@ -185,6 +185,48 @@ def test_saving_or_closing_removes_the_recovery_copy(window, tmp_path, monkeypat
     assert not project.exists()
 
 
+def wait_for_autosave(window, qapp, timeout=10):
+    import time
+    task = window._autosave_task
+    assert task is not None and task.wait(timeout * 1000)
+    deadline = time.monotonic() + timeout
+    while window._autosave_task is not None and time.monotonic() < deadline:
+        qapp.processEvents()  # delivers the end-of-thread notification
+    assert window._autosave_task is None
+
+
+def test_timer_autosave_runs_in_the_background(window, qapp, monkeypatch):
+    import threading
+    window.mutate("Agrandir", lambda doc: setattr(doc, "width", 300))
+    threads = []
+    real_save = storage.save_project
+
+    def recording_save(*args, **kwargs):
+        threads.append(threading.current_thread())
+        return real_save(*args, **kwargs)
+
+    monkeypatch.setattr("app.window.save_project", recording_save)
+    assert window.autosave_now(background=True)
+    assert not window.autosave_now(background=True)  # one copy at a time
+    wait_for_autosave(window, qapp)
+    project, meta = window._recovery_files(window._session_id)
+    assert project.is_file() and meta.is_file()
+    assert open_project(project).width == 300
+    assert threads and threads[0] is not threading.main_thread()
+    assert not window.autosave_now(background=True)  # nothing new since that copy
+
+
+def test_saving_during_a_background_autosave_leaves_no_copy(window, qapp, tmp_path, monkeypatch):
+    window.mutate("x", lambda doc: setattr(doc, "width", 300))
+    assert window.autosave_now(background=True)
+    monkeypatch.setattr(window, "project_path", tmp_path / "projet.manta")
+    assert window.save_document()  # waits for the running copy, then deletes it
+    qapp.processEvents()
+    project, meta = window._recovery_files(window._session_id)
+    assert not project.exists() and not meta.exists()
+    assert window._autosave_task is None
+
+
 def make_window(qapp, tmp_path, recovery):
     from PySide6.QtCore import QSettings
 
