@@ -11,7 +11,7 @@
 - Déplacement au clavier avec fusion des pressions dans l'historique.
 - Récupération de la session après une fermeture imprévue.
 - Format de projet version 2 ; la version 1 et les `.mcrab` restent lisibles. Sauvegardes vérifiées par relecture.
-- Suite de tests pytest : 168 tests, images synthétiques, sans réseau ni modèle.
+- Suite de tests pytest, images synthétiques, sans réseau ni modèle.
 
 ### Corrections
 - Une image impossible à afficher n'entre plus dans l'historique et ne bloque plus l'interface ; les images de plus de 67 mégapixels sont refusées dès l'import.
@@ -25,6 +25,12 @@
 - Un calque verrouillé ne peut plus être déplacé dans la liste par glisser-déposer.
 - Un remplissage contigu ne traverse plus une zone gommée auparavant ; les anciens projets gardent leur rendu.
 - Le chemin du projet ne change qu'après un enregistrement réussi ; une police invalide n'est plus copiée.
+- Une simple sélection ne marque plus le document comme modifié.
+- L'orientation EXIF des photos est appliquée à l'import ; seuls PNG, JPEG, WebP, BMP et GIF sont décodés, et les assets d'un projet doivent être en PNG ; Pillow 13 est exigé pour ses correctifs de sécurité.
+- Un modèle abîmé est signalé au lieu de bloquer la galerie ; le panneau gauche défile sur les écrans peu hauts.
+- Fermer le dialogue de détourage n'attend plus la fin du calcul ou du téléchargement ; un échec de téléchargement inattendu n'est plus annoncé comme une installation réussie.
+- Une copie de récupération dont les métadonnées manquent est proposée au lieu de rester sur le disque ; les métadonnées sans copie sont nettoyées.
+- Quitter un champ X, Y ou rotation qui affiche une valeur bornée ne déplace plus le calque ; plages élargies.
 
 ### Améliorations
 - Rendu des calques image mis en cache : une action ne recalcule plus que les calques modifiés.
@@ -35,6 +41,12 @@
 - Dimensions du document modifiables dans une seule fenêtre.
 - Validation renforcée des fichiers `.manta` corrompus.
 - Scripts : vérification de Python 3.11+, mise à jour de pip non bloquante, reprise d'une installation interrompue sous Linux/macOS.
+- Rendu incrémental des calques image : un nouveau trait de gomme ou remplissage ne rejoue plus toutes les opérations précédentes (101ᵉ trait sur une image 4000 × 4000 : 0,04 s au lieu de 3,3 s ; annulation immédiate).
+- Copie de récupération écrite en arrière-plan : plus de gel de l'interface toutes les minutes sur les gros documents.
+- Aperçu du détourage par couleur calculé sur une copie réduite ; empreintes de gomme douce mises en cache.
+- Icônes nettes sur les écrans haute densité ; noms accessibles pour les boutons à icône.
+- Distribution : dépendance `PySide6-Essentials` au lieu du paquet PySide6 complet ; application lancée sans console (`--console` pour le diagnostic) ; licence MIT pour le code, illustrations réservées (`LICENSE`).
+- Outillage : `pyproject.toml` (pytest, ruff, mypy), imports triés.
 - Code : `window.py` découpé (`icons.py`, `widgets.py`, `dialogs.py`, `paths.py`), couleurs centralisées dans le thème, code mort retiré, tests de non-régression ajoutés et isolés des réglages de l'utilisateur.
 
 ## 0.1.0 — 22 octobre 2026
