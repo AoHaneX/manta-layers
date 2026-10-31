@@ -8,7 +8,7 @@ from math import isfinite
 from pathlib import Path
 from uuid import uuid4
 
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from .textpath import DEFAULT_CONTROLS, normalize_controls, normalize_shape
 
@@ -20,6 +20,11 @@ MAX_DIMENSION = 16384
 # Au-delà, le décodage et l'affichage d'un calque deviennent trop coûteux en mémoire
 # (une image RGBA de 8192 × 8192 occupe déjà 256 Mo une fois décodée).
 MAX_PIXELS = 8192 * 8192
+# Only these decoders ever see user files: Pillow would otherwise pick any
+# plugin from the file content, whatever its extension.
+IMPORT_FORMATS = ("PNG", "JPEG", "WEBP", "BMP", "GIF")
+# Project assets and masks are always written as PNG.
+ASSET_FORMATS = ("PNG",)
 # Ancien nom du logiciel : les projets .mcrab portent encore cet identifiant.
 LEGACY_PROJECT_FORMAT = "MantaCrab"
 
@@ -231,7 +236,11 @@ class Document:
         return next((lay for lay in self.layers if lay.id == layer_id), None)
 
     def add_image_bytes(self, contents: bytes, name: str, center: bool = True) -> Layer:
-        with Image.open(BytesIO(contents)) as source:
+        try:
+            source = Image.open(BytesIO(contents), formats=IMPORT_FORMATS)
+        except UnidentifiedImageError as exc:
+            raise ValueError("Format d'image non pris en charge (PNG, JPEG, WebP, BMP ou GIF)") from exc
+        with source:
             if source.width > MAX_DIMENSION or source.height > MAX_DIMENSION:
                 raise ValueError("Image trop grande (maximum 16 384 px par dimension)")
             if source.width * source.height > MAX_PIXELS:

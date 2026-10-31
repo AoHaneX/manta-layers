@@ -15,7 +15,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
 from . import selection
-from .model import MAX_PIXELS, Document, Layer
+from .model import ASSET_FORMATS, MAX_PIXELS, Document, Layer
 from .textpath import (
     custom_points, drag_handle, handle_points, normalize_controls, normalize_shape, sample_path,
 )
@@ -204,7 +204,7 @@ def render_layer_image(
     """
     fills = fills or []
     strokes = strokes or []
-    with Image.open(BytesIO(contents)) as source:
+    with Image.open(BytesIO(contents), formats=ASSET_FORMATS) as source:
         if source.width * source.height > MAX_PIXELS:
             raise ValueError(f"image trop grande ({source.width} × {source.height} px)")
         image = source.convert("RGBA")

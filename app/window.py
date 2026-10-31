@@ -32,7 +32,7 @@ from .icons import (
     alignment_icon, color_tool_icon, eye_icon, history_arrow_icon, layer_kind_icon, lock_icon,
     sidebar_arrow_icon,
 )
-from .model import Document, Layer, new_id
+from .model import ASSET_FORMATS, Document, Layer, new_id
 from .paths import user_data_directory
 from .selection import COMBINE_LABELS, COMBINE_MODES
 from .storage import open_project, save_project
@@ -1898,7 +1898,7 @@ class MainWindow(QMainWindow):
         return cut.crop(box), box[:2]
 
     def _source_size(self, layer) -> tuple[int, int]:
-        with Image.open(BytesIO(self.document.assets[layer.asset])) as source:
+        with Image.open(BytesIO(self.document.assets[layer.asset]), formats=ASSET_FORMATS) as source:
             return source.size
 
     def _edit_layer_mask(self, doc: Document, layer_id: str, operation: str, area=None):
