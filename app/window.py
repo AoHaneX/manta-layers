@@ -2936,15 +2936,21 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self.offer_session_recovery)
 
     def _remove_orphan_locks(self):
-        """Delete locks of dead sessions that left no copy behind (nothing to restore)."""
+        """Delete locks and metadata of dead sessions that left no copy behind (nothing to restore)."""
         if not self.recovery_dir.is_dir():
             return
-        for lock_path in self.recovery_dir.glob("*.lock"):
-            session_id = lock_path.stem
-            if session_id == self._session_id or (self.recovery_dir / f"{session_id}.json").exists():
+        session_ids = {path.stem for pattern in ("*.lock", "*.json")
+                       for path in self.recovery_dir.glob(pattern)}
+        for session_id in session_ids:
+            project, meta = self._recovery_files(session_id)
+            if session_id == self._session_id or project.exists():
                 continue
-            lock = QLockFile(str(lock_path))
+            lock = QLockFile(str(self.recovery_dir / f"{session_id}.lock"))
             if lock.tryLock(0):  # free: its owner is gone
+                try:
+                    meta.unlink(missing_ok=True)
+                except OSError:
+                    pass
                 lock.unlock()  # unlocking also removes the file
 
     def _recovery_files(self, session_id: str) -> tuple[Path, Path]:
@@ -2980,20 +2986,26 @@ class MainWindow(QMainWindow):
         candidates = []
         if not self.recovery_dir.is_dir():
             return candidates
-        for meta_path in self.recovery_dir.glob("*.json"):
-            session_id = meta_path.stem
-            project = self.recovery_dir / f"{session_id}.manta"
+        # The copy is listed even without its metadata: a crash between the two
+        # writes of autosave_now must not leave it unreachable on disk.
+        for project in self.recovery_dir.glob("*.manta"):
+            session_id = project.stem
             if session_id == getattr(self, "_session_id", None) or not project.is_file():
                 continue
             lock = QLockFile(str(self.recovery_dir / f"{session_id}.lock"))
             if not lock.tryLock(0):
                 continue  # another Manta Layers window still owns this copy
             try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                meta = json.loads(self._recovery_files(session_id)[1].read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 meta = {}
             if not isinstance(meta, dict):
                 meta = {}
+            if not meta.get("saved_at"):
+                try:
+                    meta["saved_at"] = project.stat().st_mtime
+                except OSError:
+                    pass
             candidates.append({"id": session_id, "project": project, "meta": meta, "lock": lock})
         return sorted(candidates, key=lambda item: item["meta"].get("saved_at") or 0, reverse=True)
 
