@@ -21,8 +21,8 @@ def configure_windows_taskbar() -> None:
 def main() -> int:
     configure_windows_taskbar()
     try:
-        from PySide6.QtWidgets import QApplication, QMessageBox
         from PySide6.QtGui import QIcon
+        from PySide6.QtWidgets import QApplication, QMessageBox
     except ImportError:
         print("PySide6 est absent. Sous Windows, lancez installer_dependances.bat puis lancer_manta_layers.bat")
         return 2

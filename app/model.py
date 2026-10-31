@@ -333,6 +333,6 @@ class Document:
             if layer.mask is not None and layer.mask not in assets:
                 # A lost mask only hides less: keep the layer, drop the mask.
                 layer.mask = None
-        if len({l.id for l in doc.layers}) != len(doc.layers):
+        if len({layer.id for layer in doc.layers}) != len(doc.layers):
             raise ValueError("Identifiants de calques dupliqués")
         return doc

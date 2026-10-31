@@ -7,13 +7,13 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from conftest import png_bytes  # noqa: E402
 from PIL import Image  # noqa: E402
 from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox  # noqa: E402
 
 from app.model import Document  # noqa: E402
 from app.storage import open_project, save_project  # noqa: E402
-from conftest import png_bytes  # noqa: E402
 
 RED = (220, 20, 20, 255)
 

@@ -7,18 +7,28 @@ from io import BytesIO
 from math import atan2, cos, degrees, hypot, radians, sin
 
 from PIL import Image, ImageChops, ImageDraw
-from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QPointF, QRectF, Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRectF, Qt
 from PySide6.QtGui import (
-    QBrush, QColor, QFont, QFontDatabase, QFontMetricsF, QImage, QPainter,
-    QBitmap, QPainterPath, QPen, QPixmap, QRadialGradient, QRegion, QTransform,
+    QBitmap,
+    QBrush,
+    QColor,
+    QFont,
+    QFontDatabase,
+    QFontMetricsF,
+    QImage,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QRadialGradient,
+    QRegion,
+    QTransform,
 )
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
 from . import selection
 from .model import ASSET_FORMATS, MAX_PIXELS, Document, Layer
-from .textpath import (
-    custom_points, drag_handle, handle_points, normalize_controls, normalize_shape, sample_path,
-)
+from .textpath import custom_points, drag_handle, handle_points, normalize_controls, normalize_shape, sample_path
 from .theme import COLORS
 
 MIN_ZOOM = 0.01

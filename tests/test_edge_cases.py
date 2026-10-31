@@ -3,12 +3,12 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from conftest import png_bytes  # noqa: E402
 from PySide6.QtCore import QPointF, QRectF, Qt  # noqa: E402
 
 from app import selection as S  # noqa: E402
 from app.graphics import CurvedTextGraphicItem, render_layers  # noqa: E402
 from app.model import Document, Layer  # noqa: E402
-from conftest import png_bytes  # noqa: E402
 
 NO_MODIFIER = Qt.KeyboardModifier.NoModifier
 

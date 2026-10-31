@@ -22,6 +22,7 @@ else:
     from PySide6.QtGui import QFont, QFontMetricsF, QImage
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QToolButton
+
     from app import graphics
     from app.graphics import MAX_ZOOM, CurvedTextGraphicItem, render_document
     from app.model import Document, Layer

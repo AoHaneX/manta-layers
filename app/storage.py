@@ -5,7 +5,7 @@ import json
 import os
 import zlib
 from pathlib import Path
-from zipfile import ZipFile, ZIP_DEFLATED, BadZipFile
+from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 from .model import MAX_ASSET_BYTES, Document
 

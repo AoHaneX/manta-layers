@@ -6,15 +6,26 @@ from pathlib import Path
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
-    QInputDialog, QListView, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
-    QSpinBox, QTabWidget, QVBoxLayout, QWidget,
+    QAbstractItemView,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QHBoxLayout,
+    QInputDialog,
+    QListView,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from .model import MAX_DIMENSION, Document
-from .templates import (
-    delete_template, duplicate_template, instantiate_template, list_templates, rename_template,
-)
+from .templates import delete_template, duplicate_template, instantiate_template, list_templates, rename_template
 
 
 def _dimension_input(value: int) -> QSpinBox:
