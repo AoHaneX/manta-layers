@@ -5,7 +5,6 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields
 from io import BytesIO
 from math import isfinite
-from pathlib import Path
 from uuid import uuid4
 
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -265,10 +264,6 @@ class Document:
         self.assets[layer.asset] = output.getvalue()
         self.layers.append(layer)
         return layer
-
-    def add_image_file(self, path: str | Path) -> Layer:
-        p = Path(path)
-        return self.add_image_bytes(p.read_bytes(), p.stem)
 
     def add_text(self, text: str) -> Layer:
         first_line = text.split("\n", 1)[0]

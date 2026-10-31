@@ -645,7 +645,6 @@ class CanvasView(QGraphicsView):
         self.mode = None
         self.old_layer = None
         self.drag_item = None
-        self.drag_start = None
         self.handle_index = None
         self.selection_drag = None
         # Pixels being moved with Ctrl+drag inside the selection.
