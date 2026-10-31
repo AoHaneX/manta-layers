@@ -265,6 +265,39 @@ def test_orphan_locks_without_copy_are_cleaned(qapp, tmp_path):
         window.close()
 
 
+def test_copy_without_metadata_is_still_offered(qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    recovery = tmp_path / "recovery"
+    crashed_copy(recovery)
+    (recovery / "dead.json").unlink()  # crash between the two writes of the autosave
+    offers = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: offers.append(a[2]) or QMessageBox.StandardButton.Yes)
+    window = make_window(qapp, tmp_path, recovery)
+    qapp.processEvents()
+    try:
+        assert window.document.width == 321
+        assert "une date inconnue" not in offers[0]  # dated from the file itself
+        assert not (recovery / "dead.manta").exists()
+    finally:
+        window.undo_stack.setClean()
+        window.close()
+
+
+def test_metadata_without_copy_is_cleaned(qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    recovery = tmp_path / "recovery"
+    recovery.mkdir()
+    (recovery / "gone.json").write_text(json.dumps({"saved_at": 1_700_000_000}))
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: pytest.fail("nothing to restore"))
+    window = make_window(qapp, tmp_path, recovery)
+    qapp.processEvents()
+    try:
+        assert not (recovery / "gone.json").exists()
+    finally:
+        window.close()
+
+
 def test_selection_changes_alone_do_not_mark_the_document_as_modified(window, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
     monkeypatch.setattr(QMessageBox, "exec", lambda *_: pytest.fail("no save prompt expected"))
