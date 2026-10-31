@@ -79,6 +79,8 @@ class BackgroundRemovalDialog(QDialog):
         self.models_dir = Path(models_dir) if models_dir is not None else background.models_directory()
         self.raw_mask: Image.Image | None = None
         self.worker: QThread | None = None
+        # Thread still running after the dialog closed; the dialog is deleted after it.
+        self._orphan: QThread | None = None
         layout = QVBoxLayout(self)
 
         explanation = QLabel(
@@ -320,10 +322,18 @@ class BackgroundRemovalDialog(QDialog):
         self._set_status("Modèle installé. Cliquez sur « Calculer l'aperçu ».")
 
     def done(self, result):
-        # Never close while a thread still runs: wait for it, then discard its result.
+        # Closing never waits for a running thread (a model run cannot be
+        # interrupted, a download only stops between two blocks): its result is
+        # discarded and dispose() deletes the dialog once the thread has ended.
         if self.worker is not None:
             if isinstance(self.worker, DownloadWorker):
                 self.worker.cancel_requested = True
-            self.worker.wait()
-            self.worker = None
+            self._orphan, self.worker = self.worker, None
         super().done(result)
+
+    def dispose(self):
+        """Delete the dialog (and its image) once no thread uses it any more."""
+        if self._orphan is not None and self._orphan.isRunning():
+            self._orphan.finished.connect(self.deleteLater)
+        else:
+            self.deleteLater()

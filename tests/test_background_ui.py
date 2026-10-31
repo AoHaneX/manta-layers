@@ -159,3 +159,29 @@ def test_download_requires_confirmation(tmp_path, qapp, monkeypatch):
     dialog.download_default_model()
     assert dialog.worker is None
     QApplication.processEvents()
+
+
+def test_closing_during_a_model_run_does_not_wait_for_it(tmp_path, qapp, monkeypatch):
+    import threading
+    (tmp_path / "u2netp.onnx").write_bytes(b"fake")
+    monkeypatch.setattr(B, "onnx_runtime_available", lambda: True)
+    release = threading.Event()
+
+    def slow_onnx(image, path, progress):
+        release.wait(5)
+        return S.full(image.size)
+
+    monkeypatch.setattr(B, "onnx_mask", slow_onnx)
+    dialog = make_dialog(tmp_path, qapp)
+    dialog.method.setCurrentIndex(1)
+    dialog.compute()
+    worker = dialog.worker
+    started = time.monotonic()
+    dialog.reject()
+    assert time.monotonic() - started < 1  # the model run is not awaited
+    assert dialog.result() == QDialog.DialogCode.Rejected and dialog.worker is None
+    dialog.dispose()
+    release.set()
+    assert worker.wait(5000)
+    qapp.processEvents()
+    assert dialog.raw_mask is None  # the late result is discarded
