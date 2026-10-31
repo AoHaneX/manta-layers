@@ -221,14 +221,10 @@ Avant toute modification majeure : création d'un projet vide, import de 3 image
 3. Ajouter recadrage, réglages d'image non destructifs et export calque par calque.
 4. Quand les fonctionnalités sont stables, envisager **PyInstaller** et intégration dans le launcher ReefKit.
 
-Les images de mascotte restent les ressources provisoires fournies par le propriétaire du projet ; aucune licence de redistribution distincte n'est présumée.
+## Licence et ressources
 
-## Licence
+Le **code source** est distribué sous la licence MIT. Le fichier [`LICENSE`](LICENSE) précise aussi ce qu'elle ne couvre pas.
 
-Ce projet est distribué sous la licence **PolyForm Strict 1.0.0**.
+Les **illustrations, mascottes, logos, icônes et fonds propres à Manta Layers et ReefKit** (dossier `assets/`), ainsi que le projet d'exemple `exemples/Manta_Demo.manta`, sont exclus de la licence MIT : tous droits réservés, comme l'indique [`LICENSE`](LICENSE). Leur présence dans ce dépôt ou dans une version distribuée n'accorde pas d'autorisation de les réutiliser, modifier ou redistribuer. Toute réutilisation nécessite une autorisation écrite préalable.
 
-Le code source est accessible publiquement. Son utilisation non commerciale est autorisée.
-
-La modification, la redistribution et l'exploitation commerciale du logiciel sont interdites sans autorisation préalable.
-
-Les mascottes, illustrations et logos du projet restent protégés et ne sont pas librement réutilisables.
+Les polices placées dans `fonts/` restent soumises à leurs licences respectives.
