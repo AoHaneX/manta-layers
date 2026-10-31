@@ -1,4 +1,5 @@
 """Local background removal, tested with synthetic images and fake models only."""
+import http.client
 import io
 
 import pytest
@@ -139,6 +140,21 @@ def test_download_writes_the_model_atomically(tmp_path):
     assert path.read_bytes() == b"onnx" * 1000
     assert seen[0].endswith("/u2netp.onnx") and seen[-1] == 100
     assert not list(tmp_path.glob("*.part"))
+
+
+class TruncatedResponse(FakeResponse):
+    def read(self, size=-1):
+        raise http.client.IncompleteRead(b"x")  # an HTTPException, not an OSError
+
+
+@pytest.mark.parametrize("response", [
+    lambda: FakeResponse(b"x" * 10, announced="dix"),  # malformed Content-Length
+    lambda: TruncatedResponse(b"x" * 10),
+])
+def test_protocol_errors_are_reported_and_leave_no_file(tmp_path, response):
+    with pytest.raises(B.BackgroundRemovalError, match="Téléchargement impossible"):
+        B.download_model("u2netp", tmp_path, opener=lambda url, timeout: response())
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize("announced, cancelled, message", [(9999, False, "incomplet"), (None, True, "annulé")])
