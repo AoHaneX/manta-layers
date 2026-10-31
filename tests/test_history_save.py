@@ -261,3 +261,35 @@ def test_orphan_locks_without_copy_are_cleaned(qapp, tmp_path):
         assert not orphan.exists()
     finally:
         window.close()
+
+
+def test_selection_changes_alone_do_not_mark_the_document_as_modified(window, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "exec", lambda *_: pytest.fail("no save prompt expected"))
+    window.select_all()
+    window.invert_selection()
+    assert window.undo_stack.count() == 2  # selections stay undoable
+    assert not window.is_modified() and "*" not in window.windowTitle()
+    assert not window.autosave_now()
+    assert window.maybe_save()
+
+
+def test_document_edits_still_count_around_selection_changes(window):
+    layer = image_layer(window)
+    window.select_layer(layer.id)
+    window.select_all()
+    window.nudge_layer(4, 0)
+    assert window.is_modified() and "*" in window.windowTitle()
+    window.undo_stack.undo()  # back to the saved document, selection kept
+    assert not window.is_modified()
+
+
+def test_moving_selected_pixels_marks_the_document_as_modified(window):
+    layer = image_layer(window)
+    if layer.locked:
+        window.toggle_lock(layer.id)
+    window.undo_stack.setClean()
+    window.select_layer(layer.id)
+    window.select_all()
+    window.move_selection_content(3, 2)  # one undo macro: new layer plus moved selection
+    assert window.is_modified()
