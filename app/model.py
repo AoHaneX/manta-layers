@@ -8,7 +8,7 @@ from math import isfinite
 from pathlib import Path
 from uuid import uuid4
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .textpath import DEFAULT_CONTROLS, normalize_controls, normalize_shape
 
@@ -249,7 +249,8 @@ class Document:
                     "maximum 67 mégapixels, soit 8192 × 8192 px"
                 )
             source.load()
-            rgba = source.convert("RGBA")
+            # Phone photos store their rotation in EXIF instead of in the pixels.
+            rgba = ImageOps.exif_transpose(source).convert("RGBA")
         output = BytesIO()
         rgba.save(output, format="PNG")
         layer = Layer(name=name, kind="image", asset=new_id())
