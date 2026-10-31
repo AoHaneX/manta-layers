@@ -198,5 +198,6 @@ def encode(mask: Image.Image) -> bytes:
 
 
 def decode(data: bytes) -> Image.Image:
-    with Image.open(BytesIO(data)) as source:
+    # Masks are always stored as PNG; no other decoder is needed.
+    with Image.open(BytesIO(data), formats=("PNG",)) as source:
         return source.convert("L")
