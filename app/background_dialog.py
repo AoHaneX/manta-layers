@@ -26,6 +26,9 @@ from . import background
 from .graphics import checker_brush, pil_to_qimage
 
 PREVIEW_SIZE = (420, 280)
+# Previews are computed on a copy of at most this size; the full-size mask is
+# only computed when it is applied.
+PREVIEW_SOURCE_SIZE = 1024
 
 
 class RemovalWorker(QThread):
@@ -78,7 +81,13 @@ class BackgroundRemovalDialog(QDialog):
         self.setWindowTitle(f"Supprimer l'arrière-plan — {layer_name}")
         self.setMinimumWidth(520)
         self.image = image
+        self.preview_image = image.copy()
+        # Nearest neighbour keeps the exact colours of flat backgrounds and pixel art.
+        self.preview_image.thumbnail((PREVIEW_SOURCE_SIZE, PREVIEW_SOURCE_SIZE),
+                                     Image.Resampling.NEAREST, reducing_gap=None)
         self.models_dir = Path(models_dir) if models_dir is not None else background.models_directory()
+        # Raw masks before refinement: at preview size, and at full size once known.
+        self.preview_mask: Image.Image | None = None
         self.raw_mask: Image.Image | None = None
         self.worker: QThread | None = None
         # Thread still running after the dialog closed; the dialog is deleted after it.
@@ -190,7 +199,7 @@ class BackgroundRemovalDialog(QDialog):
 
     def _method_changed(self, *_args):
         self.tolerance.setEnabled(self._is_colour())
-        self.raw_mask = None
+        self.preview_mask = self.raw_mask = None
         if not background.onnx_runtime_available():
             self._set_status("Pour la méthode IA : pip install -r requirements-ai.txt, "
                              "puis placez ou téléchargez un modèle.")
@@ -206,6 +215,7 @@ class BackgroundRemovalDialog(QDialog):
 
     def _settings_changed(self, *_args):
         if self._is_colour():
+            self.raw_mask = None  # recomputed at full size with the new tolerance
             self.refresh_timer.start()
         else:
             self._show_preview()
@@ -220,7 +230,8 @@ class BackgroundRemovalDialog(QDialog):
         if self.worker is not None:
             return
         if self._is_colour():
-            self.raw_mask = background.border_colour_mask(self.image, self.tolerance.value())
+            self.preview_mask = background.border_colour_mask(self.preview_image, self.tolerance.value())
+            self.raw_mask = None
             self._set_status("Aperçu calculé.")
             self._show_preview()
             return
@@ -245,18 +256,31 @@ class BackgroundRemovalDialog(QDialog):
             return
         self.progress.hide()
         if worker.error:
-            self.raw_mask = None
+            self.preview_mask = self.raw_mask = None
             self._set_status(worker.error)
         else:
             self.raw_mask = worker.mask
+            self.preview_mask = worker.mask.resize(self.preview_image.size, Image.Resampling.BOX)
             self._set_status("Aperçu calculé. Vérifiez-le avant d'appliquer.")
         self._show_preview()
         self._update_buttons()
 
     def result_mask(self) -> Image.Image | None:
+        """Full-size refined mask; the colour method computes it only now."""
+        if self.preview_mask is None:
+            return None
+        if self.raw_mask is None and self._is_colour():
+            self.raw_mask = background.border_colour_mask(self.image, self.tolerance.value())
         if self.raw_mask is None:
             return None
         return background.refine(self.raw_mask, self.hard_edges.isChecked(), self.feather.value())
+
+    def _preview_mask_refined(self) -> Image.Image | None:
+        if self.preview_mask is None:
+            return None
+        # The feathering radius follows the reduction of the preview image.
+        scale = self.preview_image.width / max(1, self.image.width)
+        return background.refine(self.preview_mask, self.hard_edges.isChecked(), self.feather.value() * scale)
 
     def _show_preview(self):
         width, height = PREVIEW_SIZE
@@ -264,8 +288,8 @@ class BackgroundRemovalDialog(QDialog):
         canvas.fill(Qt.GlobalColor.transparent)
         painter = QPainter(canvas)
         painter.fillRect(canvas.rect(), checker_brush())
-        mask = self.result_mask()
-        shown = background.preview(self.image, mask) if mask is not None else self.image
+        mask = self._preview_mask_refined()
+        shown = background.preview(self.preview_image, mask) if mask is not None else self.preview_image
         pixmap = QPixmap.fromImage(pil_to_qimage(shown.convert("RGBA"))).scaled(
             width, height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
         )
@@ -276,7 +300,7 @@ class BackgroundRemovalDialog(QDialog):
 
     def _update_buttons(self):
         busy = self.worker is not None
-        self.apply_button.setEnabled(not busy and self.raw_mask is not None)
+        self.apply_button.setEnabled(not busy and self.preview_mask is not None)
         self.preview_button.setEnabled(not busy and bool(self.method.currentData()))
         self.method.setEnabled(not busy)
         self.download_button.setEnabled(not busy)
