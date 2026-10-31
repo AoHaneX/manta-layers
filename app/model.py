@@ -20,6 +20,9 @@ MAX_DIMENSION = 16384
 # Au-delà, le décodage et l'affichage d'un calque deviennent trop coûteux en mémoire
 # (une image RGBA de 8192 × 8192 occupe déjà 256 Mo une fois décodée).
 MAX_PIXELS = 8192 * 8192
+# Worst case of a MAX_PIXELS RGBA image stored as PNG (incompressible noise),
+# with a margin: any image accepted on import can be saved and reopened.
+MAX_ASSET_BYTES = 300 * 1024 * 1024
 # Only these decoders ever see user files: Pillow would otherwise pick any
 # plugin from the file content, whatever its extension.
 IMPORT_FORMATS = ("PNG", "JPEG", "WEBP", "BMP", "GIF")
@@ -253,6 +256,8 @@ class Document:
             rgba = ImageOps.exif_transpose(source).convert("RGBA")
         output = BytesIO()
         rgba.save(output, format="PNG")
+        if output.tell() > MAX_ASSET_BYTES:
+            raise ValueError("Image trop volumineuse une fois enregistrée dans le projet")
         layer = Layer(name=name, kind="image", asset=new_id())
         if center:
             layer.x = float((self.width - rgba.width) / 2)
