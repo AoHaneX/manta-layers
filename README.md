@@ -128,7 +128,8 @@ MantaLayers/
 ├── requirements.txt            # PySide6 et Pillow
 ├── requirements-dev.txt        # + pytest
 ├── requirements-ai.txt         # facultatif : onnxruntime et numpy pour le détourage IA
-├── pytest.ini
+├── pyproject.toml              # réglages de pytest, ruff et mypy
+├── LICENSE                     # MIT pour le code, illustrations réservées
 ├── docs/ARCHITECTURE.md        # documentation technique
 ├── tests_windows.bat           # diagnostic/tests après installation
 ├── AGENTS.md                   # consignes courtes pour les développements Codex
@@ -187,6 +188,8 @@ Une fois les dépendances installées, ouvre un terminal dans ce dossier et exé
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .venv\Scripts\python.exe -m pytest
 ```
+
+Contrôles statiques (facultatifs, configurés dans `pyproject.toml`) : `ruff check app tests` et `mypy app`.
 
 Les tests utilisent des images synthétiques : ils ne demandent ni réseau ni modèle d'IA.
 

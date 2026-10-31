@@ -4,11 +4,11 @@ from pathlib import Path
 from zipfile import ZipFile
 
 import pytest
+from conftest import png_bytes
 
 from app import storage
 from app.model import PROJECT_VERSION, Document
 from app.storage import open_project, save_project
-from conftest import png_bytes
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -124,6 +124,7 @@ def image_layer(window):
 def test_arrow_key_bursts_merge_into_one_undo_step(window, monkeypatch):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
+
     import app.window as window_module
     layer = image_layer(window)
     window.select_layer(layer.id)
@@ -186,6 +187,7 @@ def test_saving_or_closing_removes_the_recovery_copy(window, tmp_path, monkeypat
 
 def make_window(qapp, tmp_path, recovery):
     from PySide6.QtCore import QSettings
+
     from app.window import MainWindow
     return MainWindow(settings=QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat),
                       recovery_dir=recovery)

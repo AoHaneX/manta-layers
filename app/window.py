@@ -10,26 +10,76 @@ from shutil import copy2
 from uuid import uuid4
 
 from PIL import Image
-from PySide6.QtCore import QLockFile, QPointF, QRectF, Qt, QSize, QSettings, QTimer
-from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QImage, QKeySequence, QPixmap, QShortcut, QUndoCommand, QUndoStack
+from PySide6.QtCore import QLockFile, QPointF, QRectF, QSettings, QSize, Qt, QTimer
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QFont,
+    QFontDatabase,
+    QIcon,
+    QImage,
+    QKeySequence,
+    QPixmap,
+    QShortcut,
+    QUndoCommand,
+    QUndoStack,
+)
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
-    QFontComboBox, QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLayout,
-    QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
-    QSlider, QSpinBox, QSplitter, QGraphicsPixmapItem, QTabWidget, QToolButton,
-    QUndoView, QVBoxLayout, QWidget, QLineEdit, QPlainTextEdit,
+    QApplication,
+    QButtonGroup,
+    QCheckBox,
+    QColorDialog,
+    QComboBox,
+    QDialog,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFontComboBox,
+    QFormLayout,
+    QGraphicsPixmapItem,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLayout,
+    QLineEdit,
+    QListWidgetItem,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSlider,
+    QSpinBox,
+    QSplitter,
+    QTabWidget,
+    QToolButton,
+    QUndoView,
+    QVBoxLayout,
+    QWidget,
 )
 
-from . import __version__
-from .dialogs import NewProjectDialog, ResizeDocumentDialog
-from . import background, selection
+from . import __version__, background, selection
 from .background_dialog import BackgroundRemovalDialog
+from .dialogs import NewProjectDialog, ResizeDocumentDialog
 from .graphics import (
-    CanvasView, CurvedTextGraphicItem, document_mask_to_layer, make_scene, pil_to_qimage, qimage_png,
-    render_document, render_layer_image, render_layers,
+    CanvasView,
+    CurvedTextGraphicItem,
+    document_mask_to_layer,
+    make_scene,
+    pil_to_qimage,
+    qimage_png,
+    render_document,
+    render_layer_image,
+    render_layers,
 )
 from .icons import (
-    alignment_icon, color_tool_icon, eye_icon, history_arrow_icon, layer_kind_icon, lock_icon,
+    alignment_icon,
+    color_tool_icon,
+    eye_icon,
+    history_arrow_icon,
+    layer_kind_icon,
+    lock_icon,
     sidebar_arrow_icon,
 )
 from .model import ASSET_FORMATS, Document, Layer, new_id
@@ -39,9 +89,7 @@ from .storage import open_project, save_project
 from .templates import list_templates, save_template
 from .textpath import DEFAULT_CONTROLS, SHAPE_LABELS, TEXT_SHAPES, normalize_controls
 from .theme import COLORS, STYLE, dialog_button_style
-from .widgets import (
-    CommitPlainTextEdit, InlineTextEditor, LayerDragHandle, LayerListWidget, SidebarBackground,
-)
+from .widgets import CommitPlainTextEdit, InlineTextEditor, LayerDragHandle, LayerListWidget, SidebarBackground
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
@@ -2476,7 +2524,7 @@ class MainWindow(QMainWindow):
                 continue
             holder = {}
 
-            def add(doc, data=data, name=path.stem):
+            def add(doc, data=data, name=path.stem, holder=holder):
                 holder["id"] = doc.add_image_bytes(data, name).id
 
             # Un fichier illisible ou trop grand est signalé par mutate et

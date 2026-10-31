@@ -3,6 +3,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from conftest import png_bytes  # noqa: E402
 from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 
@@ -10,13 +11,13 @@ from app import selection as S  # noqa: E402
 from app.graphics import render_layers  # noqa: E402
 from app.model import Document  # noqa: E402
 from app.storage import open_project, save_project  # noqa: E402
-from conftest import png_bytes  # noqa: E402
 
 
 def two_colour_document():
     """100×60 document: left half red, right half blue, on one layer at (10, 20)."""
-    from PIL import Image
     import io
+
+    from PIL import Image
     image = Image.new("RGBA", (60, 30), (220, 20, 20, 255))
     image.paste((20, 20, 220, 255), (30, 0, 60, 30))
     data = io.BytesIO()

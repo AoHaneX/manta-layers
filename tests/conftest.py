@@ -27,6 +27,7 @@ def qapp():
 def window(qapp, tmp_path):
     """Main window whose settings and recovery files live in a temporary folder."""
     from PySide6.QtCore import QSettings
+
     from app.window import MainWindow
 
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)

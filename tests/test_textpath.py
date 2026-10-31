@@ -2,9 +2,7 @@
 import pytest
 
 from app.model import Layer
-from app.textpath import (
-    DEFAULT_CONTROLS, drag_handle, handle_points, normalize_controls, normalize_shape, sample_path,
-)
+from app.textpath import DEFAULT_CONTROLS, drag_handle, handle_points, normalize_controls, normalize_shape, sample_path
 
 WIDTH, ARC = 400.0, 112.0
 

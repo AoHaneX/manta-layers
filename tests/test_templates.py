@@ -10,8 +10,13 @@ from PIL import Image
 from app.model import Document
 from app.storage import open_project
 from app.templates import (
-    delete_template, duplicate_template, instantiate_template, list_templates,
-    read_template_info, rename_template, save_template,
+    delete_template,
+    duplicate_template,
+    instantiate_template,
+    list_templates,
+    read_template_info,
+    rename_template,
+    save_template,
 )
 
 

@@ -1,0 +1,23 @@
+# Tool settings only: the application is still run from main.py, not installed.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+# Pyflakes, syntax errors, import order and likely bugs.
+select = ["E4", "E7", "E9", "F", "I", "B"]
+# zip(strict=...) would add noise: every zip here pairs lists built together.
+ignore = ["B905"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+split-on-trailing-comma = false
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
