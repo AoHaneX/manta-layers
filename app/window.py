@@ -2811,8 +2811,10 @@ class MainWindow(QMainWindow):
         QMessageBox.about(self, "À propos de Manta Layers", f"""<h3>Manta Layers {__version__}</h3>
         <p>Éditeur d'images local à calques · Univers Blue Shrimp / ReefKit.</p>
         <p>Images, textes multilignes courbés sur trajectoire, calques, transformations,
-        gomme et remplissages non destructifs, modèles, historique, projets natifs et exports.</p>
-        <p>La déformation Warp des lettres, le recadrage et les masques sont prévus pour les prochaines versions.</p>""")
+        gomme et remplissages non destructifs, sélections et masques de calque, suppression
+        locale de l'arrière-plan, modèles, historique, projets natifs et exports.</p>
+        <p>Code source sous licence MIT ; illustrations et mascottes : tous droits réservés.</p>
+        <p>La déformation Warp des lettres et le recadrage sont prévus pour les prochaines versions.</p>""")
 
     def dragEnterEvent(self, event):
         if self.image_paths_from_mime(event.mimeData()):
