@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -42,7 +43,9 @@ def read_template_info(path: str | Path) -> TemplateInfo:
             thumbnail = archive.read("thumbnail.png") if "thumbnail.png" in archive.namelist() else None
         name = str(metadata.get("name") or path.stem).strip() or path.stem
         return TemplateInfo(path, name, int(manifest["width"]), int(manifest["height"]), thumbnail)
-    except (BadZipFile, KeyError, ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (BadZipFile, KeyError, ValueError, TypeError, OverflowError, UnicodeDecodeError,
+            json.JSONDecodeError, zlib.error, NotImplementedError, RuntimeError, EOFError,
+            OSError) as exc:
         raise ValueError(f"Modèle invalide : {path.name}") from exc
 
 

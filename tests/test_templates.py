@@ -2,6 +2,8 @@
 import io
 import tempfile
 import unittest
+from pathlib import Path
+from zipfile import ZipFile
 
 from PIL import Image
 
@@ -60,6 +62,18 @@ class TemplateTests(unittest.TestCase):
                              ["Renommé", "Renommé (copie)"])
             delete_template(copy)
             self.assertEqual([item.name for item in list_templates(tmp)], ["Renommé"])
+
+    def test_a_damaged_template_is_skipped_by_the_library(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            save_template(Document(320, 200), "Valide", None, tmp)
+            # JSON reads 1e400 as infinity, which used to break the whole gallery.
+            with ZipFile(Path(tmp) / "infini.manta", "w") as archive:
+                archive.writestr("manifest.json", '{"format": "MantaLayers", "version": 2, '
+                                                  '"width": 1e400, "height": 10, "layers": []}')
+            (Path(tmp) / "illisible.manta").write_bytes(b"pas un zip")
+            with self.assertRaises(ValueError):
+                read_template_info(Path(tmp) / "infini.manta")
+            self.assertEqual([item.name for item in list_templates(tmp)], ["Valide"])
 
 
 if __name__ == "__main__":

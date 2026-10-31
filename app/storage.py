@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import zlib
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED, BadZipFile
 
@@ -85,5 +86,8 @@ def open_project(path: str | Path) -> Document:
                             raise ValueError("Image trop volumineuse")
                         assets[asset_id] = z.read(info)
         return Document.from_manifest(manifest, assets)
-    except (BadZipFile, KeyError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    # Damaged archives fail in many ways (corrupted compressed data, unsupported
+    # or encrypted entries, truncated files): all mean "not a valid project".
+    except (BadZipFile, KeyError, UnicodeDecodeError, json.JSONDecodeError, zlib.error,
+            OverflowError, NotImplementedError, RuntimeError, EOFError) as exc:
         raise ValueError("Le fichier ne semble pas être un projet Manta Layers valide") from exc

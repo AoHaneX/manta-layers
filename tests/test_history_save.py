@@ -58,6 +58,32 @@ def test_invalid_files_are_detected(tmp_path, payload):
         open_project(path)
 
 
+def test_infinite_dimensions_are_reported_as_invalid(tmp_path):
+    # JSON reads 1e400 as infinity.
+    path = tmp_path / "infini.manta"
+    with ZipFile(path, "w") as archive:
+        archive.writestr("manifest.json", '{"format": "MantaLayers", "version": 2, '
+                                          '"width": 1e400, "height": 10, "layers": []}')
+    with pytest.raises(ValueError):
+        open_project(path)
+
+
+def test_corrupted_compressed_image_is_reported_as_invalid(tmp_path):
+    document = Document(8, 8)
+    document.add_image_bytes(png_bytes(8, 8), "image")
+    path = tmp_path / "abime.manta"
+    save_project(document, path)
+    data = bytearray(path.read_bytes())
+    with ZipFile(path) as archive:
+        entry = next(info for info in archive.infolist() if info.filename.startswith("assets/"))
+    start = entry.header_offset + 30 + len(entry.filename) + len(entry.extra)
+    for index in range(start + 2, start + min(entry.compress_size, 40)):
+        data[index] ^= 0xFF
+    path.write_bytes(bytes(data))
+    with pytest.raises(ValueError):
+        open_project(path)
+
+
 def test_saves_use_the_current_version(tmp_path):
     path = tmp_path / "neuf.manta"
     save_project(Document(10, 10), path)
