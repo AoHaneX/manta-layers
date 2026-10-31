@@ -9,7 +9,7 @@ from math import atan2, cos, degrees, hypot, radians, sin
 from PIL import Image, ImageChops, ImageDraw
 from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QPointF, QRectF, Qt
 from PySide6.QtGui import (
-    QBrush, QColor, QFont, QFontDatabase, QFontMetricsF, QImage, QKeySequence, QPainter,
+    QBrush, QColor, QFont, QFontDatabase, QFontMetricsF, QImage, QPainter,
     QBitmap, QPainterPath, QPen, QPixmap, QRadialGradient, QRegion, QTransform,
 )
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
@@ -982,18 +982,9 @@ class CanvasView(QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
     def keyPressEvent(self, event):
-        if event.matches(QKeySequence.StandardKey.Copy):
-            self.window.copy_layer()
-            event.accept()
-            return
-        if event.matches(QKeySequence.StandardKey.Cut):
-            self.window.cut_layer()
-            event.accept()
-            return
-        if event.matches(QKeySequence.StandardKey.Paste):
-            self.window.paste_image()
-            event.accept()
-            return
+        # Copy, cut and paste are window actions whose shortcuts are handled before
+        # this event. Delete is also an action; it stays here, with its Backspace
+        # alias, for a canvas whose window is not shown (its shortcuts are inactive).
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             # With an active selection, Delete erases its content instead of the layer.
             self.window.delete_selection_or_layer()
