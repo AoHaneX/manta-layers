@@ -185,3 +185,15 @@ def test_closing_during_a_model_run_does_not_wait_for_it(tmp_path, qapp, monkeyp
     assert worker.wait(5000)
     qapp.processEvents()
     assert dialog.raw_mask is None  # the late result is discarded
+
+
+def test_unexpected_download_failure_is_not_reported_as_installed(tmp_path, monkeypatch):
+    from app.background_dialog import DownloadWorker
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(B, "download_model", broken)
+    worker = DownloadWorker("u2netp", tmp_path)
+    worker.run()  # synchronously: only the error handling is tested
+    assert worker.error and "boom" in worker.error

@@ -17,6 +17,7 @@ click is not supported: U²-Net models take no point prompt.
 """
 from __future__ import annotations
 
+import http.client
 import importlib.util
 import urllib.request
 from collections import Counter
@@ -205,7 +206,9 @@ def download_model(name: str, destination_dir: Path, progress: Progress | None =
     except BackgroundRemovalError:
         partial.unlink(missing_ok=True)
         raise
-    except OSError as exc:
+    # A malformed Content-Length raises ValueError; a truncated chunked response
+    # raises http.client.IncompleteRead, which is not an OSError.
+    except (OSError, ValueError, http.client.HTTPException) as exc:
         partial.unlink(missing_ok=True)
         raise BackgroundRemovalError(f"Téléchargement impossible : {exc}") from exc
     return target

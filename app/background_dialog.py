@@ -65,6 +65,8 @@ class DownloadWorker(QThread):
                                       lambda: self.cancel_requested)
         except background.BackgroundRemovalError as exc:
             self.error = str(exc)
+        except Exception as exc:  # never report an unexpected failure as an installed model
+            self.error = f"Erreur inattendue : {exc}"
 
 
 class BackgroundRemovalDialog(QDialog):
