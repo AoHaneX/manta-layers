@@ -1,9 +1,12 @@
 """Cas ciblés du pot de peinture ; à exécuter avec la suite à la demande."""
 import io
 import unittest
+from unittest import mock
+from uuid import uuid4
 
 from PIL import Image
 
+from app import graphics
 from app.graphics import _apply_color_fill, _eraser_dab, apply_eraser_strokes, render_layer_image
 
 
@@ -99,6 +102,51 @@ class ColorFillTests(unittest.TestCase):
         before = render_layer_image(output.getvalue(), {}, [fill], [stroke])
         self.assertEqual(before.getpixel((4, 0))[:3], (255, 0, 0))
         self.assertEqual(before.getpixel((2, 0))[3], 0)
+
+
+def _incremental_case():
+    image = Image.new("RGBA", (60, 40), (200, 30, 30, 255))
+    image.paste((30, 200, 30, 255), (20, 0, 40, 40))
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    strokes = [{"points": [[5 + i * 6, 5], [5 + i * 6, 35]], "size": 3, "shape": "square",
+                "pixel_art": True, "hardness": 100, "opacity": 60} for i in range(8)]
+    fills = [{"mode": "contiguous", "source": "#C81E1E", "target": "#0000FF", "x": 1, "y": 1,
+              "tolerance": 0, "preserve_shading": False, "after_strokes": 3},
+             {"mode": "global", "source": "#1EC81E", "target": "#FFFF00", "x": 0, "y": 0,
+              "tolerance": 10, "preserve_shading": True, "after_strokes": 6}]
+    return output.getvalue(), {"#C81E1E": "#C81E1F"}, fills, strokes
+
+
+class IncrementalRenderTests(unittest.TestCase):
+    def test_incremental_renders_match_full_renders(self):
+        contents, replacements, fills, strokes = _incremental_case()
+        key = uuid4().hex
+        for count in range(len(strokes) + 1):
+            # Strokes are added one at a time, as when the user erases.
+            fill_subset = [fill for fill in fills if fill["after_strokes"] <= count]
+            incremental = render_layer_image(contents, replacements, fill_subset, strokes[:count], cache_key=key)
+            full = render_layer_image(contents, replacements, fill_subset, strokes[:count])
+            self.assertEqual(incremental.tobytes(), full.tobytes(), count)
+
+    def test_a_new_stroke_only_replays_itself_and_undo_replays_nothing(self):
+        contents, replacements, fills, strokes = _incremental_case()
+        key = uuid4().hex
+        render_layer_image(contents, replacements, fills, strokes[:-1], cache_key=key)
+        with mock.patch.object(graphics, "_apply_operation", wraps=graphics._apply_operation) as replay:
+            render_layer_image(contents, replacements, fills, strokes, cache_key=key)
+            self.assertEqual(replay.call_count, 1)
+            render_layer_image(contents, replacements, fills, strokes[:-1], cache_key=key)
+            self.assertEqual(replay.call_count, 1)
+
+    def test_callers_cannot_alter_the_cached_render(self):
+        contents, replacements, fills, strokes = _incremental_case()
+        key = uuid4().hex
+        first = render_layer_image(contents, replacements, fills, strokes, cache_key=key)
+        expected = first.tobytes()
+        first.paste((0, 0, 0, 0), (0, 0, 60, 40))
+        self.assertEqual(render_layer_image(contents, replacements, fills, strokes, cache_key=key).tobytes(),
+                         expected)
 
 
 if __name__ == "__main__":
