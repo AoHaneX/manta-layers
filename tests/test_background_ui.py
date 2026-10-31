@@ -187,6 +187,18 @@ def test_closing_during_a_model_run_does_not_wait_for_it(tmp_path, qapp, monkeyp
     assert dialog.raw_mask is None  # the late result is discarded
 
 
+def test_colour_preview_uses_a_reduced_copy_but_applies_full_size(tmp_path, qapp):
+    image = Image.new("RGBA", (3000, 1500), (250, 250, 250, 255))
+    ImageDraw.Draw(image).rectangle((1000, 500, 1999, 999), fill=(20, 90, 200, 255))
+    dialog = BackgroundRemovalDialog(image, "Grand", has_mask=False, models_dir=tmp_path)
+    dialog.compute()
+    assert max(dialog.preview_mask.size) <= 1024 and dialog.raw_mask is None
+    assert dialog.apply_button.isEnabled()
+    mask = dialog.result_mask()
+    assert mask.size == image.size and mask.getbbox() == (1000, 500, 2000, 1000)
+    dialog.dispose()
+
+
 def test_unexpected_download_failure_is_not_reported_as_installed(tmp_path, monkeypatch):
     from app.background_dialog import DownloadWorker
 
