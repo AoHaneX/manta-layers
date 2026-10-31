@@ -18,7 +18,7 @@ except ImportError:  # PySide6 absent : seuls les tests sans interface s'exécut
 else:
     # Une erreur d'import dans l'application doit faire échouer la suite,
     # pas la faire passer pour « ignorée ».
-    from PySide6.QtCore import QMimeData, QPointF, QSettings, Qt, QUrl
+    from PySide6.QtCore import QMimeData, QPointF, QSettings, QSize, Qt, QUrl
     from PySide6.QtGui import QFont, QFontMetricsF, QImage
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QToolButton
@@ -322,6 +322,13 @@ class GuiSmokeTests(unittest.TestCase):
         win.commit_property("x")  # the field shows its maximum, not the real position
         self.assertEqual(win.undo_stack.count(), count)
         self.assertEqual(win.document.layer(layer.id).x, far)
+
+    def test_icons_are_drawn_for_high_density_screens(self):
+        from app.icons import layer_kind_icon
+        pixmap = layer_kind_icon("image")
+        self.assertGreaterEqual(pixmap.devicePixelRatio(), 2)
+        self.assertEqual(pixmap.deviceIndependentSize().toSize(), QSize(18, 18))
+
     def test_locked_layer_cannot_be_reordered_by_drag(self):
         win = self.make_window()
         document = Document(100, 100)
