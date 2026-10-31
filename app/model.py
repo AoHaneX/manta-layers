@@ -226,7 +226,7 @@ class Document:
     def __post_init__(self) -> None:
         try:
             width, height = int(self.width), int(self.height)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
             raise ValueError("Dimensions du document invalides") from exc
         if not (1 <= width <= MAX_DIMENSION and 1 <= height <= MAX_DIMENSION):
             raise ValueError("Dimensions du document hors limites")
