@@ -1,16 +1,31 @@
 """Pictogrammes vectoriels de l'interface, indépendants des emojis installés."""
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPainterPath, QPen, QPixmap
 
 from .theme import COLORS
 
 
+def _blank_pixmap(size: int) -> QPixmap:
+    """Transparent square drawn in logical pixels but stored at the screen density.
+
+    Without a device pixel ratio, icons are upscaled and blurred at 150 % or 200 %
+    display scaling. QPainter maps the logical coordinates used below automatically.
+    """
+    screen = QGuiApplication.primaryScreen()
+    ratio = max(2.0, math.ceil(screen.devicePixelRatio())) if screen is not None else 2.0
+    pixmap = QPixmap(round(size * ratio), round(size * ratio))
+    pixmap.setDevicePixelRatio(ratio)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    return pixmap
+
+
 def lock_icon(locked: bool) -> QIcon:
     """Cadenas vectoriel lisible, indépendant des emojis installés."""
-    pixmap = QPixmap(18, 18)
-    pixmap.fill(Qt.GlobalColor.transparent)
+    pixmap = _blank_pixmap(18)
     painter = QPainter(pixmap)
     # Sur l'état verrouillé, le bouton est cyan : le cadenas doit donc rester
     # bleu nuit pour conserver un contraste net au lieu de disparaître dans le fond.
@@ -27,8 +42,7 @@ def lock_icon(locked: bool) -> QIcon:
 
 def eye_icon(visible: bool) -> QIcon:
     """Icône de visibilité lisible sur les deux états du bouton."""
-    pixmap = QPixmap(18, 18)
-    pixmap.fill(Qt.GlobalColor.transparent)
+    pixmap = _blank_pixmap(18)
     painter = QPainter(pixmap)
     color = QColor(COLORS["background"] if visible else COLORS["muted"])
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -46,8 +60,7 @@ def eye_icon(visible: bool) -> QIcon:
 
 def layer_kind_icon(kind: str) -> QPixmap:
     """Pictogramme stable pour différencier image et texte sans dépendre d'un emoji."""
-    pixmap = QPixmap(18, 18)
-    pixmap.fill(Qt.GlobalColor.transparent)
+    pixmap = _blank_pixmap(18)
     painter = QPainter(pixmap)
     color = QColor(COLORS["muted"])
     painter.setPen(QPen(color, 1.6))
@@ -56,7 +69,7 @@ def layer_kind_icon(kind: str) -> QPixmap:
         font.setBold(True)
         font.setPixelSize(15)
         painter.setFont(font)
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "T")
+        painter.drawText(QRectF(0, 0, 18, 18), Qt.AlignmentFlag.AlignCenter, "T")
     else:
         painter.drawRoundedRect(QRectF(2, 3, 14, 12), 2, 2)
         painter.drawEllipse(QRectF(11, 5, 2, 2))
@@ -69,8 +82,7 @@ def layer_kind_icon(kind: str) -> QPixmap:
 
 def alignment_icon(alignment: str) -> QIcon:
     """Petite icône d'alignement indépendante de la police du système."""
-    pixmap = QPixmap(20, 20)
-    pixmap.fill(Qt.GlobalColor.transparent)
+    pixmap = _blank_pixmap(20)
     painter = QPainter(pixmap)
     painter.setPen(QPen(QColor(COLORS["muted"]), 1.8))
     widths = (13, 9, 13, 7)
@@ -89,8 +101,7 @@ def alignment_icon(alignment: str) -> QIcon:
 
 def sidebar_arrow_icon(points_right: bool) -> QIcon:
     """Flèche vectorielle nette pour la languette du panneau gauche."""
-    pixmap = QPixmap(18, 18)
-    pixmap.fill(Qt.GlobalColor.transparent)
+    pixmap = _blank_pixmap(18)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     pen = QPen(QColor(COLORS["background"]), 2.6)
@@ -109,8 +120,7 @@ def sidebar_arrow_icon(points_right: bool) -> QIcon:
 
 def history_arrow_icon(redo: bool) -> QIcon:
     """Flèche d'historique courbe et antialiasée."""
-    pixmap = QPixmap(24, 24)
-    pixmap.fill(Qt.GlobalColor.transparent)
+    pixmap = _blank_pixmap(24)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     color = QColor(COLORS["muted"])
@@ -143,8 +153,7 @@ def history_arrow_icon(redo: bool) -> QIcon:
 
 def color_tool_icon(tool: str) -> QIcon:
     """Dessine les outils couleur sans dépendre des emojis du système."""
-    pixmap = QPixmap(20, 20)
-    pixmap.fill(Qt.GlobalColor.transparent)
+    pixmap = _blank_pixmap(20)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     color = QColor(COLORS["muted"])
