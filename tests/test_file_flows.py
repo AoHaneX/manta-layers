@@ -254,6 +254,24 @@ def test_template_vanished_from_the_new_project_gallery_is_reported(window, monk
     assert dialog.gallery.count() == 0
 
 
+def test_tool_dialogs_are_deleted_after_use(window, monkeypatch):
+    from PySide6.QtCore import QEvent, QTimer
+
+    from app.sprite_dialog import SpriteSheetDialog
+    from app.template_library import TemplateLibraryDialog
+    from app.token_dialog import TokenDialog
+
+    def close_soon():
+        QTimer.singleShot(0, lambda: QApplication.activeModalWidget().reject())
+
+    for opener in (window.open_token_creator, window.open_sprite_slicer, window.open_template_library):
+        close_soon()
+        opener()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)  # deleteLater
+    for kind in (TokenDialog, SpriteSheetDialog, TemplateLibraryDialog):
+        assert window.findChildren(kind) == []
+
+
 def test_project_images_are_stored_without_recompression(tmp_path):
     from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
     document = Document(20, 20)
