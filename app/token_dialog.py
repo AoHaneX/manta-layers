@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PIL import Image, UnidentifiedImageError
-from PySide6.QtCore import QPointF, QSize, Qt, QTimer
+from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -245,19 +245,24 @@ class TokenDialog(QDialog):
     # --- Output ------------------------------------------------------------------------------
 
     def update_preview(self) -> None:
-        canvas = QPixmap(PREVIEW, PREVIEW)
+        # Drawn at the screen density (sharp at 150 %); the painter works in logical pixels.
+        ratio = self.preview.devicePixelRatioF()
+        pixels = round(PREVIEW * ratio)
+        canvas = QPixmap(pixels, pixels)
+        canvas.setDevicePixelRatio(ratio)
+        area = QRect(0, 0, PREVIEW, PREVIEW)
         painter = QPainter(canvas)
-        painter.fillRect(canvas.rect(), checker_brush())
+        painter.fillRect(area, checker_brush())
         if self.source is not None:
             try:
-                token = render_token(self.source, self.settings(PREVIEW))
-                painter.drawImage(0, 0, pil_to_qimage(token))
+                token = render_token(self.source, self.settings(pixels))
+                painter.drawImage(QRectF(area), pil_to_qimage(token))
             except ValueError as exc:
                 painter.setPen(QColor(COLORS["danger"]))
-                painter.drawText(canvas.rect(), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, str(exc))
+                painter.drawText(area, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, str(exc))
         else:
             painter.setPen(QColor(COLORS["background"]))
-            painter.drawText(canvas.rect(), Qt.AlignmentFlag.AlignCenter, "Choisissez une illustration")
+            painter.drawText(area, Qt.AlignmentFlag.AlignCenter, "Choisissez une illustration")
         painter.end()
         self.preview.setPixmap(canvas)
         has_source = self.source is not None

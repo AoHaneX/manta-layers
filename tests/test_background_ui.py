@@ -299,3 +299,24 @@ def test_ai_preview_is_applied_without_recomputation(tmp_path, qapp, monkeypatch
     dialog.accept()
     assert dialog.worker is None and dialog.result() == QDialog.DialogCode.Accepted
     dialog.dispose()
+
+
+@pytest.mark.parametrize("ratio", [1.0, 1.5, 2.0])
+def test_preview_is_drawn_at_the_screen_density(tmp_path, qapp, monkeypatch, ratio):
+    from PySide6.QtWidgets import QLabel
+    shown = []
+    original = QLabel.setPixmap
+    monkeypatch.setattr(QLabel, "devicePixelRatioF", lambda _label: ratio)  # emulates 100/150/200 %
+    # QLabel.pixmap() is converted to the label's real density: record what is given.
+    monkeypatch.setattr(QLabel, "setPixmap", lambda label, pixmap: (shown.append(pixmap), original(label, pixmap)))
+    dialog = make_dialog(tmp_path, qapp)
+    dialog.compute()
+    pixmap = shown[-1]
+    width, height = background_dialog.PREVIEW_SIZE
+    assert pixmap.devicePixelRatio() == ratio
+    assert (pixmap.width(), pixmap.height()) == (round(width * ratio), round(height * ratio))
+    assert pixmap.deviceIndependentSize().toSize().width() == width
+    # The image is drawn at full resolution: its centre is the subject, not the checkerboard.
+    centre = pixmap.toImage().pixelColor(pixmap.width() // 2, pixmap.height() // 2)
+    assert (centre.red(), centre.green(), centre.blue()) == (20, 90, 200)
+    dialog.dispose()
