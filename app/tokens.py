@@ -7,7 +7,7 @@ drawing at four times the size, then reducing.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import cos, pi, sin
+from math import ceil, cos, floor, pi, sin
 
 from PIL import Image, ImageChops, ImageDraw
 
@@ -76,17 +76,50 @@ def supersampling(size: int) -> int:
 
 def _portrait(image: Image.Image, settings: TokenSettings, big: int) -> Image.Image:
     """Portrait scaled to cover the token, zoomed and shifted, on a transparent square."""
-    source = image.convert("RGBA")
+    source = image if image.mode == "RGBA" else image.convert("RGBA")
     scale = max(big / source.width, big / source.height) * settings.zoom
     width, height = max(1, round(source.width * scale)), max(1, round(source.height * scale))
     resample = Image.Resampling.NEAREST if settings.pixel_art else Image.Resampling.LANCZOS
-    scaled = source.resize((width, height), resample)
-    canvas = Image.new("RGBA", (big, big), (0, 0, 0, 0))
     factor = big / settings.size
     left = round((big - width) / 2 + settings.offset_x * factor)
     top = round((big - height) / 2 + settings.offset_y * factor)
-    canvas.paste(scaled, (left, top))  # a plain copy: the canvas is transparent, alpha stays exact
+    # Only the part of the scaled portrait that lands on the canvas is computed: memory
+    # stays proportional to big² whatever the source size, aspect ratio or zoom.
+    region = (max(0, -left), max(0, -top), min(width, big - left), min(height, big - top))
+    if region[2] <= region[0] or region[3] <= region[1]:
+        return Image.new("RGBA", (big, big), (0, 0, 0, 0))  # the portrait was moved out of the token
+    visible = _resized_region(source, (width, height), region, resample)
+    if visible.size == (big, big):
+        return visible  # the portrait covers the whole square
+    canvas = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    canvas.paste(visible, (left + region[0], top + region[1]))  # plain copy: alpha stays exact
     return canvas
+
+
+def _resized_region(source: Image.Image, size: tuple[int, int], region: tuple[int, int, int, int],
+                    resample: Image.Resampling) -> Image.Image:
+    """``source.resize(size, resample).crop(region)`` without computing the rest of the resized image."""
+    (width, height), (x0, y0, x1, y1) = size, region
+    scale_x, scale_y = source.width / width, source.height / height  # source pixels per resized pixel
+    if resample == Image.Resampling.NEAREST:
+        # One affine pass with double precision coefficients (a resize box is single precision).
+        # Only pixel centres falling exactly between two source pixels may pick the other one.
+        return source.transform((x1 - x0, y1 - y0), Image.Transform.AFFINE,
+                                (scale_x, 0, x0 * scale_x, 0, scale_y, y0 * scale_y), resample)
+    # Source coordinates of the region; multiplying first keeps the far edges exact.
+    left, right = x0 * source.width / width, x1 * source.width / width
+    top, bottom = y0 * source.height / height, y1 * source.height / height
+    # Only the source rows read by the vertical filter are used (Lanczos support: 3 source
+    # pixels, wider when reducing), with a margin so no filter window is clipped by the crop.
+    support = 3 * max(1.0, scale_y) + 2
+    first, last = max(0, floor(top - support)), min(source.height, ceil(bottom + support))
+    # Same premultiplied space as Image.resize, kept across both passes. The passes are
+    # separate on purpose: Pillow 13 gives different pixels when a single call combines
+    # a horizontal pass with a vertical box offset.
+    rows = source.crop((0, first, source.width, last)).convert("RGBa")
+    rows = rows.resize((x1 - x0, last - first), resample, box=(left, 0, right, last - first))
+    rows = rows.resize((x1 - x0, y1 - y0), resample, box=(0, top - first, x1 - x0, bottom - first))
+    return rows.convert("RGBA")
 
 
 def render_token(image: Image.Image, settings: TokenSettings) -> Image.Image:
@@ -99,8 +132,9 @@ def render_token(image: Image.Image, settings: TokenSettings) -> Image.Image:
     color = _rgb(settings.border_color)
     portrait = _portrait(image, settings, big)
     inner = _shape_mask(big, width * 0.5, square)
-    # Colours stay straight (not premultiplied): only the alpha is cut by the frame.
-    token = portrait.copy()
+    # Colours stay straight (not premultiplied): only the alpha is cut by the frame. The
+    # portrait is a new image, changed in place to spare a big² copy.
+    token = portrait
     token.putalpha(ImageChops.multiply(portrait.getchannel("A"), inner))
     if width > 0:
         ring = Image.new("RGBA", (big, big), (*color, 255))
@@ -118,6 +152,8 @@ def render_token(image: Image.Image, settings: TokenSettings) -> Image.Image:
                 draw.ellipse(box, outline=(*_darker(color), 255), width=line)
         if settings.frame == "decorative":
             _decorate(draw, big, width, color, square)
+    if token.size == (settings.size, settings.size):
+        return token  # not supersampled (large tokens): resizing would only copy it
     return token.resize((settings.size, settings.size), Image.Resampling.LANCZOS)
 
 
