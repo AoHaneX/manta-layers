@@ -2786,6 +2786,8 @@ class MainWindow(QMainWindow):
         return True
 
     def _screen_pick_done(self, color: str | None, target: str, text_layer_id: str | None):
+        if self._screen_picker is not None:
+            self._screen_picker.deleteLater()  # one picker per use, never kept by the window
         self._screen_picker = None
         if color is None:
             self.statusBar().showMessage("Pipette écran annulée", 2500)
