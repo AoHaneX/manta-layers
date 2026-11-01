@@ -1,5 +1,6 @@
 """Tests de sérialisation de la bibliothèque locale de modèles."""
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from PIL import Image
 from app.model import Document
 from app.storage import open_project
 from app.templates import (
+    MAX_THUMBNAIL_BYTES,
     delete_template,
     duplicate_template,
     instantiate_template,
@@ -78,6 +80,31 @@ class TemplateTests(unittest.TestCase):
             (Path(tmp) / "illisible.manta").write_bytes(b"pas un zip")
             with self.assertRaises(ValueError):
                 read_template_info(Path(tmp) / "infini.manta")
+            self.assertEqual([item.name for item in list_templates(tmp)], ["Valide"])
+
+    def test_a_large_thumbnail_survives_rename_and_duplicate(self):
+        thumbnail = bytes(range(256)) * (5 * 1024 * 4)  # 5 MiB, above what the gallery loads
+        self.assertGreater(len(thumbnail), MAX_THUMBNAIL_BYTES)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = save_template(Document(320, 200), "Grande miniature", thumbnail, tmp)
+            self.assertIsNone(read_template_info(path).thumbnail)
+            rename_template(path, "Renommé")
+            copy = duplicate_template(path, tmp)
+            for template in (path, copy):
+                with ZipFile(template) as archive:
+                    self.assertEqual(archive.read("thumbnail.png"), thumbnail)
+            self.assertEqual(read_template_info(copy).name, "Renommé (copie)")
+
+    def test_templates_with_impossible_dimensions_are_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            save_template(Document(320, 200), "Valide", None, tmp)
+            for name, width, height in (("negatif", -5, 10), ("nul", 0, 10), ("immense", 10, 10 ** 12),
+                                        ("trop_large", 16385, 10)):
+                with ZipFile(Path(tmp) / f"{name}.manta", "w") as archive:
+                    archive.writestr("manifest.json", json.dumps(
+                        {"format": "MantaLayers", "version": 2, "width": width, "height": height, "layers": []}))
+                with self.assertRaises(ValueError):
+                    read_template_info(Path(tmp) / f"{name}.manta")
             self.assertEqual([item.name for item in list_templates(tmp)], ["Valide"])
 
 

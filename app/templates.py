@@ -24,6 +24,11 @@ from .storage import open_project, read_manifest, save_project
 TEMPLATE_KINDS = ("preset", "elements")
 # Thumbnails are small previews; a larger entry is ignored rather than loaded.
 MAX_THUMBNAIL_BYTES = 4 * 1024 * 1024
+# Renaming or duplicating copies the thumbnail as stored, within this wider limit.
+MAX_COPIED_THUMBNAIL_BYTES = 64 * 1024 * 1024
+# Errors of a damaged or unexpected archive, turned into "invalid template".
+_READ_ERRORS = (BadZipFile, KeyError, ValueError, TypeError, OverflowError, UnicodeDecodeError,
+                json.JSONDecodeError, zlib.error, NotImplementedError, RuntimeError, EOFError, OSError)
 
 
 @dataclass(frozen=True)
@@ -65,11 +70,30 @@ def read_template_info(path: str | Path) -> TemplateInfo:
                     thumbnail = archive.read("thumbnail.png")
         name = str(metadata.get("name") or path.stem).strip() or path.stem
         kind = str(metadata.get("kind")) if metadata.get("kind") in TEMPLATE_KINDS else "preset"
-        return TemplateInfo(path, name, int(manifest["width"]), int(manifest["height"]), thumbnail, kind)
-    except (BadZipFile, KeyError, ValueError, TypeError, OverflowError, UnicodeDecodeError,
-            json.JSONDecodeError, zlib.error, NotImplementedError, RuntimeError, EOFError,
-            OSError) as exc:
+        width, height = int(manifest["width"]), int(manifest["height"])
+        # A template that could not be instantiated must not appear in the gallery.
+        if not (1 <= width <= MAX_DIMENSION and 1 <= height <= MAX_DIMENSION):
+            raise ValueError(f"Dimensions hors limites : {width} × {height}")
+        return TemplateInfo(path, name, width, height, thumbnail, kind)
+    except _READ_ERRORS as exc:
         raise ValueError(f"Modèle invalide : {path.name}") from exc
+
+
+def _stored_thumbnail(info: TemplateInfo) -> bytes | None:
+    """Thumbnail entry as stored in the template, even one too large for the gallery.
+
+    Falls back to what ``read_template_info`` loaded when the entry cannot be read.
+    """
+    try:
+        with ZipFile(info.path) as archive:
+            if "thumbnail.png" not in archive.namelist():
+                return None
+            entry = archive.getinfo("thumbnail.png")
+            if entry.file_size > MAX_COPIED_THUMBNAIL_BYTES:
+                return info.thumbnail
+            return archive.read(entry)
+    except _READ_ERRORS:
+        return info.thumbnail
 
 
 def list_templates(directory: str | Path | None = None, kind: str = "preset") -> list[TemplateInfo]:
@@ -106,12 +130,12 @@ def save_template(
 def rename_template(path: str | Path, name: str) -> None:
     info = read_template_info(path)
     document = open_project(info.path)
-    save_template(document, name, info.thumbnail, destination=info.path, kind=info.kind)
+    save_template(document, name, _stored_thumbnail(info), destination=info.path, kind=info.kind)
 
 
 def duplicate_template(path: str | Path, directory: str | Path | None = None) -> Path:
     info = read_template_info(path)
-    return save_template(open_project(info.path), f"{info.name} (copie)", info.thumbnail, directory,
+    return save_template(open_project(info.path), f"{info.name} (copie)", _stored_thumbnail(info), directory,
                          kind=info.kind)
 
 
