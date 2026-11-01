@@ -1716,7 +1716,12 @@ class CanvasView(QGraphicsView):
         self.main_window.update_zoom()
 
     def wheelEvent(self, event):
-        self.zoom_by(1.15 if event.angleDelta().y() > 0 else 1 / 1.15)
+        steps = event.angleDelta().y() / 120  # one notch of a classic wheel
+        if not steps:
+            super().wheelEvent(event)  # tilted wheel or Shift+wheel: horizontal scrolling
+            return
+        # Touchpads and fine wheels send small steps: zoom in proportion.
+        self.zoom_by(1.15 ** steps)
         event.accept()
 
     def fit_document(self):
