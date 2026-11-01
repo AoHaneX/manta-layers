@@ -61,7 +61,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import __version__, background, background_dialog, selection
+from . import __version__, background, background_dialog, export, selection
 from .background_dialog import BackgroundRemovalDialog
 from .dialogs import NewProjectDialog, ResizeDocumentDialog
 from .graphics import (
@@ -74,6 +74,7 @@ from .graphics import (
     merge_changes_appearance,
     pil_to_qimage,
     qimage_png,
+    qimage_to_pil,
     render_document,
     render_layer_image,
     render_layer_with_mask,
@@ -83,7 +84,7 @@ from .graphics import (
 from .icons import alignment_icon, color_tool_icon, history_arrow_icon, sidebar_arrow_icon
 from .imaging import alpha_bounds
 from .layer_panel import FOLDER_ROLE, build_folder_row, build_layer_row, set_row_checked
-from .model import ASSET_FORMATS, MAX_DIMENSION, Document, Layer, new_id
+from .model import ASSET_FORMATS, MAX_DIMENSION, MAX_DOCUMENT_PIXELS, Document, Layer, new_id
 from .paths import safe_file_stem, user_data_directory
 from .screen_picker import ScreenColorPicker
 from .selection import COMBINE_LABELS, COMBINE_MODES
@@ -3522,31 +3523,13 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Enregistrement du modèle impossible", str(exc))
 
     def export_image(self):
-        path, filter_ = QFileDialog.getSaveFileName(self, "Exporter l'image",
-                                                    self.initial_path("export", f"{self._file_stem()}.png"),
-                                                    "PNG (*.png);;JPEG (*.jpg);;WebP (*.webp)")
-        if not path:
+        if self.document.width * self.document.height > MAX_DOCUMENT_PIXELS:
+            QMessageBox.critical(self, "Export impossible",
+                                 f"Document trop grand pour l'export (> {MAX_DOCUMENT_PIXELS // 1_000_000} "
+                                 "millions de pixels). Réduisez ses dimensions.")
             return
-        dest = Path(path)
-        self.remember_directory("export", dest.parent)
-        if dest.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
-            dest = dest.with_suffix(".jpg" if "JPEG" in filter_ else ".webp" if "WebP" in filter_ else ".png")
-        try:
-            if self.document.width * self.document.height > 120_000_000:
-                raise ValueError("Document trop grand pour l'export (> 120 millions de pixels)")
-            image = Image.open(BytesIO(qimage_png(render_document(self.document)))).convert("RGBA")
-            extension = dest.suffix.lower()
-            if extension in (".jpg", ".jpeg"):
-                base = Image.new("RGB", image.size, (255, 255, 255))
-                base.paste(image, mask=image.getchannel("A"))
-                base.save(dest, format="JPEG", quality=95)
-            elif extension == ".webp":
-                image.save(dest, format="WEBP", quality=95, method=4)
-            else:
-                image.save(dest, format="PNG", optimize=True)
-            self.statusBar().showMessage(f"Export terminé : {dest}", 6000)
-        except Exception as exc:
-            QMessageBox.critical(self, "Export impossible", str(exc))
+        self._export(f"{self._file_stem()}.png", "Exporter l'image",
+                     lambda: qimage_to_pil(render_document(self.document)), "Export terminé", "Export impossible")
 
     def export_selected_layer(self):
         layer = self.document.layer(self.selected_id)
@@ -3554,32 +3537,33 @@ class MainWindow(QMainWindow):
         if not layer or layer.kind != "image" or item is None:
             self.statusBar().showMessage("Sélectionnez un calque image à enregistrer", 3000)
             return
-        safe_name = safe_file_stem(layer.name, "Calque")
-        path, filter_ = QFileDialog.getSaveFileName(
-            self, "Enregistrer le calque sous", self.initial_path("export", f"{safe_name}.png"),
-            "PNG (*.png);;JPEG (*.jpg);;WebP (*.webp)"
-        )
+        self._export(f"{safe_file_stem(layer.name, 'Calque')}.png", "Enregistrer le calque sous",
+                     lambda: qimage_to_pil(item.pixmap().toImage()), "Calque enregistré",
+                     "Enregistrement du calque impossible")
+
+    def _export(self, filename: str, title: str, render, done: str, failed: str) -> Path | None:
+        """Ask where to save, then write the rendered image; the folder is remembered."""
+        path, chosen_filter = QFileDialog.getSaveFileName(
+            self, title, self.initial_path("export", filename), export.FILE_FILTERS)
         if not path:
-            return
-        destination = Path(path)
-        self.remember_directory("export", destination.parent)
-        if destination.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
-            destination = destination.with_suffix(
-                ".jpg" if "JPEG" in filter_ else ".webp" if "WebP" in filter_ else ".png"
-            )
+            return None
+        chosen = Path(path)
+        self.remember_directory("export", chosen.parent)
+        destination = export.with_image_suffix(chosen, chosen_filter)
+        # The file dialog only confirmed overwriting the name typed, not the completed one.
+        if destination != chosen and destination.exists():
+            answer = QMessageBox.question(
+                self, title, f"{destination.name} existe déjà. Le remplacer ?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return None
         try:
-            image = Image.open(BytesIO(qimage_png(item.pixmap().toImage()))).convert("RGBA")
-            if destination.suffix.lower() in (".jpg", ".jpeg"):
-                background = Image.new("RGB", image.size, (255, 255, 255))
-                background.paste(image, mask=image.getchannel("A"))
-                background.save(destination, format="JPEG", quality=95)
-            elif destination.suffix.lower() == ".webp":
-                image.save(destination, format="WEBP", quality=95, method=4)
-            else:
-                image.save(destination, format="PNG", optimize=True)
-            self.statusBar().showMessage(f"Calque enregistré : {destination}", 5000)
+            export.save_image(render(), destination)
         except Exception as exc:
-            QMessageBox.critical(self, "Enregistrement du calque impossible", str(exc))
+            QMessageBox.critical(self, failed, str(exc))
+            return None
+        self.statusBar().showMessage(f"{done} : {destination}", 6000)
+        return destination
 
     @staticmethod
     def _changes_document(command) -> bool:
