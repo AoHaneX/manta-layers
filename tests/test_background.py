@@ -1,6 +1,9 @@
 """Local background removal, tested with synthetic images and fake models only."""
+import dataclasses
+import hashlib
 import http.client
 import io
+import re
 
 import pytest
 from PIL import Image, ImageDraw
@@ -122,9 +125,11 @@ class _BrokenShape(FakeSession):
 
 
 class FakeResponse(io.BytesIO):
-    def __init__(self, data, announced=None):
+    def __init__(self, data, announced=None, final_url=None, length_header=True):
         super().__init__(data)
-        self.headers = {"Content-Length": str(len(data) if announced is None else announced)}
+        self.headers = {"Content-Length": str(len(data) if announced is None else announced)}             if length_header else {}
+        if final_url is not None:
+            self.geturl = lambda: final_url
 
     def __enter__(self):
         return self
@@ -133,13 +138,86 @@ class FakeResponse(io.BytesIO):
         self.close()
 
 
-def test_download_writes_the_model_atomically(tmp_path):
+FAKE_MODEL = b"onnx" * 1000
+
+
+@pytest.fixture
+def fake_digest(monkeypatch):
+    """Pin u2netp to the digest of the fake model served by the tests."""
+    spec = dataclasses.replace(B.KNOWN_MODELS["u2netp"], digest="md5:" + hashlib.md5(FAKE_MODEL).hexdigest())
+    monkeypatch.setitem(B.KNOWN_MODELS, "u2netp", spec)
+    return spec
+
+
+def test_known_models_pin_a_digest():
+    for spec in B.KNOWN_MODELS.values():
+        assert re.fullmatch(r"md5:[0-9a-f]{32}", spec.digest)
+
+
+def test_download_writes_the_model_atomically(tmp_path, fake_digest):
     seen = []
     path = B.download_model("u2netp", tmp_path, lambda _m, p: seen.append(p),
-                            opener=lambda url, timeout: (seen.append(url), FakeResponse(b"onnx" * 1000))[1])
-    assert path.read_bytes() == b"onnx" * 1000
+                            opener=lambda url, timeout: (seen.append(url), FakeResponse(FAKE_MODEL))[1])
+    assert path.read_bytes() == FAKE_MODEL
     assert seen[0].endswith("/u2netp.onnx") and seen[-1] == 100
     assert not list(tmp_path.glob("*.part"))
+
+
+def test_download_with_another_digest_is_refused(tmp_path):
+    # The real u2netp digest cannot match the fake model.
+    with pytest.raises(B.BackgroundRemovalError, match="empreinte"):
+        B.download_model("u2netp", tmp_path, opener=lambda url, timeout: FakeResponse(FAKE_MODEL))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_without_digest_skips_the_check(tmp_path, monkeypatch):
+    monkeypatch.setitem(B.KNOWN_MODELS, "u2netp", dataclasses.replace(B.KNOWN_MODELS["u2netp"], digest=None))
+    path = B.download_model("u2netp", tmp_path, opener=lambda url, timeout: FakeResponse(b"other"))
+    assert path.read_bytes() == b"other"
+
+
+def test_redirect_to_https_is_accepted(tmp_path, fake_digest):
+    final = "https://objects.githubusercontent.com/github-production-release-asset/u2netp.onnx"
+    path = B.download_model("u2netp", tmp_path,
+                            opener=lambda url, timeout: FakeResponse(FAKE_MODEL, final_url=final))
+    assert path.read_bytes() == FAKE_MODEL
+
+
+@pytest.mark.parametrize("final", ["http://example.com/u2netp.onnx", "ftp://example.com/u2netp.onnx"])
+def test_final_address_must_be_https(tmp_path, fake_digest, final):
+    with pytest.raises(B.BackgroundRemovalError, match="non sécurisée"):
+        B.download_model("u2netp", tmp_path, opener=lambda url, timeout: FakeResponse(FAKE_MODEL, final_url=final))
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("length_header", [True, False])
+def test_oversized_downloads_are_refused(tmp_path, monkeypatch, length_header):
+    # 0.001 MB x 1.2 allows 1258 bytes: the 4000-byte stream is too long,
+    # whether announced or not.
+    spec = dataclasses.replace(B.KNOWN_MODELS["u2netp"], download_size_mb=0.001, digest=None)
+    monkeypatch.setitem(B.KNOWN_MODELS, "u2netp", spec)
+    with pytest.raises(B.BackgroundRemovalError, match="plus gros que prévu"):
+        B.download_model("u2netp", tmp_path,
+                         opener=lambda url, timeout: FakeResponse(FAKE_MODEL, length_header=length_header))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_within_the_size_margin_is_accepted(tmp_path, monkeypatch):
+    spec = dataclasses.replace(B.KNOWN_MODELS["u2netp"], download_size_mb=4000 / 1_048_576 / 1.15, digest=None)
+    monkeypatch.setitem(B.KNOWN_MODELS, "u2netp", spec)
+    path = B.download_model("u2netp", tmp_path,
+                            opener=lambda url, timeout: FakeResponse(FAKE_MODEL, length_header=False))
+    assert path.stat().st_size == 4000
+
+
+def test_failing_progress_callback_leaves_no_partial_file(tmp_path, fake_digest):
+    def broken_progress(_message, _percent):
+        raise RuntimeError("interface closed")
+
+    with pytest.raises(RuntimeError):
+        B.download_model("u2netp", tmp_path, broken_progress,
+                         opener=lambda url, timeout: FakeResponse(FAKE_MODEL))
+    assert list(tmp_path.iterdir()) == []
 
 
 class TruncatedResponse(FakeResponse):

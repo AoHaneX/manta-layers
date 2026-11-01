@@ -17,8 +17,11 @@ click is not supported: U²-Net models take no point prompt.
 """
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import http.client
 import importlib.util
+import urllib.parse
 import urllib.request
 from collections import Counter
 from dataclasses import dataclass
@@ -46,17 +49,28 @@ class ModelSpec:
     mean: tuple[float, float, float]
     std: tuple[float, float, float]
     download_size_mb: float
+    # "algorithm:hexdigest" of the published file; None skips the check.
+    digest: str | None = None
 
 
-# Pre-processing of the models published with rembg (same normalisation).
+# Pre-processing of the models published with rembg (same normalisation). The
+# digests are the ones rembg itself pins for these release files, see
+# https://github.com/danielgatis/rembg/tree/main/rembg/sessions (u2netp.py,
+# u2net.py, u2net_human_seg.py, dis_general_use.py).
 KNOWN_MODELS = {
-    "u2netp": ModelSpec("u2netp", "U²-Net léger", 320, (0.485, 0.456, 0.406), (0.229, 0.224, 0.225), 4.6),
-    "u2net": ModelSpec("u2net", "U²-Net", 320, (0.485, 0.456, 0.406), (0.229, 0.224, 0.225), 176),
+    "u2netp": ModelSpec("u2netp", "U²-Net léger", 320, (0.485, 0.456, 0.406), (0.229, 0.224, 0.225), 4.6,
+                        "md5:8e83ca70e441ab06c318d82300c84806"),
+    "u2net": ModelSpec("u2net", "U²-Net", 320, (0.485, 0.456, 0.406), (0.229, 0.224, 0.225), 176,
+                       "md5:60024c5c889badc19c04ad937298a77b"),
     "u2net_human_seg": ModelSpec("u2net_human_seg", "U²-Net personnes", 320,
-                                 (0.485, 0.456, 0.406), (0.229, 0.224, 0.225), 176),
+                                 (0.485, 0.456, 0.406), (0.229, 0.224, 0.225), 176,
+                                 "md5:c09ddc2e0104f800e3e1bb4652583d1f"),
     "isnet-general-use": ModelSpec("isnet-general-use", "IS-Net généraliste", 1024,
-                                   (0.5, 0.5, 0.5), (1.0, 1.0, 1.0), 179),
+                                   (0.5, 0.5, 0.5), (1.0, 1.0, 1.0), 179,
+                                   "md5:fc16ebd8b0c10d971d3513d564d01e29"),
 }
+# A download may exceed the announced size by this factor, never more.
+DOWNLOAD_SIZE_MARGIN = 1.2
 DEFAULT_DOWNLOAD = "u2netp"
 
 
@@ -175,37 +189,73 @@ def preview(image: Image.Image, mask: Image.Image) -> Image.Image:
     return selection.apply_alpha(image, mask)
 
 
+def _hasher(digest: str | None):
+    """Hash object for an "algorithm:hexdigest" string, or None without a digest."""
+    if digest is None:
+        return None
+    algorithm, _, _expected = digest.partition(":")
+    # The digest checks integrity against a pinned value; it is not used as a
+    # security primitive, which keeps MD5 available on FIPS-restricted builds.
+    return hashlib.new(algorithm, usedforsecurity=False)
+
+
 def download_model(name: str, destination_dir: Path, progress: Progress | None = None,
                    cancelled: Callable[[], bool] = lambda: False, opener=urllib.request.urlopen) -> Path:
-    """Download a known model. Only call this after the user explicitly agreed."""
+    """Download a known model. Only call this after the user explicitly agreed.
+
+    The file is written to a ``.part`` file, checked (final HTTPS address, size
+    limit, digest) and only then renamed; the ``.part`` file never survives a
+    failure, whatever the exception.
+    """
     if name not in KNOWN_MODELS:
         raise BackgroundRemovalError(f"Modèle inconnu : {name}")
+    spec = KNOWN_MODELS[name]
     progress = progress or (lambda _message, _percent: None)
     destination_dir = Path(destination_dir)
     destination_dir.mkdir(parents=True, exist_ok=True)
     target = destination_dir / f"{name}.onnx"
     partial = target.with_suffix(".onnx.part")
     url = MODEL_RELEASE_URL.format(name=name)
+    limit = int(spec.download_size_mb * DOWNLOAD_SIZE_MARGIN * 1_048_576)
     try:
-        with opener(url, timeout=30) as response, open(partial, "wb") as output:
-            total = int(response.headers.get("Content-Length") or 0)
-            received = 0
-            while chunk := response.read(256 * 1024):
-                if cancelled():
-                    raise BackgroundRemovalError("Téléchargement annulé")
-                output.write(chunk)
-                received += len(chunk)
-                percent = int(received * 100 / total) if total else 0
-                progress(f"{received / 1_048_576:.1f} Mo reçus", percent)
-        if total and received != total:
-            raise BackgroundRemovalError("Téléchargement incomplet")
-        partial.replace(target)
-    except BackgroundRemovalError:
-        partial.unlink(missing_ok=True)
-        raise
-    # A malformed Content-Length raises ValueError; a truncated chunked response
-    # raises http.client.IncompleteRead, which is not an OSError.
-    except (OSError, ValueError, http.client.HTTPException) as exc:
-        partial.unlink(missing_ok=True)
-        raise BackgroundRemovalError(f"Téléchargement impossible : {exc}") from exc
+        try:
+            hasher = _hasher(spec.digest)
+            with opener(url, timeout=30) as response:
+                # Redirections are followed: the final address must still be HTTPS.
+                final_url = response.geturl() if hasattr(response, "geturl") else url
+                if urllib.parse.urlsplit(final_url).scheme.lower() != "https":
+                    raise BackgroundRemovalError(f"Adresse de téléchargement non sécurisée : {final_url}")
+                total = int(response.headers.get("Content-Length") or 0)
+                if total > limit:
+                    raise BackgroundRemovalError("Fichier plus gros que prévu : téléchargement refusé")
+                received = 0
+                with open(partial, "wb") as output:
+                    while chunk := response.read(256 * 1024):
+                        if cancelled():
+                            raise BackgroundRemovalError("Téléchargement annulé")
+                        received += len(chunk)
+                        if received > limit:
+                            raise BackgroundRemovalError("Fichier plus gros que prévu : téléchargement interrompu")
+                        output.write(chunk)
+                        if hasher is not None:
+                            hasher.update(chunk)
+                        percent = int(received * 100 / total) if total else 0
+                        progress(f"{received / 1_048_576:.1f} Mo reçus", percent)
+            if total and received != total:
+                raise BackgroundRemovalError("Téléchargement incomplet")
+            if hasher is not None and hasher.hexdigest() != (spec.digest or "").partition(":")[2].lower():
+                raise BackgroundRemovalError(
+                    "Le fichier téléchargé ne correspond pas au modèle attendu (empreinte différente) : "
+                    "il n'a pas été installé"
+                )
+            partial.replace(target)
+        # A malformed Content-Length raises ValueError; a truncated chunked
+        # response raises http.client.IncompleteRead, which is not an OSError.
+        except (OSError, ValueError, http.client.HTTPException) as exc:
+            raise BackgroundRemovalError(f"Téléchargement impossible : {exc}") from exc
+    finally:
+        # Any failure, including one raised by the progress callback, leaves no
+        # partial file; after a success it has already been renamed.
+        with contextlib.suppress(OSError):
+            partial.unlink(missing_ok=True)
     return target
