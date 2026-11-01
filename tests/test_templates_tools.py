@@ -1,9 +1,10 @@
 """Element templates and their library, tokens, spritesheets and remembered folders."""
 import io
+import time
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
 
@@ -18,7 +19,7 @@ from app.storage import open_project
 from app.template_library import TemplateLibraryDialog
 from app.templates import extract_elements, insert_elements, list_templates, save_template
 from app.token_dialog import TokenDialog
-from app.tokens import TokenSettings, render_token
+from app.tokens import TokenSettings, _portrait, render_token, supersampling
 
 
 @pytest.fixture
@@ -162,6 +163,60 @@ def test_token_settings_are_validated_and_offsets_move_the_portrait():
     assert centred.getpixel((60, 50))[:3] == (0, 0, 255) and shifted.getpixel((60, 50))[:3] == (255, 0, 0)
 
 
+def reference_portrait(image, settings, big):
+    """Former rendering: the whole source enlarged, then pasted on the token square."""
+    source = image.convert("RGBA")
+    scale = max(big / source.width, big / source.height) * settings.zoom
+    width, height = max(1, round(source.width * scale)), max(1, round(source.height * scale))
+    resample = Image.Resampling.NEAREST if settings.pixel_art else Image.Resampling.LANCZOS
+    canvas = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    factor = big / settings.size
+    canvas.paste(source.resize((width, height), resample),
+                 (round((big - width) / 2 + settings.offset_x * factor),
+                  round((big - height) / 2 + settings.offset_y * factor)))
+    return canvas
+
+
+def gradient(width, height):
+    image = Image.new("RGBA", (width, height))
+    image.putdata([((x * 7) % 256, (y * 5) % 256, (x * y) % 256, 255) for y in range(height) for x in range(width)])
+    return image
+
+
+@pytest.mark.parametrize("source_size, settings", [
+    ((120, 80), TokenSettings(size=128)),
+    ((80, 120), TokenSettings(size=100, zoom=2.5, offset_x=-30, offset_y=18)),
+    ((300, 200), TokenSettings(size=64, zoom=0.3, offset_y=40)),      # reduced, not covering the square
+    ((16, 16), TokenSettings(size=128, zoom=1.5, offset_x=20, pixel_art=True)),
+    ((24, 40), TokenSettings(size=96, zoom=3, offset_y=-25, pixel_art=True)),
+])
+def test_cropped_portrait_matches_the_former_full_enlargement(source_size, settings):
+    big = settings.size * supersampling(settings.size)
+    expected = reference_portrait(gradient(*source_size), settings, big)
+    actual = _portrait(gradient(*source_size), settings, big)
+    difference = max(high for _low, high in ImageChops.difference(expected, actual).getextrema())
+    assert difference <= 2  # Lanczos coefficients may round differently by one or two levels
+
+
+def test_token_portrait_memory_follows_the_token_size_not_the_source(monkeypatch):
+    # tracemalloc does not see Pillow's pixel buffers: every image built is measured instead.
+    largest = []
+    original_new = Image.Image._new
+
+    def spy(self, im):
+        result = original_new(self, im)
+        largest.append(result.width * result.height)
+        return result
+
+    monkeypatch.setattr(Image.Image, "_new", spy)
+    panorama = Image.new("RGBA", (8000, 500), (20, 120, 220, 255))
+    start = time.perf_counter()
+    token = render_token(panorama, TokenSettings(size=4096, zoom=4, border_width=0))
+    elapsed = time.perf_counter() - start
+    assert token.size == (4096, 4096) and token.getpixel((2048, 2048)) == (20, 120, 220, 255)
+    # Formerly a 262144 × 16384 enlargement (16 GiB); now nothing larger than the token itself.
+    assert max(largest) <= 4096 * 4096
+    assert elapsed < 2
 def test_token_dialog_exports_a_png_and_adds_a_layer(window, monkeypatch, tmp_path):
     window.install_document(Document(600, 600), None)
     dialog = TokenDialog(window)
