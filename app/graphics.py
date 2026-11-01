@@ -32,6 +32,7 @@ from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene
 from . import selection
 from .imaging import trim_transparent
 from .model import ASSET_FORMATS, MAX_PIXELS, Document, Layer, new_id
+from .shape_item import ShapeGraphicItem, arrow_head_path, shape_from_drag, shape_path
 from .textpath import custom_points, drag_handle, handle_points, normalize_controls, normalize_shape, sample_path
 from .theme import COLORS
 
@@ -578,6 +579,8 @@ def create_graphic(layer: Layer, document: Document) -> QGraphicsItem:
     if layer.kind == "image":
         item = QGraphicsPixmapItem(layer_pixmap(layer, document))
         item.setTransformationMode(Qt.TransformationMode.FastTransformation)
+    elif layer.kind == "shape":
+        item = ShapeGraphicItem(layer)
     else:
         # Un même item vectoriel rend le texte droit et courbé. Le texte reste
         # stocké dans le modèle et entièrement éditable.
@@ -1043,6 +1046,15 @@ class CanvasView(QGraphicsView):
             path.addRect(rect)
         return path
 
+    def _shape_preview_path(self) -> QPainterPath:
+        drag = self.shape_drag
+        layer = shape_from_drag(self.main_window.shape_tool or "rectangle",
+                                (drag["start"].x(), drag["start"].y()), (drag["end"].x(), drag["end"].y()),
+                                bool(drag["modifiers"] & Qt.KeyboardModifier.ShiftModifier), "#000000")
+        path = shape_path(layer)
+        if layer.shape_type == "arrow":
+            path = path.united(arrow_head_path(layer))
+        return layer_transform(layer).map(path)
 
     def _lasso_path(self) -> QPainterPath:
         """Lasso being drawn: its points, the pointer for the polygonal lasso, closed back to the start."""
@@ -1167,6 +1179,11 @@ class CanvasView(QGraphicsView):
                 return
             if self.main_window.paint_mode:
                 self.main_window.paint_canvas_color(self.mapToScene(event.position().toPoint()))
+                event.accept()
+                return
+            if self.main_window.shape_tool:
+                position = self.mapToScene(event.position().toPoint())
+                self.shape_drag = {"start": position, "end": position, "modifiers": event.modifiers()}
                 event.accept()
                 return
             if self.main_window.text_tool_active:

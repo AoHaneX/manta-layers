@@ -86,6 +86,8 @@ from .layer_panel import FOLDER_ROLE, build_folder_row, build_layer_row, set_row
 from .model import ASSET_FORMATS, MAX_DIMENSION, Document, Layer, new_id
 from .paths import user_data_directory
 from .selection import COMBINE_LABELS, COMBINE_MODES
+from .shape_item import shape_from_drag
+from .shape_panel import ShapePropertyRows
 from .storage import open_project, save_project
 from .templates import extract_elements, list_templates, save_template
 from .textpath import DEFAULT_CONTROLS, SHAPE_LABELS, TEXT_SHAPES, normalize_controls
@@ -220,6 +222,9 @@ class MainWindow(QMainWindow):
         self.eraser_active = False
         self.text_tool_active = False
         self.selection_tool: str | None = None
+        # Shape being drawn on the canvas: rectangle, ellipse, polygon, line or arrow.
+        self.shape_tool: str | None = None
+        self.shape_tool_buttons: dict[str, QToolButton] = {}
         self.selection_tool_buttons: dict[str, QToolButton] = {}
         # Floating editor used to type a text directly on the canvas.
         self._inline: dict | None = None
@@ -725,6 +730,18 @@ class MainWindow(QMainWindow):
             )
             paint_tools_layout.addWidget(button)
             self.selection_tool_buttons[tool] = button
+        paint_tools_layout.addWidget(QLabel("Formes"))
+        for kind, icon, text, tooltip in (
+            ("rectangle", "shape_rectangle", "Rectangle", "Rectangle : glisser sur le canvas · Maj : carré"),
+            ("ellipse", "shape_ellipse", "Ellipse", "Ellipse : glisser sur le canvas · Maj : cercle"),
+            ("polygon", "shape_polygon", "Polygone", "Polygone régulier : glisser sur le canvas"),
+            ("line", "shape_line", "Ligne", "Ligne droite : glisser · Maj : angles de 45°"),
+            ("arrow", "shape_arrow", "Flèche", "Flèche : glisser de la base vers la pointe · Maj : angles de 45°"),
+        ):
+            button = self._tool_button(icon, text, tooltip)
+            button.clicked.connect(lambda checked, kind=kind: self.set_shape_tool(kind if checked else None))
+            paint_tools_layout.addWidget(button)
+            self.shape_tool_buttons[kind] = button
         tools_layout.addWidget(paint_tools)
         self.remove_background_btn = QPushButton("Supprimer l'arrière-plan…")
         self.remove_background_btn.setToolTip("Détourage local, avec aperçu, appliqué comme masque modifiable")
@@ -1010,6 +1027,7 @@ class MainWindow(QMainWindow):
         self.lock_btn = QPushButton("Verrouiller / déverrouiller")
         self.lock_btn.clicked.connect(self.toggle_lock)
         self.property_form.addRow("Édition", self.lock_btn)
+        self.shape_rows = ShapePropertyRows(self, self.property_form)
         self.text_property_widgets = (
             self.text_input, self.text_alignment_control, self.font_combo, self.font_size,
             self.text_color_control, self.text_background_control, self.text_shape_control,
@@ -1621,6 +1639,7 @@ class MainWindow(QMainWindow):
         for w in widgets:
             w.setEnabled(layer is not None)
         if not layer:
+            self.shape_rows.refresh(None)
             self.name_input.setText("")
             self.text_input.setPlainText("")
             self.paint_bucket_btn.setEnabled(False)
@@ -1670,6 +1689,7 @@ class MainWindow(QMainWindow):
         )
         self.text_background_clear.setEnabled(bool(background) and not layer.locked)
         self.lock_btn.setText("Déverrouiller" if layer.locked else "Verrouiller")
+        self.shape_rows.refresh(layer)
         can_paint = layer.kind == "image" and not layer.locked
         self.paint_bucket_btn.setEnabled(can_paint)
         self.paint_global_btn.setEnabled(can_paint)
@@ -2016,7 +2036,7 @@ class MainWindow(QMainWindow):
 
     def any_tool_active(self) -> bool:
         return bool(self.eraser_active or self.picker_active or self.paint_mode
-                    or self.text_tool_active or self.selection_tool)
+                    or self.text_tool_active or self.selection_tool or self.shape_tool)
 
     def _clear_tools(self, keep: str | None = None):
         if keep != "eraser" and self.eraser_active:
@@ -2033,6 +2053,9 @@ class MainWindow(QMainWindow):
         if keep != "select":
             self.selection_tool = None
             self.canvas.cancel_selection_drag()
+        if keep != "shape":
+            self.shape_tool = None
+            self.canvas.shape_drag = None
 
     def _sync_tool_buttons(self):
         """Reflect the tool flags on every button, then refresh options and cursor."""
@@ -2048,6 +2071,7 @@ class MainWindow(QMainWindow):
         ]
         pairs += [(button, self.selection_tool == tool)
                   for tool, button in self.selection_tool_buttons.items()]
+        pairs += [(button, self.shape_tool == kind) for kind, button in self.shape_tool_buttons.items()]
         for button, checked in pairs:
             button.blockSignals(True)
             button.setChecked(bool(checked))
@@ -2097,7 +2121,7 @@ class MainWindow(QMainWindow):
         elif self.text_tool_active:
             cursor = Qt.CursorShape.IBeamCursor
         else:
-            active = self.picker_active or self.paint_mode is not None or self.selection_tool
+            active = self.picker_active or self.paint_mode is not None or self.selection_tool or self.shape_tool
             cursor = Qt.CursorShape.CrossCursor if active else Qt.CursorShape.ArrowCursor
         self.canvas.setCursor(cursor)
 
@@ -2147,6 +2171,62 @@ class MainWindow(QMainWindow):
             )
         self.selection_tool = tool or None
         self._sync_tool_buttons()
+
+    def set_shape_tool(self, kind: str | None):
+        if kind:
+            self._clear_tools("shape")
+            self.tabs.setCurrentWidget(self.tools_tab)
+            self.statusBar().showMessage(
+                "Glissez sur le canvas pour tracer la forme · un clic crée une forme de taille standard · "
+                "la couleur choisie ci-dessus sert de remplissage", 5000)
+        self.shape_tool = kind or None
+        self._sync_tool_buttons()
+
+    def commit_shape_property(self, key: str) -> bool:
+        if self.refreshing:
+            return False
+        return self.set_shape_property(key, self.shape_rows.value(key))
+
+    def set_shape_property(self, key: str, value) -> bool:
+        """Change one property of the selected shape as an undoable step (values are clamped)."""
+        layer = self.document.layer(self.selected_id)
+        if layer is None or layer.kind != "shape" or layer.locked:
+            return False
+        probe = deepcopy(layer)
+        setattr(probe, key, value)
+        if key == "stroke_color" and value and probe.stroke_width == 0:
+            probe.stroke_width = 4.0  # a chosen outline colour must be visible
+        probe.normalize_shape_fields()
+        if probe == layer:
+            return False
+
+        def apply(doc):
+            index = doc.layers.index(doc.layer(layer.id))
+            doc.layers[index] = deepcopy(probe)
+
+        return self.mutate("Modifier la forme", apply, layer.id)
+
+    def choose_shape_color(self, key: str, title: str) -> bool:
+        layer = self.document.layer(self.selected_id)
+        if layer is None or layer.kind != "shape" or layer.locked:
+            return False
+        color = QColorDialog.getColor(QColor(getattr(layer, key) or "#FFFFFF"), self, title)
+        return color.isValid() and self.set_shape_property(key, color.name().upper())
+
+    def create_shape(self, start: QPointF, end: QPointF, modifiers) -> bool:
+        """Add the shape drawn with the active shape tool, as an editable layer."""
+        if not self.shape_tool:
+            return False
+        layer = shape_from_drag(self.shape_tool, (start.x(), start.y()), (end.x(), end.y()),
+                                bool(modifiers & Qt.KeyboardModifier.ShiftModifier), self.replacement_color)
+
+        def add(doc):
+            doc.layers.append(deepcopy(layer))
+
+        if not self.mutate(f"Ajouter : {layer.name}", add, layer.id):
+            return False
+        self.select_layer(layer.id)
+        return True
 
     def update_tool_options_visibility(self):
         """Only show the settings of the active tool."""
