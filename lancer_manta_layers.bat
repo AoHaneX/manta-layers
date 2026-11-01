@@ -6,6 +6,14 @@ if not exist ".venv\Scripts\python.exe" (
   call "%~dp0installer_dependances.bat"
   if errorlevel 1 goto error
 )
+rem Une nouvelle version de l'application peut exiger des bibliotheques plus recentes
+rem (correctifs de securite) : elles sont mises a jour quand requirements.txt change.
+fc /b "requirements.txt" ".venv\installed-requirements.txt" >nul 2>nul
+if errorlevel 1 (
+  echo [Manta Layers] Mise a jour des bibliotheques...
+  call "%~dp0installer_dependances.bat"
+  if errorlevel 1 echo [Manta Layers] Mise a jour impossible pour l'instant, lancement avec les bibliotheques actuelles.
+)
 "%~dp0.venv\Scripts\python.exe" -c "import PySide6; import PIL" >nul 2>nul
 if errorlevel 1 (
   echo [Manta Layers] Des dependances sont manquantes, nouvelle tentative d'installation...

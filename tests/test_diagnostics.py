@@ -49,3 +49,12 @@ def test_the_user_is_warned_once_per_error(monkeypatch, qapp):
         diagnostics.report_exception(*sys.exc_info(), log_file=None, show_dialog=True)
     assert len(shown) == 1 and "inattendu" in shown[0]
 
+
+def test_an_outdated_pillow_is_detected(monkeypatch):
+    import PIL
+
+    import main
+    monkeypatch.setattr(PIL, "__version__", "12.3.0")
+    assert main.outdated_pillow() == "12.3.0"
+    monkeypatch.setattr(PIL, "__version__", "13.0.0")
+    assert main.outdated_pillow() is None

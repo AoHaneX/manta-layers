@@ -49,6 +49,7 @@
 - Quitter pendant un détourage par IA attend la fin du calcul au lieu de faire planter l'application.
 - Les sprites exportés depuis un calque dont le nom contient `:` ou d'autres caractères interdits (« Token : … ») sont écrits sous un nom valide, au lieu de finir dans un flux NTFS caché.
 - La case d'un dossier de calques coche puis décoche ses calques à chaque clic.
+- Le lanceur met à jour les bibliothèques quand `requirements.txt` change (correctifs de sécurité de Pillow) ; un Pillow trop ancien est signalé au démarrage.
 
 ### Améliorations
 - Rendu des calques image mis en cache : une action ne recalcule plus que les calques modifiés.
