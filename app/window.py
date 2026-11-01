@@ -3370,27 +3370,38 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"{len(images)} sprite(s) ajouté(s) dans le dossier « {sheet_name} »", 5000)
         return True
 
+    # Tool dialogs are deleted after use: each one keeps its source images in memory.
+
     def open_token_creator(self) -> None:
         dialog = TokenDialog(self)
-        layer = self.document.layer(self.selected_id)
-        if layer is not None and layer.kind == "image":
-            dialog.use_selected_layer()
-        dialog.exec()
+        try:
+            layer = self.document.layer(self.selected_id)
+            if layer is not None and layer.kind == "image":
+                dialog.use_selected_layer()
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     def open_sprite_slicer(self) -> None:
-        SpriteSheetDialog(self).exec()
+        dialog = SpriteSheetDialog(self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     def open_template_library(self) -> bool:
         dialog = TemplateLibraryDialog(self)
-        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.selected_entry() is None:
-            return False
-        name, (kind, value) = dialog.selected_name(), dialog.selected_entry()
         try:
+            if dialog.exec() != QDialog.DialogCode.Accepted or dialog.selected_entry() is None:
+                return False
+            name, (kind, value), action = dialog.selected_name(), dialog.selected_entry(), dialog.action
             elements = dialog.load_selected()
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Modèle illisible", f"{name}\n{exc}")
+            QMessageBox.warning(self, "Modèle illisible", f"{dialog.selected_name()}\n{exc}")
             return False
-        if dialog.action == "edit" and kind == "user":
+        finally:
+            dialog.deleteLater()
+        if action == "edit" and kind == "user":
             return self.edit_element_template(Path(value), name, elements)
         return self.insert_template_elements(elements, name)
 
