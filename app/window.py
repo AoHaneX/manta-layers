@@ -67,6 +67,8 @@ from .graphics import (
     CurvedTextGraphicItem,
     crop_image_layer,
     document_mask_to_layer,
+    font_is_installed,
+    forget_font_families,
     layers_bounds,
     make_scene,
     merge_changes_appearance,
@@ -78,6 +80,7 @@ from .graphics import (
     render_layer_with_mask,
     render_layers,
     render_layers_region,
+    resolve_font_family,
 )
 from .icons import alignment_icon, color_tool_icon, history_arrow_icon, sidebar_arrow_icon
 from .imaging import alpha_bounds
@@ -259,6 +262,7 @@ class MainWindow(QMainWindow):
                     font_id = QFontDatabase.addApplicationFont(str(path))
                     if font_id >= 0:
                         self.custom_font_ids.append(font_id)
+        forget_font_families()
 
     def import_fonts(self):
         paths, _ = QFileDialog.getOpenFileNames(
@@ -294,6 +298,7 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 QMessageBox.warning(self, "Import de police impossible", f"{source.name}\n{exc}")
         if imported:
+            forget_font_families()
             self.statusBar().showMessage(
                 "Police(s) ajoutée(s) : " + ", ".join(dict.fromkeys(imported)), 6000
             )
@@ -1936,9 +1941,7 @@ class MainWindow(QMainWindow):
         """Text tool: preview a new text at the click and create it on validation."""
         if self.canvas.scene() is None:
             return
-        available = {family.casefold(): family for family in QFontDatabase.families()}
-        layer = Layer(kind="text", name="Texte", text="Texte",
-                      font_family=available.get(self.last_font_family.casefold(), QFont().defaultFamily()))
+        layer = Layer(kind="text", name="Texte", text="Texte", font_family=resolve_font_family(self.last_font_family))
         item = CurvedTextGraphicItem(layer)
         # The click marks the start of the first baseline.
         layer.x = scene_position.x()
@@ -3099,10 +3102,7 @@ class MainWindow(QMainWindow):
         holder = {}
         def add(doc):
             layer = doc.add_text(content)
-            available = {family.casefold(): family for family in QFontDatabase.families()}
-            layer.font_family = available.get(
-                self.last_font_family.casefold(), QFont().defaultFamily()
-            )
+            layer.font_family = resolve_font_family(self.last_font_family)
             holder['id'] = layer.id
         if self.mutate("Ajouter un texte", add):
             self.select_layer(holder['id'])
@@ -3249,9 +3249,8 @@ class MainWindow(QMainWindow):
         self._warn_missing_fonts(doc)
 
     def _warn_missing_fonts(self, doc: Document):
-        available = {family.casefold() for family in QFontDatabase.families()}
         missing = sorted({layer.font_family for layer in doc.layers
-                          if layer.kind == "text" and layer.font_family.casefold() not in available})
+                          if layer.kind == "text" and not font_is_installed(layer.font_family)})
         if not missing:
             return
         QMessageBox.information(
