@@ -344,7 +344,8 @@ class GuiSmokeTests(unittest.TestCase):
         first.locked = True
         win.install_document(document, None)
         order = [layer.id for layer in win.document.layers]
-        win.move_layer_to_display_position(first.id, 0)
+        top_row = win.layer_list.item(0)  # dropping the locked layer above the top one
+        self.assertFalse(win.drop_in_layer_list("layer", first.id, top_row, True))
         self.assertEqual([layer.id for layer in win.document.layers], order)
 
     def test_multiline_text_keeps_lines_and_tight_bounds(self):
