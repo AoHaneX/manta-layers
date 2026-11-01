@@ -52,7 +52,7 @@ class ModelTests(unittest.TestCase):
         im.sx = 0.45
         im.eraser_strokes.append({
             "points": [[1.0, 2.0], [4.0, 2.0]], "size": 4,
-            "shape": "square", "pixel_art": True, "hardness": 100, "opacity": 100,
+            "shape": "square", "pixel_art": True, "hardness": 100, "opacity": 100, "pixel_centered": True,
         })
         text = doc.add_text("Bonjour la manta")
         text.font_family = "Verdana"

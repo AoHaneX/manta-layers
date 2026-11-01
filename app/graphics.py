@@ -6,7 +6,7 @@ from copy import deepcopy
 from functools import lru_cache
 from hashlib import sha1
 from io import BytesIO
-from math import atan2, cos, degrees, hypot, radians, sin
+from math import atan2, cos, degrees, floor, hypot, radians, sin
 from typing import TYPE_CHECKING
 
 from PIL import Image, ImageChops, ImageDraw
@@ -394,6 +394,17 @@ def _interpolated_points(points: list[list[float]], spacing: float):
             yield start[0] + dx * ratio, start[1] + dy * ratio
 
 
+def eraser_dab_origin(position: float, size: int, pixel_centered: bool = True) -> int:
+    """First pixel covered by a dab of ``size`` pixels placed at ``position``.
+
+    Pixel n spans [n, n + 1[: flooring centres the dab on the pixel under the
+    pointer. Strokes saved before ``pixel_centered`` existed were rounded, half
+    a pixel off, and keep that placement so that older projects look the same.
+    """
+    offset = (size - 1) / 2
+    return floor(position - offset) if pixel_centered else round(position - offset)
+
+
 @lru_cache(maxsize=32)
 def _eraser_dab(size: int, shape: str, pixel_art: bool, hardness: int, opacity: int) -> Image.Image:
     """Crée une empreinte sans anticrénelage en pixel art, douce en mode classique.
@@ -448,12 +459,12 @@ def apply_eraser_strokes(image: Image.Image, strokes: list[dict]) -> Image.Image
             max(1, min(100, int(stroke.get("opacity", 100)))),
         )
         coverage = Image.new("L", result.size, 0)
-        offset = (size - 1) / 2
+        centered = bool(stroke.get("pixel_centered", False))
         spacing = 0.5 if pixel_art else max(0.5, size * 0.2)
         # Les empreintes d'un même trait se combinent par maximum : l'opacité
         # choisie reste celle du trait, au lieu de s'additionner à chaque pas.
         for x, y in _interpolated_points(points, spacing):
-            left, top = round(x - offset), round(y - offset)
+            left, top = eraser_dab_origin(x, size, centered), eraser_dab_origin(y, size, centered)
             coverage.paste(ImageChops.lighter(coverage.crop((
                 left, top, left + size, top + size
             )), dab), (left, top))
@@ -546,9 +557,9 @@ def crop_image_layer(layer: Layer, document: Document,
     replayed identically on the cropped image.
     """
     left, top, right, bottom = box
-    if layer.eraser_strokes:
-        # Eraser dabs are placed with round(), which rounds halves to even: only
-        # an even shift of the stroke points keeps every dab on the same pixels.
+    if any(not stroke.get("pixel_centered", False) for stroke in layer.eraser_strokes):
+        # Older eraser dabs are placed with round(), which rounds halves to even:
+        # only an even shift of their points keeps every dab on the same pixels.
         left, top = left - left % 2, top - top % 2
         box = (left, top, right, bottom)
     with Image.open(BytesIO(document.assets[layer.asset]), formats=ASSET_FORMATS) as source:
@@ -985,8 +996,7 @@ class CanvasView(QGraphicsView):
                 offset = (size - 1) / 2
                 path = QPainterPath()
                 if self.main_window.eraser_pixel_art.isChecked():
-                    left, top = round(local.x() - offset), round(local.y() - offset)
-                    bounds = QRectF(left, top, size, size)
+                    bounds = QRectF(eraser_dab_origin(local.x(), size), eraser_dab_origin(local.y(), size), size, size)
                 else:
                     bounds = QRectF(local.x() - offset, local.y() - offset, size, size)
                 if self.main_window.eraser_shape.currentData() == "square" and self.main_window.eraser_pixel_art.isChecked():
@@ -1621,7 +1631,6 @@ class CanvasView(QGraphicsView):
         distance = (dx * dx + dy * dy) ** 0.5
         spacing = 0.5 if pixel_art else max(0.5, size * 0.2)
         steps = max(1, int(distance / spacing) + 1)
-        offset = (size - 1) / 2
         # Le masque mémorise la forme du trait à pleine intensité ; l'opacité est
         # appliquée une seule fois, comme dans le rendu final du calque.
         painter = QPainter(self.eraser_mask)
@@ -1632,7 +1641,7 @@ class CanvasView(QGraphicsView):
             ratio = index / steps
             x, y = start.x() + dx * ratio, start.y() + dy * ratio
             if pixel_art:
-                bounds = QRectF(round(x - offset), round(y - offset), size, size)
+                bounds = QRectF(eraser_dab_origin(x, size), eraser_dab_origin(y, size), size, size)
                 painter.setBrush(QColor(0, 0, 0, 255))
                 if self.main_window.eraser_shape.currentData() == "square":
                     painter.drawRect(bounds)

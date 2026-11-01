@@ -232,6 +232,9 @@ class Layer:
                 "pixel_art": bool(raw_stroke.get("pixel_art", True)),
                 "hardness": hardness,
                 "opacity": opacity,
+                # Dabs centred on the pixel under the pointer. Older strokes were
+                # placed half a pixel off and keep that placement when replayed.
+                "pixel_centered": bool(raw_stroke.get("pixel_centered", False)),
             })
         layer.eraser_strokes = valid_strokes
         if layer.folder is not None and (not isinstance(layer.folder, str) or not layer.folder):

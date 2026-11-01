@@ -2699,8 +2699,9 @@ class MainWindow(QMainWindow):
         width, height = item.pixmap().width(), item.pixmap().height()
         source_points = []
         for point in points:
-            x = width - 1 - point.x() if layer.flip_horizontal else point.x()
-            y = height - 1 - point.y() if layer.flip_vertical else point.y()
+            # Mirror of a position (not of a pixel index) in a flipped layer.
+            x = width - point.x() if layer.flip_horizontal else point.x()
+            y = height - point.y() if layer.flip_vertical else point.y()
             source_points.append([x, y])
         stroke = {
             "points": source_points,
@@ -2709,6 +2710,7 @@ class MainWindow(QMainWindow):
             "pixel_art": self.eraser_pixel_art.isChecked(),
             "hardness": self.eraser_hardness.value(),
             "opacity": self.eraser_opacity.value(),
+            "pixel_centered": True,
         }
         self.mutate(
             "Trait de gomme",
