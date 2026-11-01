@@ -3466,28 +3466,11 @@ class MainWindow(QMainWindow):
         if not accepted or not name.strip():
             return
         try:
-            destination = None
-            existing = next(
-                (info for info in list_templates() if info.name.casefold() == name.strip().casefold()),
-                None,
-            )
-            if existing is not None:
-                answer = QMessageBox.question(
-                    self, "Remplacer le modèle",
-                    f"Un modèle nommé « {existing.name} » existe déjà. Le remplacer ?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
-                )
-                if answer != QMessageBox.StandardButton.Yes:
-                    return
-                destination = existing.path
-            preview = render_document(self.document).scaled(
-                320, 180, Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            path = save_template(
-                self.document, name, qimage_png(preview), destination=destination
-            )
+            destination = self._confirm_template_replacement(name, "preset")
+            if destination is False:
+                return
+            path = save_template(self.document, name, self._template_thumbnail(self.document),
+                                 destination=destination)
             self.statusBar().showMessage(
                 f"Modèle enregistré : {name.strip()} · {path.parent}", 6000
             )
