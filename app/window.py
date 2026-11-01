@@ -85,6 +85,7 @@ from .imaging import alpha_bounds
 from .layer_panel import FOLDER_ROLE, build_folder_row, build_layer_row, set_row_checked
 from .model import ASSET_FORMATS, MAX_DIMENSION, Document, Layer, new_id
 from .paths import user_data_directory
+from .screen_picker import ScreenColorPicker
 from .selection import COMBINE_LABELS, COMBINE_MODES
 from .shape_item import shape_from_drag
 from .shape_panel import ShapePropertyRows
@@ -225,6 +226,7 @@ class MainWindow(QMainWindow):
         # Shape being drawn on the canvas: rectangle, ellipse, polygon, line or arrow.
         self.shape_tool: str | None = None
         self.shape_tool_buttons: dict[str, QToolButton] = {}
+        self._screen_picker: ScreenColorPicker | None = None
         self.selection_tool_buttons: dict[str, QToolButton] = {}
         # Floating editor used to type a text directly on the canvas.
         self._inline: dict | None = None
@@ -673,6 +675,12 @@ class MainWindow(QMainWindow):
         self.picker_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.picker_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         paint_tools_layout.addWidget(self.picker_btn)
+        self.screen_picker_btn = self._tool_button(
+            "screen_picker", "Pipette écran",
+            "Prélever une couleur n'importe où sur l'écran, même hors de Manta Layers")
+        self.screen_picker_btn.setCheckable(False)
+        self.screen_picker_btn.clicked.connect(self.start_screen_picker)
+        paint_tools_layout.addWidget(self.screen_picker_btn)
         self.paint_bucket_btn = QToolButton()
         self.paint_bucket_btn.setObjectName("colorTool")
         self.paint_bucket_btn.setCheckable(True)
@@ -1098,6 +1106,7 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(self.text_tool_action)
         tools_menu.addSeparator()
         self._action(tools_menu, "Supprimer l'arrière-plan…", self.remove_background)
+        self._action(tools_menu, "Pipette écran (tout le bureau)", self.start_screen_picker)
         self.text_tool_shortcut = QShortcut(QKeySequence("T"), self.canvas)
         self.text_tool_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         self.text_tool_shortcut.activated.connect(
@@ -2718,14 +2727,17 @@ class MainWindow(QMainWindow):
         if color.alpha() == 0:
             self.statusBar().showMessage("Ce pixel est transparent", 3000)
             return False
-        sampled = color.name().upper()
-        if self.picker_target in ("text", "text_background"):
-            text_layer = self.document.layer(self.picker_text_layer_id)
+        return self.apply_picked_color(color.name().upper(), self.picker_target, self.picker_text_layer_id)
+
+    def apply_picked_color(self, sampled: str, target: str, text_layer_id: str | None) -> bool:
+        """Give a picked colour to its tool: the tools colour, or a text colour (undoable)."""
+        if target in ("text", "text_background"):
+            text_layer = self.document.layer(text_layer_id)
             if not text_layer or text_layer.kind != "text" or text_layer.locked:
                 self.deactivate_picker()
                 self.statusBar().showMessage("Le calque texte n'est plus modifiable", 3000)
                 return False
-            attribute = "text_background" if self.picker_target == "text_background" else "color"
+            attribute = "text_background" if target == "text_background" else "color"
             description = "Couleur de fond du texte" if attribute == "text_background" else "Couleur du texte"
             self.mutate(
                 description,
@@ -2739,6 +2751,31 @@ class MainWindow(QMainWindow):
         self.deactivate_picker()
         self.statusBar().showMessage(f"Couleur prélevée : {sampled}", 4000)
         return True
+
+    def start_screen_picker(self) -> bool:
+        """Pick a colour anywhere on the desktop, for the active picker target (tools colour by default)."""
+        if self._screen_picker is not None and self._screen_picker.active:
+            return False
+        target = self.picker_target if self.picker_active else "tools"
+        text_layer_id = self.picker_text_layer_id if self.picker_active else None
+        picker = ScreenColorPicker(self)
+        picker.picked.connect(lambda color: self._screen_pick_done(color, target, text_layer_id))
+        picker.cancelled.connect(lambda: self._screen_pick_done(None, target, text_layer_id))
+        picker.failed.connect(lambda message: QMessageBox.warning(self, "Pipette écran", message))
+        self._screen_picker = picker
+        if not picker.start():
+            self._screen_picker = None
+            return False
+        self.statusBar().showMessage(
+            "Pipette écran : survolez n'importe quelle application et cliquez · Échap ou clic droit pour annuler")
+        return True
+
+    def _screen_pick_done(self, color: str | None, target: str, text_layer_id: str | None):
+        self._screen_picker = None
+        if color is None:
+            self.statusBar().showMessage("Pipette écran annulée", 2500)
+            return
+        self.apply_picked_color(color, target, text_layer_id)
 
     def paint_canvas_color(self, scene_position) -> bool:
         layer_id = self.tool_target_id()
