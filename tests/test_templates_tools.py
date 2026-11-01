@@ -12,10 +12,10 @@ from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
 from app import templates
 from app.builtin_templates import BUILTIN_TEMPLATES, builtin_template
 from app.graphics import qimage_to_pil, render_document
-from app.imaging import SpriteGrid, extract_sprites, grid_cells
+from app.imaging import SpriteGrid, extract_sprites, grid_cells, grid_shape
 from app.model import Document, Layer
 from app.paths import safe_file_stem
-from app.sprite_dialog import SpriteSheetDialog, export_sprites
+from app.sprite_dialog import MAX_DETAILED_CELLS, SpriteSheetDialog, export_sprites
 from app.storage import open_project
 from app.template_library import TemplateLibraryDialog
 from app.templates import extract_elements, insert_elements, list_templates, save_template
@@ -309,6 +309,16 @@ def test_grid_cells_respect_spacing_offset_and_image_limits():
         grid_cells((10, 10), SpriteGrid(0, 8))
 
 
+def test_explicit_grid_counts_are_clamped_to_the_image():
+    grid = SpriteGrid(16, 16, columns=3000, rows=3000)
+    start = time.perf_counter()
+    cells = grid_cells((64, 64), grid)
+    assert time.perf_counter() - start < 0.1
+    assert grid_shape((64, 64), grid) == (4, 4) and len(cells) == 16
+    assert grid_shape((64, 64), SpriteGrid(16, 16, columns=2, rows=9)) == (2, 4)
+    assert grid_shape((64, 64), SpriteGrid(16, 16, offset_x=100)) == (0, 4)
+
+
 def test_extraction_skips_empty_cells_trims_and_keeps_pixels():
     sprites = extract_sprites(sheet(), SpriteGrid(8, 8, columns=2, spacing_x=2), trim=True)
     assert [(row, column) for row, column, _image in sprites] == [(0, 0), (0, 1), (1, 1)]
@@ -338,6 +348,49 @@ def test_sprite_dialog_selection_and_layers_in_a_folder(window):
     assert len(dialog.chosen_sprites()) == 2
     assert dialog.add_as_layers()
     assert len(window.document.layers) == 2 and window.document.folders[0].name == "planche"
+
+
+def test_sprite_dialog_trims_through_the_shared_extraction(window):
+    dialog = SpriteSheetDialog(window)
+    dialog.set_sheet(sheet(), "planche")
+    for spin, value in ((dialog.cell_width, 8), (dialog.cell_height, 8), (dialog.columns, 2), (dialog.spacing_x, 2)):
+        spin.setValue(value)
+    dialog.trim.setChecked(True)
+    dialog.refresh()
+    expected = extract_sprites(sheet(), SpriteGrid(8, 8, columns=2, spacing_x=2), trim=True)
+    chosen = dialog.chosen_sprites()
+    assert [(row, column, image.size) for row, column, image in chosen] == \
+        [(row, column, image.size) for row, column, image in expected]
+    assert chosen[0][2].size == (4, 4)
+    assert all(not spin.keyboardTracking() for spin in (dialog.cell_width, dialog.columns, dialog.offset_y))
+
+
+def test_huge_grids_only_draw_lines_and_ask_before_output(window, monkeypatch):
+    dialog = SpriteSheetDialog(window)
+    dialog.set_sheet(Image.new("RGBA", (4096, 4096), (255, 0, 0, 255)), "planche")
+    dialog.cell_width.setValue(1)  # "1 × 32", the intermediate value of a typed "16"
+    dialog.cell_height.setValue(32)
+    start = time.perf_counter()
+    dialog.refresh()
+    elapsed = time.perf_counter() - start
+    assert elapsed < 1.5
+    assert not dialog.detailed and dialog.cells.count() == 0
+    assert dialog.cell_count == 4096 * 128 > MAX_DETAILED_CELLS and dialog.export_button.isEnabled()
+    questions = []
+
+    def refuse(*args, **kwargs):
+        questions.append(args)
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", refuse)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: pytest.fail("no folder asked"))
+    layers = len(window.document.layers)
+    assert dialog.export() == [] and not dialog.add_as_layers()
+    assert len(questions) == 2 and len(window.document.layers) == layers
+    dialog.cell_width.setValue(64)
+    dialog.cell_height.setValue(64)
+    dialog.refresh()
+    assert dialog.detailed and dialog.cell_count == 64 * 64 and dialog.cells.count() == 1024
 
 
 # --- Remembered folders ------------------------------------------------------------------

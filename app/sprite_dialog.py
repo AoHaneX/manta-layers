@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PIL import Image, UnidentifiedImageError
-from PySide6.QtCore import QRectF, QSize, Qt, QTimer
+from PySide6.QtCore import QLineF, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from .graphics import checker_brush, pil_to_qimage
-from .imaging import SpriteGrid, alpha_bounds, grid_cells
+from .imaging import SpriteGrid, extract_sprites, grid_shape, iter_cells
 from .model import IMPORT_FORMATS, MAX_DIMENSION, MAX_PIXELS
 from .paths import safe_file_stem
 from .theme import COLORS
@@ -41,6 +41,9 @@ if TYPE_CHECKING:
 
 PREVIEW = 420
 MAX_LISTED_CELLS = 1024  # thumbnails beyond this are not listed (the grid is probably wrong)
+# Beyond this many cells the preview only draws the grid (no per-cell inspection, no
+# thumbnails) and exporting or adding the sprites asks for a confirmation first.
+MAX_DETAILED_CELLS = 10_000
 CELL_ROLE = Qt.ItemDataRole.UserRole
 
 
@@ -75,6 +78,12 @@ class SpriteSheetDialog(QDialog):
         self.setMinimumSize(900, 600)
         self.sheet: Image.Image | None = None
         self.sheet_name = "sprite"
+        # Grid and options of the last refresh: the listed cells and the extraction both follow them.
+        self._grid: SpriteGrid | None = None
+        self._grid_error = ""
+        self._skip_empty = True
+        self.cell_count = 0  # cells offered for extraction (non-empty ones when empty cells are skipped)
+        self.detailed = True  # False when the preview only shows the grid
         layout = QHBoxLayout(self)
 
         left = QVBoxLayout()
@@ -168,6 +177,8 @@ class SpriteSheetDialog(QDialog):
         spin.setRange(minimum, MAX_DIMENSION)
         spin.setValue(value)
         spin.setSuffix(suffix)
+        # Typing "16" must not refresh for the intermediate "1" (a huge grid on a big sheet).
+        spin.setKeyboardTracking(False)
         if special:
             spin.setSpecialValueText(special)
         return spin
@@ -212,40 +223,65 @@ class SpriteSheetDialog(QDialog):
     def refresh(self) -> None:
         self.cells.blockSignals(True)
         self.cells.clear()
-        canvas = QPixmap(PREVIEW, PREVIEW)
+        ratio = self.preview.devicePixelRatioF()
+        canvas = QPixmap(round(PREVIEW * ratio), round(PREVIEW * ratio))  # stored at the screen density
+        canvas.setDevicePixelRatio(ratio)
         painter = QPainter(canvas)
-        painter.fillRect(canvas.rect(), checker_brush())
-        self.cell_boxes = []
+        painter.fillRect(QRectF(0, 0, PREVIEW, PREVIEW), checker_brush())
+        self._grid, self._grid_error, self._skip_empty = None, "", self.skip_empty.isChecked()
+        self.cell_count, self.detailed = 0, True
         if self.sheet is not None:
-            try:
-                cells = grid_cells(self.sheet.size, self.grid())
-            except ValueError as exc:
-                cells = []
-                self.summary.setText(str(exc))
             scale = min(PREVIEW / self.sheet.width, PREVIEW / self.sheet.height)
             target = QRectF(0, 0, self.sheet.width * scale, self.sheet.height * scale)
             painter.drawImage(target, pil_to_qimage(self.sheet))  # default painter: nearest neighbour
-            pen = QPen(QColor(COLORS["copper"]), 1)
-            painter.setPen(pen)
-            for row, column, box in cells:
-                cell = self.sheet.crop(box)
-                empty = alpha_bounds(cell) is None
-                rect = QRectF(box[0] * scale, box[1] * scale, (box[2] - box[0]) * scale, (box[3] - box[1]) * scale)
-                painter.setPen(QPen(QColor(COLORS["disabled"] if empty else COLORS["copper"]), 1))
-                painter.drawRect(rect)
-                if empty and self.skip_empty.isChecked():
-                    continue
-                self.cell_boxes.append((row, column, box))
-                if len(self.cell_boxes) <= MAX_LISTED_CELLS:
-                    self._add_cell(row, column, cell)
+            grid = self.grid()
+            try:
+                columns, rows = grid_shape(self.sheet.size, grid)
+                self._grid = grid
+            except ValueError as exc:
+                columns = rows = 0
+                self._grid_error = str(exc)
+            if columns * rows > MAX_DETAILED_CELLS:
+                # Too many cells to inspect while editing: lines only, emptiness unknown.
+                self.detailed = False
+                self.cell_count = columns * rows
+                self._draw_grid_lines(painter, grid, columns, rows, scale)
+            elif self._grid is not None:
+                for row, column, box, cell, bounds in iter_cells(self.sheet, grid):
+                    empty = bounds is None
+                    rect = QRectF(box[0] * scale, box[1] * scale,
+                                  (box[2] - box[0]) * scale, (box[3] - box[1]) * scale)
+                    painter.setPen(QPen(QColor(COLORS["disabled"] if empty else COLORS["copper"]), 1))
+                    painter.drawRect(rect)
+                    if empty and self._skip_empty:
+                        continue
+                    self.cell_count += 1
+                    if self.cell_count <= MAX_LISTED_CELLS:
+                        self._add_cell(row, column, cell)
         painter.end()
         self.preview.setPixmap(canvas)
         self.cells.blockSignals(False)
         self._update_summary()
 
+    @staticmethod
+    def _draw_grid_lines(painter: QPainter, grid: SpriteGrid, columns: int, rows: int, scale: float) -> None:
+        """Outline of every cell drawn with one line per cell edge, not one rectangle per cell."""
+        painter.setPen(QPen(QColor(COLORS["copper"]), 1))
+        step_x, step_y = grid.cell_width + grid.spacing_x, grid.cell_height + grid.spacing_y
+        top, bottom = grid.offset_y, grid.offset_y + rows * step_y - grid.spacing_y
+        left, right = grid.offset_x, grid.offset_x + columns * step_x - grid.spacing_x
+        # Sets: without spacing, the right edge of a cell is the left edge of the next one.
+        xs = {left + column * step_x + edge for column in range(columns) for edge in (0, grid.cell_width)}
+        ys = {top + row * step_y + edge for row in range(rows) for edge in (0, grid.cell_height)}
+        painter.drawLines([QLineF(x * scale, top * scale, x * scale, bottom * scale) for x in sorted(xs)]
+                          + [QLineF(left * scale, y * scale, right * scale, y * scale) for y in sorted(ys)])
+
     def _add_cell(self, row: int, column: int, cell: Image.Image) -> None:
+        ratio = self.cells.devicePixelRatioF()
+        side = round(48 * ratio)  # 48 logical pixels, stored at the screen density
         pixmap = QPixmap.fromImage(pil_to_qimage(cell)).scaled(
-            48, 48, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
+            side, side, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
+        pixmap.setDevicePixelRatio(ratio)
         item = QListWidgetItem(QIcon(pixmap), f"{row + 1}·{column + 1}")
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(Qt.CheckState.Checked)
@@ -264,40 +300,58 @@ class SpriteSheetDialog(QDialog):
         return {self.cells.item(index).data(CELL_ROLE) for index in range(self.cells.count())
                 if self.cells.item(index).checkState() != Qt.CheckState.Checked}
 
+    def chosen_count(self) -> int:
+        """Sprites the output would produce (an upper bound when the preview only shows the grid)."""
+        return max(0, self.cell_count - len(self._unchecked()))
+
     def chosen_sprites(self) -> list[tuple[int, int, Image.Image]]:
         """Checked cells (all cells beyond the listed ones), optionally trimmed."""
+        if self.sheet is None or self._grid is None:
+            return []
         unchecked = self._unchecked()
-        sprites = []
-        for row, column, box in self.cell_boxes:
-            if (row, column) in unchecked:
-                continue
-            cell = self.sheet.crop(box)
-            bounds = alpha_bounds(cell)
-            if self.trim.isChecked() and bounds is not None:
-                cell = cell.crop(bounds)
-            sprites.append((row, column, cell))
-        return sprites
+        return [(row, column, image) for row, column, image
+                in extract_sprites(self.sheet, self._grid, self.trim.isChecked(), self._skip_empty)
+                if (row, column) not in unchecked]
 
     def _update_summary(self) -> None:
         if self.sheet is None:
             self.summary.setText("Importez une spritesheet pour définir la grille.")
             ready = False
+        elif self._grid_error:
+            self.summary.setText(self._grid_error)
+            ready = False
         else:
-            unchecked = self._unchecked()
-            count = sum(1 for row, column, _box in self.cell_boxes if (row, column) not in unchecked)
-            hidden = max(0, len(self.cell_boxes) - MAX_LISTED_CELLS)
-            text = (f"{self.sheet.width} × {self.sheet.height} px · {len(self.cell_boxes)} cellule(s) · "
-                    f"{count} sprite(s) à extraire")
-            if hidden:
-                text += f" · {hidden} cellule(s) non affichée(s), toujours extraites"
+            count = self.chosen_count()
+            text = f"{self.sheet.width} × {self.sheet.height} px · {self.cell_count} cellule(s) · "
+            if self.detailed:
+                text += f"{count} sprite(s) à extraire"
+                hidden = max(0, self.cell_count - MAX_LISTED_CELLS)
+                if hidden:
+                    text += f" · {hidden} cellule(s) non affichée(s), toujours extraites"
+            else:
+                text += (f"jusqu'à {count} sprite(s) à extraire · plus de {MAX_DETAILED_CELLS} cellules : "
+                         "aperçu limité à la grille, sans vignettes")
             self.summary.setText(text)
             ready = count > 0
         self.export_button.setEnabled(ready)
         self.layers_button.setEnabled(ready)
 
+    def confirm_large_output(self) -> bool:
+        """Ask before producing a very large number of files or layers."""
+        count = self.chosen_count()
+        if count <= MAX_DETAILED_CELLS:
+            return True
+        answer = QMessageBox.question(
+            self, "Découper une spritesheet",
+            f"La grille donne jusqu'à {count} sprites. L'opération peut être longue et créer autant "
+            "de fichiers ou de calques.\n\nContinuer ?")
+        return answer == QMessageBox.StandardButton.Yes
+
     # --- Output ------------------------------------------------------------------------------
 
     def export(self) -> list[Path]:
+        if not self.confirm_large_output():
+            return []
         directory = QFileDialog.getExistingDirectory(self, "Dossier de destination",
                                                      self.window_.initial_path("sprites"))
         if not directory:
@@ -312,6 +366,8 @@ class SpriteSheetDialog(QDialog):
         return written
 
     def add_as_layers(self) -> bool:
+        if not self.confirm_large_output():
+            return False
         sprites = self.chosen_sprites()
         if not sprites:
             return False
