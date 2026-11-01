@@ -94,6 +94,7 @@ from .template_library import TemplateLibraryDialog
 from .templates import extract_elements, insert_elements, list_templates, save_template
 from .textpath import DEFAULT_CONTROLS, SHAPE_LABELS, TEXT_SHAPES, normalize_controls
 from .theme import COLORS, STYLE, dialog_button_style
+from .token_dialog import TokenDialog
 from .widgets import CommitPlainTextEdit, InlineTextEditor, LayerListWidget, SidebarBackground
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1116,6 +1117,8 @@ class MainWindow(QMainWindow):
         tools_menu.addSeparator()
         self._action(tools_menu, "Supprimer l'arrière-plan…", self.remove_background)
         self._action(tools_menu, "Pipette écran (tout le bureau)", self.start_screen_picker)
+        tools_menu.addSeparator()
+        self._action(tools_menu, "Créateur de tokens…", self.open_token_creator)
         self.text_tool_shortcut = QShortcut(QKeySequence("T"), self.canvas)
         self.text_tool_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         self.text_tool_shortcut.activated.connect(
@@ -3319,6 +3322,24 @@ class MainWindow(QMainWindow):
 
     # --- Element template library ----------------------------------------------------------
 
+    def add_image_layer(self, data: bytes, name: str) -> bool:
+        """Add PNG bytes as a centred image layer (tokens, imports from tools)."""
+        holder = {}
+
+        def add(doc):
+            holder["id"] = doc.add_image_bytes(data, name).id
+
+        if not self.mutate(f"Ajouter : {name}", add):
+            return False
+        self.select_layer(holder["id"])
+        return True
+
+    def open_token_creator(self) -> None:
+        dialog = TokenDialog(self)
+        layer = self.document.layer(self.selected_id)
+        if layer is not None and layer.kind == "image":
+            dialog.use_selected_layer()
+        dialog.exec()
     def open_template_library(self) -> bool:
         dialog = TemplateLibraryDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted or dialog.selected_entry() is None:

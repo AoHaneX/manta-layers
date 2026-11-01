@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageDraw
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QDialog, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
 
 from app import templates
 from app.builtin_templates import BUILTIN_TEMPLATES, builtin_template
@@ -14,6 +14,8 @@ from app.model import Document, Layer
 from app.storage import open_project
 from app.template_library import TemplateLibraryDialog
 from app.templates import extract_elements, insert_elements, list_templates, save_template
+from app.token_dialog import TokenDialog
+from app.tokens import TokenSettings, render_token
 
 
 @pytest.fixture
@@ -119,6 +121,59 @@ def test_editing_a_template_saves_it_back_with_its_name(window, library):
     assert len(open_project(path).layers) == 3
 
 
+# --- Tokens --------------------------------------------------------------------------------
+
+
+def test_circular_token_is_transparent_outside_with_its_border():
+    portrait = Image.new("RGBA", (300, 200), (20, 120, 220, 255))
+    token = render_token(portrait, TokenSettings(size=128, frame="circle", border_color="#FF0000", border_width=8))
+    assert token.size == (128, 128) and token.mode == "RGBA"
+    assert token.getpixel((0, 0))[3] == 0 and token.getpixel((64, 64)) == (20, 120, 220, 255)
+    assert token.getpixel((64, 4))[:3] == (255, 0, 0)
+
+
+@pytest.mark.parametrize("frame", ["square", "thick", "decorative"])
+def test_other_frames_render_and_keep_a_transparent_corner_or_border(frame):
+    token = render_token(Image.new("RGBA", (64, 64), (0, 255, 0, 255)),
+                         TokenSettings(size=96, frame=frame, border_width=6))
+    assert token.getpixel((48, 48))[3] == 255
+    assert token.getpixel((0, 0))[3] < 255
+
+
+def test_large_tokens_are_supersampled_less():
+    from app.tokens import supersampling
+    assert [supersampling(size) for size in (256, 1024, 2048, 4096)] == [4, 4, 2, 1]
+    token = render_token(Image.new("RGBA", (40, 40), (255, 255, 255, 255)), TokenSettings(size=2048, border_width=0))
+    assert token.size == (2048, 2048) and token.getpixel((1024, 1024))[3] == 255
+
+
+def test_token_settings_are_validated_and_offsets_move_the_portrait():
+    with pytest.raises(ValueError):
+        render_token(Image.new("RGBA", (10, 10)), TokenSettings(size=10))
+    with pytest.raises(ValueError):
+        render_token(Image.new("RGBA", (10, 10)), TokenSettings(border_color="rouge"))
+    half = Image.new("RGBA", (100, 100), (255, 0, 0, 255))
+    half.paste((0, 0, 255, 255), (50, 0, 100, 100))
+    centred = render_token(half, TokenSettings(size=100, border_width=0))
+    shifted = render_token(half, TokenSettings(size=100, border_width=0, offset_x=30))
+    assert centred.getpixel((60, 50))[:3] == (0, 0, 255) and shifted.getpixel((60, 50))[:3] == (255, 0, 0)
+
+
+def test_token_dialog_exports_a_png_and_adds_a_layer(window, monkeypatch, tmp_path):
+    window.install_document(Document(600, 600), None)
+    dialog = TokenDialog(window)
+    dialog.set_source(Image.new("RGBA", (50, 80), (10, 200, 10, 255)), "Héros")
+    dialog.size_spin.setValue(256)
+    target = tmp_path / "jetons" / "heros"
+    target.parent.mkdir()
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), "PNG (*.png)"))
+    exported = dialog.export_png()
+    assert exported == target.with_suffix(".png")
+    with Image.open(exported) as image:
+        assert image.size == (256, 256) and image.mode == "RGBA"
+    assert window.initial_path("token") == str(target.parent)
+    assert dialog.add_to_project()
+    assert window.document.layers[-1].name == "Token : Héros"
 
 
 # --- Remembered folders ------------------------------------------------------------------
