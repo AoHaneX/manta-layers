@@ -7,7 +7,7 @@ import pytest
 from conftest import png_bytes
 
 from app import storage
-from app.model import PROJECT_VERSION, Document
+from app.model import COMPATIBLE_VERSION, PROJECT_VERSION, Document
 from app.storage import open_project, save_project
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -84,9 +84,16 @@ def test_corrupted_compressed_image_is_reported_as_invalid(tmp_path):
         open_project(path)
 
 
-def test_saves_use_the_current_version(tmp_path):
+def test_saves_use_the_oldest_version_able_to_hold_the_project(tmp_path):
+    # Folders and shapes need the current version; other projects stay readable by older releases.
     path = tmp_path / "neuf.manta"
     save_project(Document(10, 10), path)
+    with ZipFile(path) as archive:
+        assert json.loads(archive.read("manifest.json"))["version"] == COMPATIBLE_VERSION
+    document = Document(10, 10)
+    document.add_text("forme")
+    document.layers[0].kind = "shape"
+    save_project(document, path)
     with ZipFile(path) as archive:
         assert json.loads(archive.read("manifest.json"))["version"] == PROJECT_VERSION
 

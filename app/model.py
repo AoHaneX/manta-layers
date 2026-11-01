@@ -12,9 +12,12 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from .textpath import DEFAULT_CONTROLS, normalize_controls, normalize_shape
 
 # Version 2 adds text path shapes, Bézier controls and layer masks.
+# Version 3 adds layer folders and shape layers. A project that uses neither is
+# still written as version 2, so that older Manta Layers releases keep opening it.
 # Version 1 projects still open: their fields are converted on load.
-PROJECT_VERSION = 2
-SUPPORTED_VERSIONS = (1, 2)
+PROJECT_VERSION = 3
+COMPATIBLE_VERSION = 2
+SUPPORTED_VERSIONS = (1, 2, 3)
 MAX_DIMENSION = 16384
 # Au-delà, le décodage et l'affichage d'un calque deviennent trop coûteux en mémoire
 # (une image RGBA de 8192 × 8192 occupe déjà 256 Mo une fois décodée).
@@ -29,6 +32,11 @@ IMPORT_FORMATS = ("PNG", "JPEG", "WEBP", "BMP", "GIF")
 ASSET_FORMATS = ("PNG",)
 # Ancien nom du logiciel : les projets .mcrab portent encore cet identifiant.
 LEGACY_PROJECT_FORMAT = "MantaCrab"
+LAYER_KINDS = ("image", "text", "shape")
+# Speech and thought bubbles and banners are used by the bundled templates.
+SHAPE_TYPES = ("rectangle", "ellipse", "line", "arrow", "polygon", "speech", "thought", "banner")
+MIN_SHAPE_SIZE = 1.0
+MAX_STROKE_WIDTH = 500.0
 
 
 def new_id() -> str:
@@ -103,6 +111,18 @@ class Layer:
     # Optional non-destructive layer mask: asset id of an 8-bit PNG the size of
     # the source image (255 visible, 0 hidden). Used by selections and background removal.
     mask: str | None = None
+    # Folder containing the layer (see Folder), None at the top level.
+    folder: str | None = None
+    # Vector shape layers: geometry in item coordinates, drawn in a
+    # shape_width × shape_height box whose top-left corner is the layer position.
+    shape_type: str = "rectangle"
+    shape_width: float = 200.0
+    shape_height: float = 120.0
+    fill_color: str | None = None
+    stroke_color: str | None = "#000000"
+    stroke_width: float = 0.0
+    corner_radius: float = 0.0
+    polygon_sides: int = 6
 
     @classmethod
     def from_dict(cls, raw: dict) -> Layer:
@@ -111,7 +131,7 @@ class Layer:
         permitted = {f.name for f in fields(cls)}
         layer = cls(**{k: v for k, v in raw.items() if k in permitted})
         defaults = cls()
-        if layer.kind not in ("image", "text"):
+        if layer.kind not in LAYER_KINDS:
             raise ValueError(f"Type de calque non reconnu : {layer.kind}")
         if not isinstance(layer.id, str) or not layer.id:
             raise ValueError("Identifiant de calque invalide")
@@ -211,7 +231,50 @@ class Layer:
                 "opacity": opacity,
             })
         layer.eraser_strokes = valid_strokes
+        if layer.folder is not None and (not isinstance(layer.folder, str) or not layer.folder):
+            layer.folder = None
+        layer.normalize_shape_fields()
         return layer
+
+    def normalize_shape_fields(self) -> None:
+        """Clamp the shape properties to valid values (corrupted files, edits)."""
+        if self.shape_type not in SHAPE_TYPES:
+            self.shape_type = "rectangle"
+        self.shape_width = _number(self.shape_width, 200.0, MIN_SHAPE_SIZE, MAX_DIMENSION * 2)
+        self.shape_height = _number(self.shape_height, 120.0, MIN_SHAPE_SIZE, MAX_DIMENSION * 2)
+        if self.fill_color is not None and not is_hex_color(self.fill_color):
+            self.fill_color = None
+        if self.stroke_color is not None and not is_hex_color(self.stroke_color):
+            self.stroke_color = None
+        self.stroke_width = _number(self.stroke_width, 0.0, 0.0, MAX_STROKE_WIDTH)
+        self.corner_radius = _number(self.corner_radius, 0.0, 0.0, MAX_DIMENSION)
+        self.polygon_sides = int(_number(self.polygon_sides, 6, 3, 24))
+
+
+@dataclass
+class Folder:
+    """Named group of layers. Its layers stay separate and editable.
+
+    Members are the layers whose ``folder`` is this id; they always form a
+    contiguous block in the stacking order (see Document.normalize_folders).
+    """
+
+    id: str = field(default_factory=new_id)
+    name: str = "Dossier"
+    visible: bool = True
+    collapsed: bool = False
+
+    @classmethod
+    def from_dict(cls, raw) -> Folder:
+        if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not raw["id"]:
+            raise ValueError("Dossier de calques invalide")
+        name, visible, collapsed = raw.get("name"), raw.get("visible"), raw.get("collapsed")
+        return cls(
+            id=raw["id"],
+            name=name if isinstance(name, str) and name.strip() else "Dossier",
+            visible=visible if isinstance(visible, bool) else True,
+            collapsed=collapsed if isinstance(collapsed, bool) else False,
+        )
 
 
 @dataclass
@@ -221,6 +284,7 @@ class Document:
     background: str | None = None
     layers: list[Layer] = field(default_factory=list)  # bas -> haut
     assets: dict[str, bytes] = field(default_factory=dict)
+    folders: list[Folder] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         try:
@@ -232,7 +296,8 @@ class Document:
         self.width, self.height = width, height
 
     def clone(self) -> Document:
-        return Document(self.width, self.height, self.background, deepcopy(self.layers), self.assets.copy())
+        return Document(self.width, self.height, self.background, deepcopy(self.layers), self.assets.copy(),
+                        deepcopy(self.folders))
 
     def layer(self, layer_id: str | None) -> Layer | None:
         return next((lay for lay in self.layers if lay.id == layer_id), None)
@@ -286,6 +351,11 @@ class Document:
         return target
 
     def reorder_layer(self, layer_id: str, delta: int) -> bool:
+        """Move a layer one step up (+1) or down (-1) in the stack.
+
+        A layer at the edge of its folder leaves it; a top-level layer steps
+        over a whole neighbouring folder instead of entering it.
+        """
         target = self.layer(layer_id)
         if target is None:
             return False
@@ -293,13 +363,137 @@ class Document:
         new_index = index + delta
         if not (0 <= new_index < len(self.layers)):
             return False
-        self.layers[index], self.layers[new_index] = self.layers[new_index], self.layers[index]
+        neighbour = self.layers[new_index]
+        if target.folder is not None and neighbour.folder != target.folder:
+            target.folder = None
+        elif target.folder is None and neighbour.folder is not None:
+            block = self.folder_members(neighbour.folder)
+            edge = block[-1] if delta > 0 else block[0]
+            self.layers.remove(target)
+            self.layers.insert(self.layers.index(edge) + (1 if delta > 0 else 0), target)
+        else:
+            self.layers[index], self.layers[new_index] = neighbour, target
+        self.normalize_folders()
         return True
 
+    # --- Folders -----------------------------------------------------------------------
+
+    def folder(self, folder_id: str | None) -> Folder | None:
+        return next((item for item in self.folders if item.id == folder_id), None)
+
+    def folder_members(self, folder_id: str | None) -> list[Layer]:
+        """Layers of a folder, bottom to top."""
+        return [layer for layer in self.layers if folder_id is not None and layer.folder == folder_id]
+
+    def is_visible(self, layer: Layer) -> bool:
+        """Effective visibility: the layer and its folder must both be shown."""
+        folder = self.folder(layer.folder)
+        return layer.visible and (folder is None or folder.visible)
+
+    def normalize_folders(self) -> None:
+        """Keep the folder structure valid after any change.
+
+        Unknown folder references are dropped, the members of each folder are
+        regrouped into one contiguous block at the place of their topmost layer,
+        and folders left without layers are removed.
+        """
+        known = {item.id for item in self.folders}
+        for layer in self.layers:
+            if layer.folder not in known:
+                layer.folder = None
+        for item in self.folders:
+            indices = [index for index, layer in enumerate(self.layers) if layer.folder == item.id]
+            if not indices or indices[-1] - indices[0] + 1 == len(indices):
+                continue
+            members = [self.layers[index] for index in indices]
+            others = [layer for layer in self.layers if layer.folder != item.id]
+            position = sum(1 for layer in self.layers[:indices[-1]] if layer.folder != item.id)
+            self.layers = others[:position] + members + others[position:]
+        used = {layer.folder for layer in self.layers}
+        self.folders = [item for item in self.folders if item.id in used]
+
+    def create_folder(self, layer_ids, name: str) -> Folder:
+        """Group layers into a new folder placed where the topmost of them was."""
+        wanted = set(layer_ids)
+        members = [layer for layer in self.layers if layer.id in wanted]
+        if not members:
+            raise ValueError("Aucun calque à regrouper")
+        clean_name = " ".join(str(name).split()) or "Dossier"
+        top = max(self.layers.index(layer) for layer in members)
+        others = [layer for layer in self.layers if layer.id not in wanted]
+        position = sum(1 for layer in self.layers[:top] if layer.id not in wanted)
+        folder = Folder(name=clean_name)
+        self.folders.append(folder)
+        for layer in members:
+            layer.folder = folder.id
+        self.layers = others[:position] + members + others[position:]
+        self.normalize_folders()
+        return folder
+
+    def dissolve_folder(self, folder_id: str) -> None:
+        """Remove a folder but keep its layers, in place, at the top level."""
+        for layer in self.folder_members(folder_id):
+            layer.folder = None
+        self.normalize_folders()
+
+    def remove_layers(self, layer_ids) -> int:
+        wanted = set(layer_ids)
+        before = len(self.layers)
+        self.layers = [layer for layer in self.layers if layer.id not in wanted]
+        self.normalize_folders()
+        return before - len(self.layers)
+
+    def move_layer(self, layer_id: str, anchor_id: str | None, above: bool, folder_id: str | None) -> bool:
+        """Move a layer next to ``anchor_id`` (or to an end of the stack), into ``folder_id``."""
+        layer = self.layer(layer_id)
+        anchor = self.layer(anchor_id) if anchor_id is not None else None
+        if layer is None or (anchor_id is not None and anchor is None):
+            return False
+        if anchor is layer:
+            if layer.folder == folder_id:
+                return False
+            layer.folder = folder_id
+            self.normalize_folders()
+            return True
+        self.layers.remove(layer)
+        if anchor is None:
+            index = len(self.layers) if above else 0
+        else:
+            index = self.layers.index(anchor) + (1 if above else 0)
+        self.layers.insert(index, layer)
+        layer.folder = folder_id if self.folder(folder_id) is not None else None
+        self.normalize_folders()
+        return True
+
+    def move_folder(self, folder_id: str, anchor_id: str | None, above: bool) -> bool:
+        """Move a whole folder above or below a layer (outside any other folder)."""
+        members = self.folder_members(folder_id)
+        anchor = self.layer(anchor_id) if anchor_id is not None else None
+        if not members or (anchor_id is not None and anchor is None) or anchor in members:
+            return False
+        if anchor is not None and anchor.folder is not None:
+            block = self.folder_members(anchor.folder)
+            anchor = block[-1] if above else block[0]
+        others = [layer for layer in self.layers if layer.folder != folder_id]
+        if anchor is None:
+            index = len(others) if above else 0
+        else:
+            index = others.index(anchor) + (1 if above else 0)
+        self.layers = others[:index] + members + others[index:]
+        self.normalize_folders()
+        return True
+
+    def uses_version_3(self) -> bool:
+        return bool(self.folders) or any(layer.kind == "shape" for layer in self.layers)
+
     def manifest(self) -> dict:
-        return {"format": "MantaLayers", "version": PROJECT_VERSION,
-                "width": self.width, "height": self.height, "background": self.background,
-                "layers": [asdict(lay) for lay in self.layers]}
+        manifest = {"format": "MantaLayers",
+                    "version": PROJECT_VERSION if self.uses_version_3() else COMPATIBLE_VERSION,
+                    "width": self.width, "height": self.height, "background": self.background,
+                    "layers": [asdict(lay) for lay in self.layers]}
+        if self.folders:
+            manifest["folders"] = [asdict(item) for item in self.folders]
+        return manifest
 
     @classmethod
     def from_manifest(cls, manifest: dict, assets: dict[str, bytes]) -> Document:
@@ -330,4 +524,12 @@ class Document:
                 layer.mask = None
         if len({layer.id for layer in doc.layers}) != len(doc.layers):
             raise ValueError("Identifiants de calques dupliqués")
+        raw_folders = manifest.get("folders", [])
+        if not isinstance(raw_folders, list):
+            raise ValueError("Liste de dossiers invalide")
+        folders = [Folder.from_dict(item) for item in raw_folders]
+        if len({item.id for item in folders}) != len(folders):
+            raise ValueError("Identifiants de dossiers dupliqués")
+        doc.folders = folders
+        doc.normalize_folders()
         return doc
