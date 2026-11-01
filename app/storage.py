@@ -48,10 +48,15 @@ def save_project(
 
 
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
+# Manta Layers only writes these. Other methods (LZMA, BZIP2) raise their own
+# exceptions on damaged data: they are refused instead of being decoded.
+READABLE_COMPRESSIONS = (ZIP_STORED, ZIP_DEFLATED)
 
 
 def read_manifest(archive: ZipFile) -> dict:
     """Lit le manifeste en refusant les fichiers démesurés ou mal formés."""
+    if any(info.compress_type not in READABLE_COMPRESSIONS for info in archive.infolist()):
+        raise ValueError("Méthode de compression non prise en charge")
     if archive.getinfo("manifest.json").file_size > MAX_MANIFEST_BYTES:
         raise ValueError("Manifeste de projet trop volumineux")
     manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
