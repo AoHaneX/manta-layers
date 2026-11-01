@@ -90,7 +90,8 @@ from .selection import COMBINE_LABELS, COMBINE_MODES
 from .shape_item import shape_from_drag
 from .shape_panel import ShapePropertyRows
 from .storage import open_project, save_project
-from .templates import extract_elements, list_templates, save_template
+from .template_library import TemplateLibraryDialog
+from .templates import extract_elements, insert_elements, list_templates, save_template
 from .textpath import DEFAULT_CONTROLS, SHAPE_LABELS, TEXT_SHAPES, normalize_controls
 from .theme import COLORS, STYLE, dialog_button_style
 from .widgets import CommitPlainTextEdit, InlineTextEditor, LayerListWidget, SidebarBackground
@@ -211,6 +212,8 @@ class MainWindow(QMainWindow):
         self.recovery_dir = Path(recovery_dir) if recovery_dir is not None else user_data_directory() / "recovery"
         self.document = Document()
         self.project_path: Path | None = None
+        # Element template opened for editing ({"path", "name"}): saving writes it back.
+        self.editing_template: dict | None = None
         self.selected_id: str | None = None
         # Dernier calque choisi : les outils continuent de le viser même si la
         # sélection est vidée, par exemple après un clic dans le vide.
@@ -622,6 +625,10 @@ class MainWindow(QMainWindow):
         add_text_tool = QPushButton("T  Ajouter un calque texte")
         add_text_tool.clicked.connect(self.add_text)
         tools_layout.addWidget(add_text_tool)
+        library_button = QPushButton("Insérer un modèle…")
+        library_button.setToolTip("Bulles, encadrés, bandeaux, cadres et vos propres modèles · Ctrl+Maj+B")
+        library_button.clicked.connect(self.open_template_library)
+        tools_layout.addWidget(library_button)
         self.color_tools_label = QLabel("Couleur")
         tools_layout.addWidget(self.color_tools_label)
         color_editor = QWidget()
@@ -1139,6 +1146,10 @@ class MainWindow(QMainWindow):
         self.selection_actions = (deselect, copy_layer, cut_layer, clear, hide, reveal)
         self._update_selection_actions()
         QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
+        insertion = self.menuBar().addMenu("Insertion")
+        self._action(insertion, "Image…", self.add_images)
+        self._action(insertion, "Texte…", self.add_text)
+        self._action(insertion, "Bibliothèque de modèles…", self.open_template_library, "Ctrl+Shift+B")
         v = self.menuBar().addMenu("Affichage")
         self._action(v, "Afficher / masquer le panneau d'utilitaires", self.toggle_left_sidebar, "F9")
         self._action(v, "Ajuster à la fenêtre", self.canvas.fit_document, "Ctrl+0")
@@ -3169,6 +3180,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Création impossible", str(exc))
             return
         self.project_path = None
+        self.editing_template = None
+        template = dialog.selected_template() if dialog.tabs.currentIndex() == 1 else None
+        self.template_origin = template.stem if template is not None else None
         self.undo_stack.clear()
         self.undo_stack.setClean()
         self._reset_selection()
@@ -3257,6 +3271,8 @@ class MainWindow(QMainWindow):
         )
 
     def save_document(self) -> bool:
+        if self.editing_template is not None:
+            return self._write_template_back()
         if self.project_path is None:
             return self.save_as_document()
         return self._write_project(self.project_path)
@@ -3274,8 +3290,81 @@ class MainWindow(QMainWindow):
         if not self._write_project(destination):
             return False
         self.project_path = destination
+        self.editing_template = None  # "save as" turns an edited template into a project
         self.update_title()
         return True
+
+    def _write_template_back(self) -> bool:
+        """Save the element template being edited, with a fresh thumbnail."""
+        self._flush_pending_curve()
+        template = self.editing_template
+        try:
+            save_template(self.document, template["name"], self._template_thumbnail(self.document),
+                          destination=template["path"], kind="elements")
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Enregistrement du modèle impossible", str(exc))
+            return False
+        self.undo_stack.setClean()
+        self._discard_recovery(self._session_id)
+        self.statusBar().showMessage(f"Modèle enregistré : {template['name']}", 5000)
+        return True
+
+    # --- Element template library ----------------------------------------------------------
+
+    def open_template_library(self) -> bool:
+        dialog = TemplateLibraryDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.selected_entry() is None:
+            return False
+        name, (kind, value) = dialog.selected_name(), dialog.selected_entry()
+        try:
+            elements = dialog.load_selected()
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Modèle illisible", f"{name}\n{exc}")
+            return False
+        if dialog.action == "edit" and kind == "user":
+            return self.edit_element_template(Path(value), name, elements)
+        return self.insert_template_elements(elements, name)
+
+    def insert_template_elements(self, elements: Document, name: str) -> bool:
+        """Insert a template's layers, centred and on top, as separate editable layers."""
+        offset = ((self.document.width - elements.width) / 2, (self.document.height - elements.height) / 2)
+        holder = {}
+
+        def apply(doc):
+            holder["ids"] = insert_elements(doc, elements, offset)
+
+        if not self.mutate(f"Insérer le modèle « {name} »", apply):
+            return False
+        self.set_checked_layers(holder["ids"])
+        if holder["ids"]:
+            self.select_layer(holder["ids"][-1])
+        self.statusBar().showMessage("Modèle inséré · ses calques sont cochés : glissez-en un pour tout déplacer", 5000)
+        return True
+
+    def edit_element_template(self, path: Path, name: str, elements: Document) -> bool:
+        """Open an element template as the document; Save writes it back to the library."""
+        if not self.maybe_save():
+            return False
+        try:
+            self.install_document(elements, None)
+        except Exception as exc:
+            QMessageBox.critical(self, "Modèle illisible", str(exc))
+            return False
+        self.project_path = None
+        self.editing_template = {"path": path, "name": name}
+        self.template_origin = path.stem
+        self.undo_stack.clear()
+        self.undo_stack.setClean()
+        self._reset_selection()
+        self.canvas.fit_document()
+        self.update_title()
+        self.statusBar().showMessage("Modification du modèle · Sauvegarder le projet l'enregistre", 6000)
+        return True
+
+    def _file_stem(self) -> str:
+        if self.editing_template is not None:
+            return self.editing_template["name"]
+        return self.project_path.stem if self.project_path else "MantaLayers"
 
     def _write_project(self, destination: Path) -> bool:
         self._flush_pending_curve()
@@ -3404,7 +3493,10 @@ class MainWindow(QMainWindow):
                    for index in range(min(clean, current), max(clean, current)))
 
     def update_title(self, *_):
-        name = self.project_path.name if self.project_path else "Sans titre"
+        if self.editing_template is not None:
+            name = f"Modèle : {self.editing_template['name']}"
+        else:
+            name = self.project_path.name if self.project_path else "Sans titre"
         modified = " *" if self.is_modified() else ""
         self.setWindowTitle(f"{name}{modified} — Manta Layers {__version__} | ReefKit")
 
