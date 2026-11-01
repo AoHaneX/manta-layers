@@ -169,3 +169,12 @@ def test_trimming_a_layer_with_new_strokes_keeps_its_look_for_any_shift():
     expected = render_layer_with_mask(layer, document).crop((3, 5, 17, 15))
     assert render_layer_with_mask(trimmed, probe).tobytes() == expected.tobytes()
     assert (trimmed.x, trimmed.y) == (3, 5)
+
+
+def test_layers_without_edits_are_not_cached_twice():
+    from app import graphics
+    document = Document(20, 20)
+    plain = document.add_image_bytes(png_bytes(16, 16), "plain")
+    graphics.RENDER_CACHE.clear()
+    graphics.render_layer_image(document.assets[plain.asset], {}, [], [], cache_key=plain.asset)
+    assert graphics.RENDER_CACHE._used == 0  # the pixmap cache keeps the displayed layer
