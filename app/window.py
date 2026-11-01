@@ -1738,8 +1738,10 @@ class MainWindow(QMainWindow):
         after = self.document.clone()
         try:
             fn(after)
-            # Safety net: whatever the change, folders stay contiguous and never empty.
+            # Safety net: whatever the change, folders stay contiguous and never empty,
+            # and images or masks no layer uses any more are not carried along.
             after.normalize_folders()
+            after.prune_assets()
         except Exception as exc:
             self._report_failure(description, exc)
             return False

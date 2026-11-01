@@ -483,6 +483,15 @@ class Document:
         self.normalize_folders()
         return True
 
+    def used_assets(self) -> set[str]:
+        return {asset for layer in self.layers if layer.kind == "image"
+                for asset in (layer.asset, layer.mask) if asset}
+
+    def prune_assets(self) -> None:
+        """Forget the images and masks no layer uses any more (deleted layers, replaced masks)."""
+        used = self.used_assets()
+        self.assets = {asset: data for asset, data in self.assets.items() if asset in used}
+
     def uses_version_3(self) -> bool:
         return bool(self.folders) or any(layer.kind == "shape" for layer in self.layers)
 

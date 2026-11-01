@@ -90,3 +90,27 @@ def test_inline_editor_is_dropped_when_history_changes_the_scene(window):
     window.begin_inline_text_edit(text.id)
     window.mutate("Autre action", lambda doc: setattr(doc, "width", 640))
     assert window._inline is None and window.document.layer(text.id).text == "Avant"
+
+
+# --- Memory: images and masks no layer uses any more ------------------------------------
+
+def test_deleted_layers_and_replaced_masks_leave_no_image_behind(window):
+    document = Document(50, 50)
+    kept = document.add_image_bytes(png_bytes(20, 20), "gardé")
+    removed = document.add_image_bytes(png_bytes(20, 20), "supprimé")
+    window.install_document(document, kept.id)
+    window.undo_stack.clear()
+    window.select_layer(removed.id)
+    window.delete_layer()
+    assert set(window.document.assets) == {kept.asset}
+    for _ in range(3):  # each masking writes a new mask; the previous one is forgotten
+        window.selection_mask = S.rectangle((50, 50), (0, 0, 10, 10), False)
+        window.select_layer(kept.id)
+        window.clear_selection_content()
+        window.selection_mask = S.invert(S.rectangle((50, 50), (0, 0, 10, 10), False))
+        window.reveal_selection_in_mask()
+    assert len(window.document.assets) <= 2
+    while window.undo_stack.canUndo():
+        window.undo_stack.undo()
+    assert window.document.layer(removed.id) is not None  # undo still has its snapshot
+    assert removed.asset in window.document.assets
