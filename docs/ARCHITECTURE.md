@@ -16,7 +16,9 @@ Note pour les développeurs. L'usage est décrit dans le [README](../README.md).
 | `textpath.py` | Géométrie des trajectoires de texte : droit, arc, U, U inversé, Bézier ; poignées | non |
 | `selection.py` | Masques de sélection : formes, baguette, combinaisons, adoucissement, masques de calque | non |
 | `background.py` | Détourage : couleur de fond (sans IA) et modèles ONNX facultatifs, téléchargement explicite | non |
-| `storage.py` | Format `.manta` (ZIP + `manifest.json` + PNG), écriture atomique vérifiée | non |
+| `storage.py` | Format `.manta` (ZIP + `manifest.json` + PNG non recompressés), écriture atomique vérifiée | non |
+| `recovery.py` | Copies de récupération : écriture en arrière-plan, verrous, copies des sessions interrompues | QtCore seulement |
+| `export.py` | Écriture de l'image finale ou d'un calque en PNG, JPEG ou WebP | non |
 | `templates.py`, `paths.py` | Modèles de projet et d'éléments (extraction, insertion), dossier de données utilisateur, noms de fichiers valides | non |
 | `diagnostics.py` | Journal des erreurs (`logs/manta.log`, `crash.log`), `sys.excepthook`, messages Qt ; installé par `main.py` | non (Qt importé à la demande) |
 | `imaging.py` | Marges transparentes, grilles et extraction de spritesheets | non |
@@ -28,7 +30,7 @@ Note pour les développeurs. L'usage est décrit dans le [README](../README.md).
 | `template_library.py`, `token_dialog.py`, `sprite_dialog.py` | Bibliothèque de modèles, créateur de tokens, découpe de spritesheets | oui |
 | `graphics.py` | Canvas, item de texte vectoriel, rendu et cache des calques, ponts Pillow ↔ Qt | oui |
 | `background_dialog.py` | Aperçu du détourage, calcul en arrière-plan (`QThread`) | oui |
-| `window.py` | Fenêtre, outils, propriétés, historique, presse-papiers, récupération de session | oui |
+| `window.py` | Fenêtre, outils, propriétés, historique, presse-papiers ; propose les copies de récupération | oui |
 | `dialogs.py`, `widgets.py`, `icons.py`, `theme.py` | Boîtes de dialogue, petits widgets, pictogrammes, charte ReefKit | oui |
 
 ## Dossiers, sélection multiple et fusion
@@ -77,8 +79,9 @@ Un calque texte reste du texte : `text`, police, taille, couleur, et une traject
 
 - Les déplacements, redimensionnements, rotations et déformations à la souris forment une commande au relâchement.
 - Les flèches du clavier déplacent le calque (Maj : 10 px) ; les pressions rapprochées sont fusionnées par `mergeWith`.
-- Le format de projet est en **version 2**. Les versions 1 (dont les anciens `.mcrab`) sont converties à l'ouverture ; une version plus récente est refusée avec un message clair.
-- Rendu des calques image : `PIXMAP_CACHE` garde les calques affichés ; `RENDER_CACHE` garde les rendus avant masque, indexés par l'asset et la suite des remplacements, traits et remplissages rejoués. Un nouveau trait ou remplissage repart du plus long préfixe déjà rendu : il ne coûte que lui-même, et son annulation est immédiate.
+- Le format de projet est en **version 3** si le projet contient des dossiers ou des formes, sinon en **version 2**. Les versions 1 (dont les anciens `.mcrab`) sont converties à l'ouverture ; une version plus récente est refusée avec un message clair. Les images sont rangées sans recompression (`ZIP_STORED`) ; seules les méthodes STORED et DEFLATE sont lues.
+- Après chaque modification, les images et masques qu'aucun calque n'utilise sont retirés du document (`Document.prune_assets`) ; les instantanés de l'historique gardent les leurs.
+- Rendu des calques image : `PIXMAP_CACHE` garde les calques affichés ; `RENDER_CACHE` garde les rendus retouchés avant masque, indexés par l'asset et la suite des remplacements, traits et remplissages rejoués (un calque sans retouche n'y entre pas). Un nouveau trait ou remplissage repart du plus long préfixe déjà rendu : il ne coûte que lui-même, et son annulation est immédiate.
 - La sauvegarde écrit un fichier temporaire, le force sur le disque (`fsync`), le relit (`open_project`), puis remplace l'ancien fichier.
 - **Récupération de session :**
   - toutes les 60 s, si le document a des modifications non enregistrées, une copie est écrite dans `%LOCALAPPDATA%\MantaLayers\recovery`, protégée par un `QLockFile` ; elle est écrite par un thread (`RecoveryWriter`) à partir d'un instantané du document, sans bloquer l'interface ; un enregistrement ou une fermeture attend la fin d'une copie en cours avant de la supprimer ;

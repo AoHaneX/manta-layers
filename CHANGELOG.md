@@ -50,6 +50,17 @@
 - Les sprites exportés depuis un calque dont le nom contient `:` ou d'autres caractères interdits (« Token : … ») sont écrits sous un nom valide, au lieu de finir dans un flux NTFS caché.
 - La case d'un dossier de calques coche puis décoche ses calques à chaque clic.
 - Le lanceur met à jour les bibliothèques quand `requirements.txt` change (correctifs de sécurité de Pillow) ; un Pillow trop ancien est signalé au démarrage.
+- La gomme efface le pixel situé sous le pointeur (elle visait le voisin dans sa moitié droite) ; les traits des projets existants gardent leur rendu.
+- Un fichier `.manta` ou un modèle compressé autrement qu'en DEFLATE est refusé proprement ; un modèle abîmé ne bloque plus la bibliothèque.
+- Exporter « carte.final » écrit « carte.final.png » au lieu d'écraser « carte.png » ; un nom complété déjà présent demande confirmation.
+- Renommer, dupliquer ou supprimer un modèle qui a disparu du disque est signalé dans « Nouveau projet ».
+- Le cadre « épais » des tokens n'accepte plus une bordure qu'il ne peut pas dessiner ; la bordure maximale suit le cadre et la taille.
+- Fermer la pipette écran par Alt+F4 ne la désactive plus jusqu'au redémarrage.
+- Le téléchargement d'un modèle d'IA vérifie son empreinte (celle publiée par rembg), sa taille et une adresse HTTPS ; aucun fichier partiel ne reste en cas d'erreur.
+- Une image trop grande est refusée avec un message en français ; un document trop grand pour être exporté ne peut plus être créé ni agrandi.
+- La miniature d'un modèle est conservée quand il est renommé ou dupliqué ; un modèle aux dimensions invalides n'apparaît plus.
+- Le repli d'un dossier n'est plus annulé par Ctrl+Z ; un déplacement de sélection sans pixel n'ajoute plus d'étape vide à l'historique.
+- La molette horizontale ne dézoome plus ; le zoom suit l'amplitude de la molette (pavés tactiles) ; le zoom fin de l'aperçu des tokens descend sous 42 %.
 
 ### Améliorations
 - Rendu des calques image mis en cache : une action ne recalcule plus que les calques modifiés.
@@ -68,6 +79,14 @@
 - Distribution : dépendance `PySide6-Essentials` au lieu du paquet PySide6 complet ; application lancée sans console (`--console` pour le diagnostic) ; licence MIT pour le code, illustrations réservées (`LICENSE`).
 - Outillage : `pyproject.toml` (pytest, ruff, mypy), imports triés.
 - Code : `window.py` découpé (`icons.py`, `widgets.py`, `dialogs.py`, `paths.py`), couleurs centralisées dans le thème, code mort retiré, tests de non-régression ajoutés et isolés des réglages de l'utilisateur.
+- Remplissages, baguette magique et détourage par couleur environ 70 fois plus rapides (2048² : 3,5 s → 0,05 s) ; le masque de détourage est calculé en arrière-plan avant la fermeture de la fenêtre.
+- Lassos et ellipses des grands documents : 112 Mo au lieu de 1,4 Go à 8192² ; tokens de grande taille sans image intermédiaire géante (16 Gio évités).
+- Sauvegarde environ 40 fois plus rapide (images PNG rangées sans recompression) ; export sans aller-retour PNG (24 Mpx : 1,8 s → 0,04 s).
+- Mémoire : les images et masques plus utilisés sont libérés, les fenêtres d'outils sont détruites après usage, un calque sans retouche n'est plus gardé deux fois en cache.
+- Spritesheets : grille limitée à l'image, aperçu réduit aux lignes et confirmation au-delà de 10 000 cases.
+- Aperçus des tokens, des sprites et du détourage nets sur les écrans à 150 %.
+- Code : récupération de session et export sortis de `window.py` (`recovery.py`, `export.py`), découpe des sprites unifiée, duplications et code mort retirés ; mypy s'exécute sans erreur.
+- Tests : vrais glissements à la souris (déplacement, redimensionnement, rotation, gomme, Ctrl+glisser), molette, fichiers, dialogues et mémoire.
 
 ## 0.1.0 — 22 octobre 2026
 
