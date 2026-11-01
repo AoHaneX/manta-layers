@@ -7,9 +7,11 @@ from PIL import Image, ImageDraw
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QThread  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialog  # noqa: E402
 
 from app import background as B  # noqa: E402
+from app import background_dialog  # noqa: E402
 from app import selection as S  # noqa: E402
 from app.background_dialog import BackgroundRemovalDialog  # noqa: E402
 from app.graphics import render_layers  # noqa: E402
@@ -209,3 +211,19 @@ def test_unexpected_download_failure_is_not_reported_as_installed(tmp_path, monk
     worker = DownloadWorker("u2netp", tmp_path)
     worker.run()  # synchronously: only the error handling is tested
     assert worker.error and "boom" in worker.error
+
+
+class SlowWorker(QThread):
+    def run(self):
+        time.sleep(0.4)
+
+
+def test_closing_waits_for_a_background_removal_left_running(window, tmp_path):
+    dialog = BackgroundRemovalDialog(Image.new("RGBA", (8, 8)), "image", False, tmp_path / "models", window)
+    dialog.worker = SlowWorker(dialog)
+    dialog.worker.start()
+    dialog.reject()  # closing never waits for the thread...
+    assert background_dialog.orphan_workers_running()
+    dialog.dispose()
+    window._wait_for_background_work()  # ...but quitting does, or Qt aborts the process
+    assert not background_dialog.orphan_workers_running()

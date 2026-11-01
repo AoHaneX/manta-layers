@@ -45,6 +45,7 @@
 - Quitter un champ X, Y ou rotation qui affiche une valeur bornée ne déplace plus le calque ; plages élargies.
 - Annuler ou rétablir pendant un glissement sur le canvas abandonne le glissement au lieu de provoquer une erreur et de bloquer le canvas.
 - Les erreurs inattendues sont enregistrées dans `%LOCALAPPDATA%\MantaLayers\logs` et signalées, même sans console.
+- Quitter pendant un détourage par IA attend la fin du calcul au lieu de faire planter l'application.
 
 ### Améliorations
 - Rendu des calques image mis en cache : une action ne recalcule plus que les calques modifiés.

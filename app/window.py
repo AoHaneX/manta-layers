@@ -61,7 +61,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import __version__, background, selection
+from . import __version__, background, background_dialog, selection
 from .background_dialog import BackgroundRemovalDialog
 from .dialogs import NewProjectDialog, ResizeDocumentDialog
 from .graphics import (
@@ -3824,9 +3824,22 @@ class MainWindow(QMainWindow):
             self._recovery_lock.unlock()
             self._recovery_lock = None
 
+    def _wait_for_background_work(self):
+        """A background removal or download closed mid-way must end before the window is destroyed."""
+        if not background_dialog.orphan_workers_running():
+            return
+        self.statusBar().showMessage("Fin du détourage en cours avant la fermeture…")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            QApplication.processEvents()
+            background_dialog.wait_for_orphan_workers()
+        finally:
+            QApplication.restoreOverrideCursor()
+
     def closeEvent(self, event):
         if self.maybe_save():
             self.refreshing = True
+            self._wait_for_background_work()
             self._close_recovery()
             event.accept()
         else:

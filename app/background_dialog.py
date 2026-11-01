@@ -29,6 +29,25 @@ PREVIEW_SIZE = (420, 280)
 # Previews are computed on a copy of at most this size; the full-size mask is
 # only computed when it is applied.
 PREVIEW_SOURCE_SIZE = 1024
+# Threads still running after their dialog was closed. Qt aborts the process if
+# a running QThread is destroyed: the application waits for them before quitting.
+_orphans: set[QThread] = set()
+
+
+def orphan_workers_running() -> bool:
+    return any(worker.isRunning() for worker in _orphans)
+
+
+def wait_for_orphan_workers() -> int:
+    """Stop downloads, wait for every thread left by a closed dialog; returns how many were waited for."""
+    workers = [worker for worker in _orphans if worker.isRunning()]
+    for worker in workers:
+        if isinstance(worker, DownloadWorker):
+            worker.cancel_requested = True
+    for worker in workers:
+        worker.wait()
+    _orphans.clear()
+    return len(workers)
 
 
 class RemovalWorker(QThread):
@@ -355,6 +374,9 @@ class BackgroundRemovalDialog(QDialog):
             if isinstance(self.worker, DownloadWorker):
                 self.worker.cancel_requested = True
             self._orphan, self.worker = self.worker, None
+            orphan = self._orphan
+            _orphans.add(orphan)
+            orphan.finished.connect(lambda: _orphans.discard(orphan))
         super().done(result)
 
     def dispose(self):
