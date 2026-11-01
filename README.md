@@ -174,7 +174,10 @@ MantaLayers/
 │   ├── background_dialog.py    # aperçu et calcul du détourage
 │   ├── storage.py              # format natif de projet .manta
 │   ├── templates.py            # bibliothèque locale de modèles
-│   ├── paths.py                # dossier de données de l'utilisateur
+│   ├── paths.py                # dossier de données de l'utilisateur, noms de fichiers valides
+│   ├── recovery.py             # copies de récupération de la session
+│   ├── export.py               # écriture de l'image finale (PNG, JPEG, WebP)
+│   ├── diagnostics.py          # journal des erreurs (logs/manta.log)
 │   ├── graphics.py             # canvas Qt, transformation et rendu
 │   ├── theme.py                # tokens et feuille de style ReefKit centralisés
 │   ├── icons.py                # pictogrammes vectoriels
@@ -248,7 +251,8 @@ Avant toute modification majeure : création d'un projet vide, import de 3 image
 - Les changements de sélection comptent dans l'historique (ils s'annulent comme les autres actions), mais une simple sélection ne marque pas le document comme modifié.
 - L'historique est limité à 100 commandes et **n'est pas sérialisé** dans `.manta`.
 - Les commandes mémorisent des snapshots du modèle ; c'est simple pour démarrer, mais à optimiser avant les très gros documents.
-- Le redimensionnement du document change la zone de travail sans déplacer les calques ; pas encore de recadrage, filtres, calques de réglage ou PSD.
+- Le redimensionnement du document change la zone de travail sans déplacer les calques ; le document peut être recadré sur son contenu, mais pas encore librement. Pas de filtres, de calques de réglage ni de PSD.
+- Un document est limité à 120 millions de pixels pour rester exportable : les fenêtres Nouveau projet et Dimensions refusent davantage (un ancien projet plus grand s'ouvre toujours, sans pouvoir être exporté).
 - Images limitées à 67 mégapixels par calque ; le premier affichage d'une très grande image reste lent (pas de cache de tuiles).
 - Les polices ne sont pas intégrées aux projets `.manta`.
 - La présentation du canvas n'effectue pas d'anti-aliasing des images pour préserver le pixel-art ; le rendu de texte dépend des polices installées.
@@ -258,7 +262,7 @@ Avant toute modification majeure : création d'un projet vide, import de 3 image
 
 1. Dossiers imbriqués et réglages d'image non destructifs.
 2. Ajouter l'**enveloppe Warp** des glyphes (champ réservé `text_warp`).
-3. Ajouter recadrage, réglages d'image non destructifs et export calque par calque.
+3. Ajouter le recadrage libre et des réglages d'image non destructifs.
 4. Quand les fonctionnalités sont stables, envisager **PyInstaller** et intégration dans le launcher ReefKit.
 
 ## Licence et ressources

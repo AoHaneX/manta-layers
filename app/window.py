@@ -3565,7 +3565,7 @@ class MainWindow(QMainWindow):
         gomme et remplissages non destructifs, sélections et masques de calque, suppression
         locale de l'arrière-plan, modèles, historique, projets natifs et exports.</p>
         <p>Code source sous licence MIT ; illustrations et mascottes : tous droits réservés.</p>
-        <p>La déformation Warp des lettres et le recadrage sont prévus pour les prochaines versions.</p>""")
+        <p>La déformation Warp des lettres et le recadrage libre sont prévus pour les prochaines versions.</p>""")
 
     def dragEnterEvent(self, event):
         if self.image_paths_from_mime(event.mimeData()):
