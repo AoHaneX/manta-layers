@@ -44,6 +44,7 @@
 - Une copie de récupération dont les métadonnées manquent est proposée au lieu de rester sur le disque ; les métadonnées sans copie sont nettoyées.
 - Quitter un champ X, Y ou rotation qui affiche une valeur bornée ne déplace plus le calque ; plages élargies.
 - Annuler ou rétablir pendant un glissement sur le canvas abandonne le glissement au lieu de provoquer une erreur et de bloquer le canvas.
+- Au démarrage, chaque copie de récupération est proposée (restaurer, supprimer ou plus tard) : les copies d'autres sessions ne sont plus supprimées sans avoir été montrées.
 - Les erreurs inattendues sont enregistrées dans `%LOCALAPPDATA%\MantaLayers\logs` et signalées, même sans console.
 - Quitter pendant un détourage par IA attend la fin du calcul au lieu de faire planter l'application.
 

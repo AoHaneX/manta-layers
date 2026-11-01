@@ -248,11 +248,17 @@ def crashed_copy(recovery: Path, width=321, project_path=None):
     (recovery / "dead.json").write_text(json.dumps({"saved_at": 1_700_000_000, "project_path": project_path}))
 
 
+def answer_recovery(monkeypatch, answer):
+    """Answer the recovery question of every window built next ("restore", "discard" or "later")."""
+    from app.window import MainWindow
+    monkeypatch.setattr(MainWindow, "_ask_recovery", lambda self, candidate, index, count: answer(
+        self, candidate, index, count) if callable(answer) else answer)
+
+
 def test_copy_left_by_a_crash_is_offered_and_restored(qapp, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
     recovery = tmp_path / "recovery"
     crashed_copy(recovery, project_path=str(tmp_path / "mon-projet.manta"))
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    answer_recovery(monkeypatch, "restore")
     window = make_window(qapp, tmp_path, recovery)
     qapp.processEvents()  # the offer runs once the window is built
     try:
@@ -266,10 +272,9 @@ def test_copy_left_by_a_crash_is_offered_and_restored(qapp, tmp_path, monkeypatc
 
 
 def test_declined_recovery_deletes_the_copy(qapp, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
     recovery = tmp_path / "recovery"
     crashed_copy(recovery)
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    answer_recovery(monkeypatch, "discard")
     window = make_window(qapp, tmp_path, recovery)
     qapp.processEvents()
     try:
@@ -279,9 +284,8 @@ def test_declined_recovery_deletes_the_copy(qapp, tmp_path, monkeypatch):
 
 
 def test_copies_of_running_sessions_are_left_alone(qapp, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
     recovery = tmp_path / "recovery"
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: pytest.fail("offered a live session"))
+    answer_recovery(monkeypatch, lambda *_: pytest.fail("offered a live session"))
     first = make_window(qapp, tmp_path, recovery)
     first.mutate("x", lambda doc: setattr(doc, "width", 222))
     assert first.autosave_now()
@@ -315,13 +319,12 @@ def test_orphan_locks_without_copy_are_cleaned(qapp, tmp_path):
 
 
 def test_copy_without_metadata_is_still_offered(qapp, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
     recovery = tmp_path / "recovery"
     crashed_copy(recovery)
     (recovery / "dead.json").unlink()  # crash between the two writes of the autosave
     offers = []
-    monkeypatch.setattr(QMessageBox, "question",
-                        lambda *a, **k: offers.append(a[2]) or QMessageBox.StandardButton.Yes)
+    answer_recovery(monkeypatch, lambda window, candidate, index, count: offers.append(
+        window._recovery_text(candidate, index, count)[0]) or "restore")
     window = make_window(qapp, tmp_path, recovery)
     qapp.processEvents()
     try:
@@ -334,11 +337,10 @@ def test_copy_without_metadata_is_still_offered(qapp, tmp_path, monkeypatch):
 
 
 def test_metadata_without_copy_is_cleaned(qapp, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
     recovery = tmp_path / "recovery"
     recovery.mkdir()
     (recovery / "gone.json").write_text(json.dumps({"saved_at": 1_700_000_000}))
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: pytest.fail("nothing to restore"))
+    answer_recovery(monkeypatch, lambda *_: pytest.fail("nothing to restore"))
     window = make_window(qapp, tmp_path, recovery)
     qapp.processEvents()
     try:
@@ -377,3 +379,75 @@ def test_moving_selected_pixels_marks_the_document_as_modified(window):
     window.select_all()
     window.move_selection_content(3, 2)  # one undo macro: new layer plus moved selection
     assert window.is_modified()
+
+
+def crashed_session(recovery: Path, session_id: str, saved_at: float, width: int):
+    recovery.mkdir(parents=True, exist_ok=True)
+    save_project(Document(width, 10), recovery / f"{session_id}.manta")
+    (recovery / f"{session_id}.json").write_text(json.dumps({"project_path": None, "saved_at": saved_at}))
+
+
+@pytest.fixture
+def two_copies(window):
+    older, newer = "a" * 32, "b" * 32
+    crashed_session(window.recovery_dir, older, 1000.0, 11)
+    crashed_session(window.recovery_dir, newer, 2000.0, 22)
+    return window, older, newer
+
+
+def answer_each_copy(window, monkeypatch, answers):
+    asked = []
+
+    def ask(candidate, index, count):
+        asked.append((candidate["id"], index, count))
+        return answers[len(asked) - 1]
+
+    monkeypatch.setattr(window, "_ask_recovery", ask)
+    return asked
+
+
+def test_restoring_the_newest_copy_keeps_the_other_for_later(two_copies, monkeypatch):
+    window, older, newer = two_copies
+    asked = answer_each_copy(window, monkeypatch, ["restore"])
+    assert window.offer_session_recovery()
+    assert asked == [(newer, 0, 2)]
+    assert window.document.width == 22
+    assert not (window.recovery_dir / f"{newer}.manta").exists()
+    assert (window.recovery_dir / f"{older}.manta").exists()  # never deleted without being shown
+    # It is offered again at the next start.
+    asked = answer_each_copy(window, monkeypatch, ["discard"])
+    assert not window.offer_session_recovery()
+    assert asked == [(older, 0, 1)]
+    assert not (window.recovery_dir / f"{older}.manta").exists()
+
+
+def test_each_copy_can_be_deleted_or_kept(two_copies, monkeypatch):
+    window, older, newer = two_copies
+    answer_each_copy(window, monkeypatch, ["discard", "later"])
+    assert not window.offer_session_recovery()
+    assert not (window.recovery_dir / f"{newer}.manta").exists()
+    assert (window.recovery_dir / f"{older}.manta").exists()
+    assert [candidate["id"] for candidate in window.recovery_candidates()] == [older]  # its lock was released
+
+
+def test_the_recovery_question_offers_restore_delete_and_later(two_copies):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication
+
+    window, _older, newer = two_copies
+    seen = []
+
+    def click_later():
+        box = QApplication.activeModalWidget()
+        seen.extend(button.text() for button in box.buttons())
+        next(button for button in box.buttons() if button.text() == "Plus tard").click()
+
+    QTimer.singleShot(0, click_later)
+    candidate = window.recovery_candidates()[0]
+    try:
+        assert window._ask_recovery(candidate, 0, 2) == "later"
+    finally:
+        for item in window.recovery_candidates() + [candidate]:
+            item["lock"].unlock()
+    assert sorted(seen) == ["Plus tard", "Restaurer", "Supprimer"]
+    assert candidate["id"] == newer
