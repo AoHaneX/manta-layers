@@ -333,12 +333,7 @@ def _similar_color_mask(image: Image.Image, source_rgb: tuple[int, int, int], to
 def _contiguous_mask(mask: Image.Image, seed: tuple[int, int] | None) -> Image.Image:
     if seed is None:
         return Image.new("L", mask.size, 0)
-    x, y = seed
-    if not (0 <= x < mask.width and 0 <= y < mask.height) or mask.getpixel(seed) == 0:
-        return Image.new("L", mask.size, 0)
-    region = mask.copy()
-    ImageDraw.floodfill(region, seed, 128, thresh=0)
-    return region.point([255 if value == 128 else 0 for value in range(256)])
+    return selection.flood_region(mask, seed)
 
 
 def _shaded_recolor(
