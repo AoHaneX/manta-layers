@@ -17,11 +17,26 @@ Note pour les développeurs. L'usage est décrit dans le [README](../README.md).
 | `selection.py` | Masques de sélection : formes, baguette, combinaisons, adoucissement, masques de calque | non |
 | `background.py` | Détourage : couleur de fond (sans IA) et modèles ONNX facultatifs, téléchargement explicite | non |
 | `storage.py` | Format `.manta` (ZIP + `manifest.json` + PNG), écriture atomique vérifiée | non |
-| `templates.py`, `paths.py` | Bibliothèque de modèles, dossier de données utilisateur | non |
+| `templates.py`, `paths.py` | Modèles de projet et d'éléments (extraction, insertion), dossier de données utilisateur | non |
+| `imaging.py` | Marges transparentes, grilles et extraction de spritesheets | non |
+| `tokens.py` | Composition des tokens de jeu de rôle (portrait, cadres, bordures) | non |
+| `builtin_templates.py` | Modèles d'éléments fournis, construits en formes et textes | non |
+| `layer_panel.py` | Lignes du panneau des calques : calques cochables et dossiers | oui |
+| `shape_item.py`, `shape_panel.py` | Géométrie et rendu des formes vectorielles, leurs propriétés | oui |
+| `screen_picker.py` | Pipette sur tout le bureau (captures temporaires par écran) | oui |
+| `template_library.py`, `token_dialog.py`, `sprite_dialog.py` | Bibliothèque de modèles, créateur de tokens, découpe de spritesheets | oui |
 | `graphics.py` | Canvas, item de texte vectoriel, rendu et cache des calques, ponts Pillow ↔ Qt | oui |
 | `background_dialog.py` | Aperçu du détourage, calcul en arrière-plan (`QThread`) | oui |
 | `window.py` | Fenêtre, outils, propriétés, historique, presse-papiers, récupération de session | oui |
 | `dialogs.py`, `widgets.py`, `icons.py`, `theme.py` | Boîtes de dialogue, petits widgets, pictogrammes, charte ReefKit | oui |
+
+## Dossiers, sélection multiple et fusion
+
+- `Folder` (`model.py`) : identifiant, nom, visibilité, repli. Un calque appartient à un dossier par `Layer.folder` ; les membres d'un dossier forment toujours un bloc contigu de la pile (`Document.normalize_folders`, appelé après chaque modification). Pas de dossiers imbriqués.
+- Visibilité effective : `Document.is_visible` (calque et dossier) ; le canvas et tous les rendus l'utilisent.
+- La sélection multiple (`MainWindow.checked_ids`) est un état d'affichage, hors du document et de l'historique ; le repli d'un dossier est enregistré dans le projet mais ne crée pas d'étape d'historique.
+- Fusion : `render_layers_region` rend les calques cochés visibles, hors limites du canvas compris, rogné au contenu ; `merge_changes_appearance` détecte qu'un calque intermédiaire non coché les recouvre.
+- Format : version 3 si le projet contient des dossiers ou des formes, sinon version 2.
 
 ## Texte
 

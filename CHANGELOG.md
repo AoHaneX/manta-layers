@@ -3,6 +3,17 @@
 ## Non publié
 
 ### Nouvelles fonctionnalités
+- Sélection multiple de calques par cases à cocher (ou Ctrl+clic) et menu contextuel : créer un dossier, fusionner, supprimer, créer un modèle ; Suppr supprime les calques cochés ; glisser un calque coché déplace toute la sélection.
+- Dossiers de calques : repli, renommage, visibilité globale (canvas et exports), déplacement et glisser-déposer des calques ; structure enregistrée (format 3).
+- Fusion de calques avec transparence et transformations, et avertissement quand des calques intermédiaires changeraient l'aspect.
+- Lasso libre et lasso polygonal.
+- Rognage des marges transparentes d'un calque sans le déplacer ; recadrage du document sur son contenu.
+- Guides d'alignement cuivrés et magnétisme (désactivable, Alt pour l'ignorer).
+- Formes vectorielles éditables : rectangle, ellipse, polygone, ligne, flèche, et bulles, pensées et bandeaux.
+- Pipette sur tout le bureau, avec loupe d'aperçu, multi-écrans et mise à l'échelle Windows.
+- Bibliothèque de modèles d'éléments, modèles fournis (bulles, encadrés, bandeaux, étiquettes, cadres, groupes de formes), modification d'un modèle.
+- Créateur de tokens pour jeux de rôle et découpe de spritesheets (PNG ou calques).
+- Mémorisation des dossiers d'ouverture, d'import et d'export, séparément pour chaque modèle.
 - Texte vectoriel édité directement sur le canvas : outil Texte (`T`), double-clic, aperçu en direct.
 - Formes de texte : droit, arc, U, U inversé et courbe de Bézier personnalisée, avec poignées interactives et option « Lettres verticales ».
 - Sélections rectangle, ellipse et baguette magique (contigu ou global, tolérance RGBA), avec ajout, soustraction, intersection, mode pixel parfait ou adoucissement, contour et vue du masque.
@@ -41,6 +52,7 @@
 - Dimensions du document modifiables dans une seule fenêtre.
 - Validation renforcée des fichiers `.manta` corrompus.
 - Scripts : vérification de Python 3.11+, mise à jour de pip non bloquante, reprise d'une installation interrompue sous Linux/macOS.
+- Les boîtes de dialogue prennent la couleur des panneaux au lieu de celle du système, sur laquelle leurs libellés étaient peu lisibles.
 - Rendu incrémental des calques image : un nouveau trait de gomme ou remplissage ne rejoue plus toutes les opérations précédentes (101ᵉ trait sur une image 4000 × 4000 : 0,04 s au lieu de 3,3 s ; annulation immédiate).
 - Copie de récupération écrite en arrière-plan : plus de gel de l'interface toutes les minutes sur les gros documents.
 - Aperçu du détourage par couleur calculé sur une copie réduite ; empreintes de gomme douce mises en cache.
