@@ -114,3 +114,13 @@ def test_deleted_layers_and_replaced_masks_leave_no_image_behind(window):
         window.undo_stack.undo()
     assert window.document.layer(removed.id) is not None  # undo still has its snapshot
     assert removed.asset in window.document.assets
+
+
+def test_huge_images_are_refused_with_the_application_message():
+    import io
+
+    from PIL import Image
+    output = io.BytesIO()
+    Image.new("1", (16000, 12000)).save(output, format="PNG")  # Pillow's own bomb guard trips first
+    with pytest.raises(ValueError, match="Image trop grande"):
+        Document(10, 10).add_image_bytes(output.getvalue(), "énorme")
