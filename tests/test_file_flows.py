@@ -230,3 +230,20 @@ def test_project_images_are_stored_without_recompression(tmp_path):
     with ZipFile(tmp_path / "p.manta") as archive:
         methods = {info.filename.split("/")[0]: info.compress_type for info in archive.infolist()}
     assert methods == {"manifest.json": ZIP_DEFLATED, "assets": ZIP_STORED, "thumbnail.png": ZIP_STORED}
+
+
+@pytest.mark.parametrize("method", ["ZIP_LZMA", "ZIP_BZIP2"])
+def test_other_zip_compressions_are_refused_cleanly(tmp_path, method):
+    import json
+    import zipfile
+
+    from app.templates import list_templates
+    damaged = tmp_path / "bad.manta"
+    with zipfile.ZipFile(damaged, "w", getattr(zipfile, method)) as archive:
+        archive.writestr("manifest.json", json.dumps(Document(10, 10).manifest()) + " " * 5000)
+    data = bytearray(damaged.read_bytes())
+    data[60] ^= 0xFF  # corrupt the compressed stream: lzma and bz2 raise their own errors
+    damaged.write_bytes(bytes(data))
+    with pytest.raises(ValueError):
+        open_project(damaged)
+    assert list_templates(tmp_path) == []  # one damaged file never breaks the gallery
