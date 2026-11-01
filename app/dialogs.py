@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .model import MAX_DIMENSION, Document
+from .model import MAX_DIMENSION, MAX_DOCUMENT_PIXELS, Document
 from .templates import delete_template, duplicate_template, instantiate_template, list_templates, rename_template
 
 
@@ -34,6 +34,18 @@ def _dimension_input(value: int) -> QSpinBox:
     spin.setValue(value)
     spin.setSuffix(" px")
     return spin
+
+
+def _size_is_exportable(parent: QWidget, width: int, height: int) -> bool:
+    """Refuse a document that could be edited but never exported."""
+    if width * height <= MAX_DOCUMENT_PIXELS:
+        return True
+    QMessageBox.warning(
+        parent, "Document trop grand",
+        f"{width} × {height} px dépasse la taille exportable "
+        f"({MAX_DOCUMENT_PIXELS // 1_000_000} millions de pixels, par exemple 10 000 × 12 000 px).",
+    )
+    return False
 
 
 def _dialog_buttons(dialog: QDialog, accept_label: str) -> QDialogButtonBox:
@@ -162,6 +174,12 @@ class NewProjectDialog(QDialog):
             delete_template(path)
             self.refresh_gallery()
 
+    def accept(self):
+        if self.tabs.currentIndex() == 0 and not _size_is_exportable(
+                self, self.width_input.value(), self.height_input.value()):
+            return
+        super().accept()
+
     def document(self) -> Document:
         if self.tabs.currentIndex() == 1:
             return instantiate_template(self.selected_template())
@@ -185,6 +203,10 @@ class ResizeDocumentDialog(QDialog):
         form.addRow("Hauteur finale", self.height_input)
         layout.addLayout(form)
         layout.addWidget(_dialog_buttons(self, "Appliquer"))
+
+    def accept(self):
+        if _size_is_exportable(self, *self.dimensions()):
+            super().accept()
 
     def dimensions(self) -> tuple[int, int]:
         return self.width_input.value(), self.height_input.value()
