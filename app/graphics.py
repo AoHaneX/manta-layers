@@ -311,7 +311,8 @@ def render_layer_image(
             image = source.convert("RGBA")
     for operation in operations[start:]:
         image = _apply_operation(image, operation)
-    if not keys:
+    if not keys or not operations:
+        # A layer without edits is cached once, as a pixmap, by layer_pixmap.
         return image
     RENDER_CACHE.put(keys[-1], image)
     return image.copy()  # callers may modify their copy, never the cached image
