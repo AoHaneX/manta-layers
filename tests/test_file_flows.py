@@ -220,3 +220,13 @@ def test_save_prompt_answers(small_document, monkeypatch, tmp_path, answer, expe
     assert window.maybe_save() is expected
     assert (tmp_path / "invite.manta").exists() is saved
     assert window.is_modified() is not saved
+
+
+def test_project_images_are_stored_without_recompression(tmp_path):
+    from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
+    document = Document(20, 20)
+    document.add_image_bytes(png_bytes(8, 8, RED), "image")
+    save_project(document, tmp_path / "p.manta", thumbnail=png_bytes(4, 4))
+    with ZipFile(tmp_path / "p.manta") as archive:
+        methods = {info.filename.split("/")[0]: info.compress_type for info in archive.infolist()}
+    assert methods == {"manifest.json": ZIP_DEFLATED, "assets": ZIP_STORED, "thumbnail.png": ZIP_STORED}
