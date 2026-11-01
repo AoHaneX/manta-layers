@@ -89,6 +89,7 @@ from .screen_picker import ScreenColorPicker
 from .selection import COMBINE_LABELS, COMBINE_MODES
 from .shape_item import shape_from_drag
 from .shape_panel import ShapePropertyRows
+from .sprite_dialog import SpriteSheetDialog
 from .storage import open_project, save_project
 from .template_library import TemplateLibraryDialog
 from .templates import extract_elements, insert_elements, list_templates, save_template
@@ -1119,6 +1120,7 @@ class MainWindow(QMainWindow):
         self._action(tools_menu, "Pipette écran (tout le bureau)", self.start_screen_picker)
         tools_menu.addSeparator()
         self._action(tools_menu, "Créateur de tokens…", self.open_token_creator)
+        self._action(tools_menu, "Découper une spritesheet…", self.open_sprite_slicer)
         self.text_tool_shortcut = QShortcut(QKeySequence("T"), self.canvas)
         self.text_tool_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         self.text_tool_shortcut.activated.connect(
@@ -3334,12 +3336,41 @@ class MainWindow(QMainWindow):
         self.select_layer(holder["id"])
         return True
 
+    def add_sprite_layers(self, sprites, sheet_name: str) -> bool:
+        """Add extracted sprites as image layers grouped in a folder, laid out in their grid order."""
+        images = []
+        for row, column, image in sprites:
+            output = BytesIO()
+            image.save(output, format="PNG")
+            images.append((row, column, image.size, output.getvalue()))
+
+        def add(doc):
+            ids, x, y, line = [], 0.0, 0.0, 0
+            for row, column, (width, height), data in images:
+                layer = doc.add_image_bytes(data, f"{sheet_name} {row + 1}·{column + 1}", center=False)
+                if x and x + width > doc.width:
+                    x, y, line = 0.0, y + line, 0
+                layer.x, layer.y = x, y
+                x += width
+                line = max(line, height)
+                ids.append(layer.id)
+            doc.create_folder(ids, sheet_name)
+
+        if not self.mutate(f"Ajouter {len(images)} sprite(s)", add):
+            return False
+        self.statusBar().showMessage(f"{len(images)} sprite(s) ajouté(s) dans le dossier « {sheet_name} »", 5000)
+        return True
+
     def open_token_creator(self) -> None:
         dialog = TokenDialog(self)
         layer = self.document.layer(self.selected_id)
         if layer is not None and layer.kind == "image":
             dialog.use_selected_layer()
         dialog.exec()
+
+    def open_sprite_slicer(self) -> None:
+        SpriteSheetDialog(self).exec()
+
     def open_template_library(self) -> bool:
         dialog = TemplateLibraryDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted or dialog.selected_entry() is None:
