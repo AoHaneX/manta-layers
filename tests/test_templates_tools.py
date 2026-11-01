@@ -19,7 +19,7 @@ from app.storage import open_project
 from app.template_library import TemplateLibraryDialog
 from app.templates import extract_elements, insert_elements, list_templates, save_template
 from app.token_dialog import TokenDialog
-from app.tokens import TokenSettings, _portrait, render_token, supersampling
+from app.tokens import FRAMES, TokenSettings, _portrait, max_border, render_token, supersampling
 
 
 @pytest.fixture
@@ -217,6 +217,36 @@ def test_token_portrait_memory_follows_the_token_size_not_the_source(monkeypatch
     # Formerly a 262144 × 16384 enlargement (16 GiB); now nothing larger than the token itself.
     assert max(largest) <= 4096 * 4096
     assert elapsed < 2
+
+
+@pytest.mark.parametrize("frame", list(FRAMES))
+@pytest.mark.parametrize("size", [32, 97, 512])
+def test_every_frame_draws_its_thickest_accepted_border(frame, size):
+    limit = max_border(size, frame)
+    token = render_token(Image.new("RGBA", (40, 30), (0, 200, 0, 255)),
+                         TokenSettings(size=size, frame=frame, border_width=limit))
+    assert token.size == (size, size)
+    with pytest.raises(ValueError, match="Bordure trop épaisse"):
+        TokenSettings(size=size, frame=frame, border_width=limit + 1).validate()
+
+
+def test_thick_frame_border_is_limited_to_an_eighth_of_the_size():
+    assert max_border(512, "thick") == 64 and max_border(512, "circle") == 128
+    with pytest.raises(ValueError, match="maximum 64 px"):
+        render_token(Image.new("RGBA", (10, 10)), TokenSettings(size=512, frame="thick", border_width=128))
+
+
+def test_token_dialog_border_limit_follows_frame_and_size(window):
+    dialog = TokenDialog(window)
+    assert dialog.border_width.maximum() == 128  # circle, 512 px
+    dialog.border_width.setValue(100)
+    dialog.frame.setCurrentIndex(dialog.frame.findData("thick"))
+    assert dialog.border_width.maximum() == 64 and dialog.border_width.value() == 64
+    dialog.size_spin.setValue(256)
+    assert dialog.border_width.maximum() == 32
+    dialog.frame.setCurrentIndex(dialog.frame.findData("square"))
+    assert dialog.border_width.maximum() == 64
+    dialog.settings().validate()
 def test_token_dialog_exports_a_png_and_adds_a_layer(window, monkeypatch, tmp_path):
     window.install_document(Document(600, 600), None)
     dialog = TokenDialog(window)

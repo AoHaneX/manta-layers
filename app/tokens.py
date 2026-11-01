@@ -31,6 +31,14 @@ def _rgb(color: str) -> tuple[int, int, int]:
     return int(color[0:2], 16), int(color[2:4], 16), int(color[4:6], 16)
 
 
+def max_border(size: int, frame: str) -> int:
+    """Thickest border (output pixels) a frame can draw on a token of ``size`` px.
+
+    The thick frame draws twice the border, so its limit is half the others'.
+    """
+    return size // 8 if frame == "thick" else size // 4
+
+
 def _darker(rgb: tuple[int, int, int], factor: float = 0.55) -> tuple[int, int, int]:
     red, green, blue = (int(channel * factor) for channel in rgb)
     return red, green, blue
@@ -54,8 +62,9 @@ class TokenSettings:
             raise ValueError(f"Cadre inconnu : {self.frame}")
         if not 0.05 <= self.zoom <= 20:
             raise ValueError("Zoom hors limites")
-        if not 0 <= self.border_width <= self.size // 4:
-            raise ValueError("Bordure trop épaisse pour cette taille")
+        limit = max_border(self.size, self.frame)
+        if not 0 <= self.border_width <= limit:
+            raise ValueError(f"Bordure trop épaisse pour ce cadre et cette taille (maximum {limit} px)")
         _rgb(self.border_color)
 
 
