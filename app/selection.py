@@ -131,6 +131,60 @@ def similar_colour(image: Image.Image, reference, tolerance: int) -> Image.Image
     return ImageChops.multiply(candidates, alpha.point([0] + [255] * 255))
 
 
+# Byte translation tables for the flood fill: fillable pixels become 1.
+_FILLABLE = bytes([0] + [1] * 255)
+_ZERO, _ONE = b"\x00", b"\x01"
+
+
+def flood_region(mask: Image.Image, seed: tuple[int, int]) -> Image.Image:
+    """4-connected region of non-zero pixels of ``mask`` reachable from ``seed``.
+
+    Returns an "L" mask, 255 in the region and 0 elsewhere; a seed outside the
+    image or on a zero pixel gives an empty mask. Same result as Pillow's
+    ``ImageDraw.floodfill`` (also 4-connected) on a binary mask, but filled
+    span by span with ``bytes.find``, so the Python loop runs once per
+    horizontal run instead of once per pixel.
+    """
+    if mask.mode != "L":
+        mask = mask.convert("L")
+    width, height = mask.size
+    x, y = seed
+    result = bytearray(width * height)
+    if not (0 <= x < width and 0 <= y < height):
+        return Image.frombytes("L", (width, height), bytes(result))
+    # 1 = fillable and not filled yet; filled runs are reset to 0.
+    pending = bytearray(mask.tobytes().translate(_FILLABLE))
+    zeros, filled = memoryview(bytes(width)), memoryview(b"\xff" * width)
+    stack = [(y, y * width + x)]
+    while stack:
+        row, position = stack.pop()
+        if not pending[position]:
+            continue  # its run was filled from another seed
+        start = row * width
+        end = start + width
+        left = pending.rfind(_ZERO, start, position) + 1 or start
+        right = pending.find(_ZERO, position, end)
+        if right < 0:
+            right = end
+        length = right - left
+        pending[left:right] = zeros[:length]
+        result[left:right] = filled[:length]
+        # One seed per fillable run touching [left, right) on the rows above and below.
+        for neighbour in (row - 1, row + 1):
+            if not 0 <= neighbour < height:
+                continue
+            shift = (neighbour - row) * width
+            stop, row_end = right + shift, (neighbour + 1) * width
+            found = pending.find(_ONE, left + shift, stop)
+            while found >= 0:
+                stack.append((neighbour, found))
+                run_end = pending.find(_ZERO, found, row_end)
+                if run_end < 0 or run_end >= stop:
+                    break
+                found = pending.find(_ONE, run_end, stop)
+    return Image.frombytes("L", (width, height), bytes(result))
+
+
 def magic_wand(image: Image.Image, seed: tuple[int, int], tolerance: int,
                contiguous: bool = True) -> Image.Image:
     """Select pixels similar to the seed pixel.
@@ -146,9 +200,7 @@ def magic_wand(image: Image.Image, seed: tuple[int, int], tolerance: int,
     candidates = similar_colour(rgba, rgba.getpixel((x, y)), tolerance)
     if not contiguous:
         return candidates
-    region = candidates.copy()
-    ImageDraw.floodfill(region, (x, y), 128, thresh=0)
-    return region.point([255 if value == 128 else 0 for value in range(256)])
+    return flood_region(candidates, (x, y))
 
 
 def combine(base: Image.Image | None, new: Image.Image, mode: str) -> Image.Image:

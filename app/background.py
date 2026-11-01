@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageFilter
 
 from . import selection
 from .paths import user_data_directory
@@ -110,10 +110,7 @@ def border_colour_mask(image: Image.Image, tolerance: int = 32, feather: float =
     candidates = ImageChops.lighter(similar, transparent)
     framed = Image.new("L", (width + 2, height + 2), 255)
     framed.paste(candidates, (1, 1))
-    ImageDraw.floodfill(framed, (0, 0), 128, thresh=0)
-    background = framed.crop((1, 1, width + 1, height + 1)).point(
-        [255 if value == 128 else 0 for value in range(256)]
-    )
+    background = selection.flood_region(framed, (0, 0)).crop((1, 1, width + 1, height + 1))
     keep = ImageChops.invert(background)
     return keep.filter(ImageFilter.GaussianBlur(feather)) if feather > 0 else keep
 

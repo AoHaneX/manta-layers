@@ -27,7 +27,7 @@ from .graphics import checker_brush, pil_to_qimage
 
 PREVIEW_SIZE = (420, 280)
 # Previews are computed on a copy of at most this size; the full-size mask is
-# only computed when it is applied.
+# only computed when it is applied (in a thread, before the dialog closes).
 PREVIEW_SOURCE_SIZE = 1024
 # Threads still running after their dialog was closed. Qt aborts the process if
 # a running QThread is destroyed: the application waits for them before quitting.
@@ -67,6 +67,23 @@ class RemovalWorker(QThread):
             self.mask = background.onnx_mask(self.image, self.model_path, self.progressed.emit)
         except background.BackgroundRemovalError as exc:
             self.error = str(exc)
+        except Exception as exc:  # unexpected failures are reported, never fatal
+            self.error = f"Erreur inattendue : {exc}"
+
+
+class ColourMaskWorker(QThread):
+    """Computes the full-size border colour mask outside the UI thread."""
+
+    def __init__(self, image: Image.Image, tolerance: int, parent=None):
+        super().__init__(parent)
+        self.image = image
+        self.tolerance = tolerance
+        self.mask: Image.Image | None = None
+        self.error: str | None = None
+
+    def run(self):
+        try:
+            self.mask = background.border_colour_mask(self.image, self.tolerance)
         except Exception as exc:  # unexpected failures are reported, never fatal
             self.error = f"Erreur inattendue : {exc}"
 
@@ -184,7 +201,7 @@ class BackgroundRemovalDialog(QDialog):
         self.refresh_timer.setSingleShot(True)
         self.refresh_timer.setInterval(250)
         self.refresh_timer.timeout.connect(self._auto_refresh)
-        self.tolerance.valueChanged.connect(self._settings_changed)
+        self.tolerance.valueChanged.connect(self._tolerance_changed)
         self.hard_edges.toggled.connect(self._settings_changed)
         self.feather.valueChanged.connect(self._settings_changed)
         self.method.currentIndexChanged.connect(self._method_changed)
@@ -232,12 +249,16 @@ class BackgroundRemovalDialog(QDialog):
         else:
             self._show_preview()
 
-    def _settings_changed(self, *_args):
+    def _tolerance_changed(self, *_args):
         if self._is_colour():
             self.raw_mask = None  # recomputed at full size with the new tolerance
             self.refresh_timer.start()
         else:
             self._show_preview()
+
+    def _settings_changed(self, *_args):
+        # Edges and feathering only affect refine(): the raw masks stay valid.
+        self._show_preview()
 
     def _auto_refresh(self):
         if self._is_colour() and self.worker is None:
@@ -249,8 +270,8 @@ class BackgroundRemovalDialog(QDialog):
         if self.worker is not None:
             return
         if self._is_colour():
+            # raw_mask is already cleared whenever the tolerance changes.
             self.preview_mask = background.border_colour_mask(self.preview_image, self.tolerance.value())
-            self.raw_mask = None
             self._set_status("Aperçu calculé.")
             self._show_preview()
             return
@@ -284,8 +305,39 @@ class BackgroundRemovalDialog(QDialog):
         self._show_preview()
         self._update_buttons()
 
+    def accept(self):
+        """Apply; the colour method first computes its full-size mask in a thread."""
+        if self.worker is not None:
+            return
+        if self._is_colour() and self.preview_mask is not None and self.raw_mask is None:
+            self.worker = ColourMaskWorker(self.image, self.tolerance.value(), self)
+            self.worker.finished.connect(self._colour_mask_finished)
+            self._set_status("Calcul du masque en pleine résolution…")
+            self.progress.setRange(0, 0)  # indeterminate: no progress is reported
+            self.progress.show()
+            self.setCursor(Qt.CursorShape.BusyCursor)
+            self._update_buttons()
+            self.worker.start()
+            return
+        super().accept()
+
+    def _colour_mask_finished(self):
+        worker, self.worker = self.worker, None
+        if worker is None:  # the dialog closed meanwhile
+            return
+        self.unsetCursor()
+        self.progress.hide()
+        self.progress.setRange(0, 100)
+        if worker.error:
+            self._set_status(worker.error)
+            self._update_buttons()
+            return
+        self.raw_mask = worker.mask
+        self._update_buttons()
+        super().accept()
+
     def result_mask(self) -> Image.Image | None:
-        """Full-size refined mask; the colour method computes it only now."""
+        """Full-size refined mask; computed now if the dialog was not closed by accept()."""
         if self.preview_mask is None:
             return None
         if self.raw_mask is None and self._is_colour():
@@ -323,6 +375,8 @@ class BackgroundRemovalDialog(QDialog):
         self.preview_button.setEnabled(not busy and bool(self.method.currentData()))
         self.method.setEnabled(not busy)
         self.download_button.setEnabled(not busy)
+        # The full-size colour mask is computed with the tolerance it started with.
+        self.tolerance.setEnabled(not busy and self._is_colour())
 
     def _set_status(self, message: str):
         self.status.setText(message)

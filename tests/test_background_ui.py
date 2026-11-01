@@ -227,3 +227,75 @@ def test_closing_waits_for_a_background_removal_left_running(window, tmp_path):
     dialog.dispose()
     window._wait_for_background_work()  # ...but quitting does, or Qt aborts the process
     assert not background_dialog.orphan_workers_running()
+
+
+def test_only_the_tolerance_invalidates_the_full_size_colour_mask(tmp_path, qapp):
+    dialog = make_dialog(tmp_path, qapp)
+    dialog.compute()
+    full_size = dialog.result_mask()
+    raw = dialog.raw_mask
+    assert full_size is not None and raw is not None
+    dialog.feather.setValue(3)
+    dialog.hard_edges.setChecked(True)
+    assert dialog.raw_mask is raw  # edges and feathering only change refine()
+    dialog.compute()
+    assert dialog.raw_mask is raw
+    dialog.tolerance.setValue(dialog.tolerance.value() + 1)
+    assert dialog.raw_mask is None
+    dialog.dispose()
+
+
+def test_apply_computes_the_full_size_colour_mask_in_a_thread(tmp_path, qapp, monkeypatch):
+    import threading
+    image = Image.new("RGBA", (300, 200), (250, 250, 250, 255))
+    ImageDraw.Draw(image).rectangle((100, 50, 199, 149), fill=(20, 90, 200, 255))
+    dialog = BackgroundRemovalDialog(image, "Sujet", has_mask=False, models_dir=tmp_path)
+    dialog.compute()
+    threads = []
+    original = B.border_colour_mask
+
+    def recording(source, tolerance=32, feather=0):
+        threads.append(threading.current_thread())
+        return original(source, tolerance, feather)
+
+    monkeypatch.setattr(B, "border_colour_mask", recording)
+    dialog.accept()
+    assert dialog.worker is not None and not dialog.apply_button.isEnabled()
+    assert not dialog.tolerance.isEnabled()  # the running computation keeps its tolerance
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    wait_for_worker(dialog, qapp)
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert threads and threads[0] is not threading.main_thread()
+    assert dialog.raw_mask.size == image.size
+    mask = dialog.result_mask()
+    assert mask.getbbox() == (100, 50, 200, 150) and len(threads) == 1  # not computed twice
+    dialog.dispose()
+
+
+def test_failed_full_size_colour_mask_keeps_the_dialog_open(tmp_path, qapp, monkeypatch):
+    dialog = make_dialog(tmp_path, qapp)
+    dialog.compute()
+
+    def broken(*_args, **_kwargs):
+        raise MemoryError("trop grand")
+
+    monkeypatch.setattr(B, "border_colour_mask", broken)
+    dialog.accept()
+    wait_for_worker(dialog, qapp)
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert "trop grand" in dialog.status.text() and dialog.apply_button.isEnabled()
+    assert dialog.progress.maximum() == 100 and dialog.progress.isHidden()
+    dialog.dispose()
+
+
+def test_ai_preview_is_applied_without_recomputation(tmp_path, qapp, monkeypatch):
+    (tmp_path / "u2netp.onnx").write_bytes(b"fake")
+    monkeypatch.setattr(B, "onnx_runtime_available", lambda: True)
+    monkeypatch.setattr(B, "onnx_mask", lambda image, path, progress: S.full(image.size))
+    dialog = make_dialog(tmp_path, qapp)
+    dialog.method.setCurrentIndex(1)
+    dialog.compute()
+    wait_for_worker(dialog, qapp)
+    dialog.accept()
+    assert dialog.worker is None and dialog.result() == QDialog.DialogCode.Accepted
+    dialog.dispose()
