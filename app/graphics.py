@@ -46,6 +46,32 @@ ROTATION_HANDLE_DISTANCE = 35  # pixels écran au-dessus du cadre
 SNAP_DISTANCE = 8  # screen pixels within which a dragged layer snaps to a guide
 
 
+_font_families: dict[str, str] | None = None
+
+
+def _installed_families() -> dict[str, str]:
+    """Installed font families by lower-case name; cached, the system list is long."""
+    global _font_families
+    if _font_families is None:
+        _font_families = {family.casefold(): family for family in QFontDatabase.families()}
+    return _font_families
+
+
+def forget_font_families() -> None:
+    """Call after adding fonts to the application."""
+    global _font_families
+    _font_families = None
+
+
+def font_is_installed(name: str) -> bool:
+    return name.casefold() in _installed_families()
+
+
+def resolve_font_family(name: str) -> str:
+    """The installed family matching ``name`` (any case), else the default family."""
+    return _installed_families().get(name.casefold(), QFont().defaultFamily())
+
+
 class CurvedTextGraphicItem(QGraphicsItem):
     """Vector text laid out glyph by glyph along a path; it is never rasterised.
 
@@ -60,9 +86,7 @@ class CurvedTextGraphicItem(QGraphicsItem):
     def apply_layer(self, layer: Layer) -> None:
         """Reload every text property from the model and redraw."""
         self.lines = layer.text.split("\n")
-        available = {family.casefold(): family for family in QFontDatabase.families()}
-        family = available.get(layer.font_family.casefold(), QFont().defaultFamily())
-        self.font = QFont(family, layer.font_size)
+        self.font = QFont(resolve_font_family(layer.font_family), layer.font_size)
         self.color = QColor(layer.color)
         self.background = QColor(layer.text_background) if layer.text_background else QColor()
         self.path_shape, self.curve_intensity = normalize_shape(layer.text_deformation, layer.curve_intensity)
