@@ -238,6 +238,22 @@ def test_too_large_documents_cannot_be_created_or_resized(window, monkeypatch, m
     assert new.result() != new.DialogCode.Accepted
 
 
+def test_template_vanished_from_the_new_project_gallery_is_reported(window, monkeypatch, tmp_path, messages):
+    from app import templates
+    from app.dialogs import NewProjectDialog
+    monkeypatch.setattr(templates, "user_data_directory", lambda: tmp_path)
+    path = templates.save_template(Document(30, 20), "Fragile", None)
+    dialog = NewProjectDialog(window)
+    dialog.tabs.setCurrentIndex(1)
+    dialog.gallery.setCurrentRow(0)
+    path.unlink()  # deleted outside the application meanwhile
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes)
+    dialog.delete_selected()
+    dialog.duplicate_selected()
+    assert len(messages["warning"]) == 1  # the list was refreshed: nothing left to duplicate
+    assert dialog.gallery.count() == 0
+
+
 def test_project_images_are_stored_without_recompression(tmp_path):
     from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
     document = Document(20, 20)

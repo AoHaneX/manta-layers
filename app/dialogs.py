@@ -142,6 +142,11 @@ class NewProjectDialog(QDialog):
             button.setEnabled(selected)
         self.create_button.setEnabled(self.tabs.currentIndex() == 0 or selected)
 
+    def _failed(self, exc: Exception) -> None:
+        """The template changed on disk meanwhile (deleted, damaged): say so and show the real list."""
+        QMessageBox.warning(self, "Action impossible", str(exc))
+        self.refresh_gallery()
+
     def rename_selected(self):
         path = self.selected_template()
         item = self.gallery.currentItem()
@@ -150,13 +155,23 @@ class NewProjectDialog(QDialog):
         current_name = item.text().splitlines()[0]
         name, accepted = QInputDialog.getText(self, "Renommer le modèle", "Nom :", text=current_name)
         if accepted and name.strip():
-            rename_template(path, name)
+            try:
+                rename_template(path, name)
+            except (OSError, ValueError) as exc:
+                self._failed(exc)
+                return
             self.refresh_gallery(path)
 
     def duplicate_selected(self):
         path = self.selected_template()
-        if path is not None:
-            self.refresh_gallery(duplicate_template(path))
+        if path is None:
+            return
+        try:
+            copy = duplicate_template(path)
+        except (OSError, ValueError) as exc:
+            self._failed(exc)
+            return
+        self.refresh_gallery(copy)
 
     def delete_selected(self):
         path = self.selected_template()
@@ -171,7 +186,11 @@ class NewProjectDialog(QDialog):
             QMessageBox.StandardButton.No,
         )
         if answer == QMessageBox.StandardButton.Yes:
-            delete_template(path)
+            try:
+                delete_template(path)
+            except OSError as exc:
+                self._failed(exc)
+                return
             self.refresh_gallery()
 
     def accept(self):
