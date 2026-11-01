@@ -8,6 +8,7 @@ from PySide6.QtTest import QTest
 
 from app import selection as S
 from app.graphics import render_layers
+from app.imaging import alpha_bounds, trim_transparent
 from app.model import Document
 
 
@@ -92,3 +93,69 @@ def test_lasso_selection_combines_and_its_pixels_can_be_hidden(image_window):
     rendered = render_layers(window.document, [layer_id])
     assert rendered.getpixel((5, 5))[3] == 0 and rendered.getpixel((25, 5))[3] == 255
     assert rendered.getpixel((35, 5))[3] == 0
+
+
+# --- Transparent margins ------------------------------------------------------------------
+
+
+def test_trim_helpers_find_visible_pixels_and_handle_empty_images():
+    image = Image.open(io.BytesIO(png_with_margins()))
+    assert alpha_bounds(image) == (5, 4, 15, 12)
+    cropped, box = trim_transparent(image)
+    assert cropped.size == (10, 8) and box == (5, 4, 15, 12)
+    assert trim_transparent(Image.new("RGBA", (4, 4))) is None
+
+
+@pytest.mark.parametrize("transform", [
+    {}, {"sx": 2.0, "sy": 0.5}, {"rotation": 33.0}, {"flip_horizontal": True, "flip_vertical": True, "rotation": -20.0},
+])
+def test_trimmed_layer_keeps_its_look_on_the_canvas(window, transform):
+    document = Document(120, 100)
+    layer = document.add_image_bytes(png_with_margins(), "Sprite", center=False)
+    layer.x, layer.y = 40, 30
+    for key, value in transform.items():
+        setattr(layer, key, value)
+    layer.eraser_strokes.append({"points": [[7, 6]], "size": 2, "shape": "square", "pixel_art": True,
+                                 "hardness": 100, "opacity": 100})
+    window.install_document(document, layer.id)
+    before = render_layers(window.document)
+    assert window.trim_layer_margins(layer.id)
+    trimmed = window.document.layer(layer.id)
+    with Image.open(io.BytesIO(window.document.assets[trimmed.asset])) as source:
+        assert source.size == (11, 8)  # left margin 5 becomes 4: strokes need an even shift
+
+    after = render_layers(window.document)
+    old, new = before.tobytes(), after.tobytes()
+    difference = sum(1 for index in range(0, len(old), 4) if old[index:index + 4] != new[index:index + 4])
+    assert difference <= 4  # identical up to a few rotated edge pixels
+    window.undo_stack.undo()
+    assert window.document.layer(layer.id).asset == layer.asset
+
+
+def test_trim_refuses_empty_full_text_and_locked_layers(window):
+    document = Document(50, 50)
+    empty = document.add_image_bytes(png_with_margins(color=(0, 0, 0, 0)), "Vide")
+    full = document.add_image_bytes(png_with_margins((10, 10), (0, 0, 9, 9)), "Plein")
+    text = document.add_text("Texte")
+    locked = document.add_image_bytes(png_with_margins(), "Verrou")
+    locked.locked = True
+    window.install_document(document, None)
+    for layer in (empty, full, text, locked):
+        assert not window.trim_layer_margins(layer.id)
+    assert window.undo_stack.count() == 0
+
+
+def test_document_crop_to_content_keeps_the_image_and_is_undoable(window):
+    document = Document(100, 80)
+    layer = document.add_image_bytes(png_with_margins(), "Sprite", center=False)
+    layer.x, layer.y = 20, 10
+    window.install_document(document, layer.id)
+    window.select_all()
+    before = render_layers(window.document).crop((25, 14, 35, 22))
+    assert window.crop_document_to_content()
+    assert (window.document.width, window.document.height) == (10, 8)
+    assert render_layers(window.document).tobytes() == before.tobytes()
+    assert window.selection_mask is None
+    window.undo_stack.undo()
+    assert (window.document.width, window.document.height) == (100, 80)
+    assert window.selection_mask is not None  # one undo step restores the selection too

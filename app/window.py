@@ -67,6 +67,7 @@ from .dialogs import NewProjectDialog, ResizeDocumentDialog
 from .graphics import (
     CanvasView,
     CurvedTextGraphicItem,
+    crop_image_layer,
     document_mask_to_layer,
     layers_bounds,
     make_scene,
@@ -75,10 +76,12 @@ from .graphics import (
     qimage_png,
     render_document,
     render_layer_image,
+    render_layer_with_mask,
     render_layers,
     render_layers_region,
 )
 from .icons import alignment_icon, color_tool_icon, history_arrow_icon, sidebar_arrow_icon
+from .imaging import alpha_bounds
 from .layer_panel import FOLDER_ROLE, build_folder_row, build_layer_row, set_row_checked
 from .model import ASSET_FORMATS, MAX_DIMENSION, Document, Layer, new_id
 from .paths import user_data_directory
@@ -1057,6 +1060,9 @@ class MainWindow(QMainWindow):
         self._action(e, "Retourner verticalement", self.flip_layer_vertical)
         self._action(e, "Verrouiller / déverrouiller", self.toggle_lock)
         self.delete_action = self._action(e, "Supprimer (sélection ou calque)", self.delete_selection_or_layer, "Delete")
+        e.addSeparator()
+        self._action(e, "Rogner les marges transparentes du calque", self.trim_layer_margins)
+        self._action(e, "Recadrer le document sur son contenu", self.crop_document_to_content)
         tools_menu = self.menuBar().addMenu("Outils")
         self.eraser_action = QAction(color_tool_icon("eraser"), "Gomme (E)", self)
         self.eraser_action.setCheckable(True)
@@ -2463,6 +2469,63 @@ class MainWindow(QMainWindow):
         if self.mutate("Supprimer l'arrière-plan (nouveau calque)", add_layer, layer.id):
             self.select_layer(holder["id"])
 
+    def trim_layer_margins(self, layer_id: str | None = None) -> bool:
+        """Crop an image layer to its visible pixels without moving them on the canvas."""
+        layer = self.document.layer(layer_id or self.tool_target_id())
+        if layer is None or layer.kind != "image":
+            self.statusBar().showMessage("Sélectionnez un calque image à rogner", 3000)
+            return False
+        if layer.locked:
+            self.statusBar().showMessage("Déverrouillez le calque pour le rogner", 3000)
+            return False
+        rendered = render_layer_with_mask(layer, self.document)
+        box = alpha_bounds(rendered)
+        if box is None:
+            self.statusBar().showMessage("Le calque est entièrement transparent : rien à rogner", 3500)
+            return False
+        if box == (0, 0, *rendered.size):
+            self.statusBar().showMessage("Ce calque n'a pas de marge transparente", 3000)
+            return False
+        try:
+            trimmed, assets = crop_image_layer(layer, self.document, box)
+        except ValueError as exc:
+            self._report_failure("Rogner les marges transparentes", exc)
+            return False
+
+        def apply(doc):
+            doc.assets.update(assets)
+            doc.layers[doc.layers.index(doc.layer(layer.id))] = deepcopy(trimmed)
+
+        return self.mutate("Rogner les marges transparentes", apply, layer.id)
+
+    def crop_document_to_content(self) -> bool:
+        """Shrink the document to the visible pixels of its layers; the layers keep their look."""
+        box = alpha_bounds(render_layers(self.document))
+        if box is None:
+            self.statusBar().showMessage("Le document ne contient aucun pixel visible", 3500)
+            return False
+        left, top, right, bottom = box
+        if box == (0, 0, self.document.width, self.document.height):
+            self.statusBar().showMessage("Le document n'a pas de marge transparente", 3000)
+            return False
+
+        def apply(doc):
+            doc.width, doc.height = right - left, bottom - top
+            for layer in doc.layers:
+                layer.x -= left
+                layer.y -= top
+
+        # The selection is tied to the old frame: it is cleared in the same undo step.
+        self.undo_stack.beginMacro("Recadrer le document sur son contenu")
+        try:
+            self.deselect()
+            done = self.mutate("Recadrer le document sur son contenu", apply, self.selected_id)
+        finally:
+            self.undo_stack.endMacro()
+        if done:
+            self.canvas.fit_document()
+        return done
+
     def delete_selection_or_layer(self) -> bool:
         """Delete key: the selected pixels, else the checked layers, else the current layer.
 
@@ -2855,6 +2918,9 @@ class MainWindow(QMainWindow):
         background_action = menu.addAction("Supprimer l'arrière-plan…")
         background_action.setEnabled(editable_image)
         background_action.triggered.connect(self.remove_background)
+        trim_action = menu.addAction("Rogner les marges transparentes")
+        trim_action.setEnabled(editable_image)
+        trim_action.triggered.connect(lambda: self.trim_layer_margins())
         save_layer_action = menu.addAction("Enregistrer le calque sous…")
         save_layer_action.setEnabled(is_image)
         save_layer_action.triggered.connect(self.export_selected_layer)

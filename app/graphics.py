@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from copy import deepcopy
 from functools import lru_cache
 from hashlib import sha1
 from io import BytesIO
@@ -30,7 +31,7 @@ from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene
 
 from . import selection
 from .imaging import trim_transparent
-from .model import ASSET_FORMATS, MAX_PIXELS, Document, Layer
+from .model import ASSET_FORMATS, MAX_PIXELS, Document, Layer, new_id
 from .textpath import custom_points, drag_handle, handle_points, normalize_controls, normalize_shape, sample_path
 from .theme import COLORS
 
@@ -494,22 +495,72 @@ def pil_to_qimage(image: Image.Image) -> QImage:
                   QImage.Format.Format_RGBA8888).copy()
 
 
+def render_layer_with_mask(layer: Layer, document: Document) -> Image.Image:
+    """Source pixels of an image layer with its edits and mask, not flipped."""
+    image = render_layer_image(
+        document.assets[layer.asset], layer.color_replacements,
+        layer.color_fills, layer.eraser_strokes, cache_key=layer.asset,
+    )
+    if layer.mask:
+        mask = selection.decode(document.assets[layer.mask])
+        if mask.size != image.size:
+            mask = mask.resize(image.size, Image.Resampling.NEAREST)
+        image = selection.apply_alpha(image, mask)
+    return image
+
+
+def crop_image_layer(layer: Layer, document: Document,
+                     box: tuple[int, int, int, int]) -> tuple[Layer, dict[str, bytes]]:
+    """Copy of an image layer cropped to ``box`` (source pixels) that keeps its place on the canvas.
+
+    The source image and the mask are cropped losslessly, eraser strokes and
+    fill seeds are shifted, and the position is moved so that the visible
+    pixels do not move whatever the scale, rotation or flips. Returns the
+    layer and the new assets; raises ValueError when the edits cannot be
+    replayed identically on the cropped image.
+    """
+    left, top, right, bottom = box
+    if layer.eraser_strokes:
+        # Eraser dabs are placed with round(), which rounds halves to even: only
+        # an even shift of the stroke points keeps every dab on the same pixels.
+        left, top = left - left % 2, top - top % 2
+        box = (left, top, right, bottom)
+    with Image.open(BytesIO(document.assets[layer.asset]), formats=ASSET_FORMATS) as source:
+        width, height = source.size
+        cropped = source.convert("RGBA").crop(box)
+    trimmed = deepcopy(layer)
+    assets: dict[str, bytes] = {}
+    output = BytesIO()
+    cropped.save(output, format="PNG")
+    trimmed.asset = new_id()
+    assets[trimmed.asset] = output.getvalue()
+    if layer.mask:
+        mask = selection.decode(document.assets[layer.mask])
+        if mask.size != (width, height):
+            mask = mask.resize((width, height), Image.Resampling.NEAREST)
+        trimmed.mask = new_id()
+        assets[trimmed.mask] = selection.encode(mask.crop(box))
+    trimmed.color_fills = [{**fill, "x": fill["x"] - left, "y": fill["y"] - top} for fill in layer.color_fills]
+    trimmed.eraser_strokes = [{**stroke, "points": [[x - left, y - top] for x, y in stroke["points"]]}
+                              for stroke in layer.eraser_strokes]
+    corner = QPointF(width - right if layer.flip_horizontal else left,
+                     height - bottom if layer.flip_vertical else top)
+    origin = layer_transform(layer).map(corner)
+    trimmed.x, trimmed.y = origin.x(), origin.y()
+    probe = Document(document.width, document.height, None, [trimmed], {**document.assets, **assets})
+    expected = render_layer_with_mask(layer, document).crop(box)
+    if render_layer_with_mask(trimmed, probe).tobytes() != expected.tobytes():
+        raise ValueError("les retouches de ce calque ne peuvent pas être rejouées à l'identique après rognage")
+    return trimmed, assets
+
+
 def layer_pixmap(layer: Layer, document: Document) -> QPixmap:
     key = _render_key(layer)
     pixmap = PIXMAP_CACHE.get(key)
     if pixmap is not None:
         return pixmap
     try:
-        image = render_layer_image(
-            document.assets[layer.asset], layer.color_replacements,
-            layer.color_fills, layer.eraser_strokes, cache_key=layer.asset,
-        )
-        if layer.mask:
-            mask = selection.decode(document.assets[layer.mask])
-            if mask.size != image.size:
-                mask = mask.resize(image.size, Image.Resampling.NEAREST)
-            image = selection.apply_alpha(image, mask)
-        pixmap = QPixmap.fromImage(pil_to_qimage(image))
+        pixmap = QPixmap.fromImage(pil_to_qimage(render_layer_with_mask(layer, document)))
     except Exception as exc:
         raise ValueError(f"Image illisible pour le calque « {layer.name} » : {exc}") from exc
     if pixmap.isNull():
