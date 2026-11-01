@@ -222,6 +222,28 @@ def test_save_prompt_answers(small_document, monkeypatch, tmp_path, answer, expe
     assert window.is_modified() is not saved
 
 
+def test_export_adds_the_extension_instead_of_replacing_it(small_document, monkeypatch, tmp_path, messages):
+    window, _layer = small_document
+    existing = tmp_path / "carte.png"
+    existing.write_bytes(b"another image")
+    answer_save(monkeypatch, tmp_path / "carte.final")  # "carte.png" used to be overwritten silently
+    window.export_image()
+    assert (tmp_path / "carte.final.png").is_file()
+    assert existing.read_bytes() == b"another image"
+
+
+def test_export_asks_before_replacing_the_completed_name(small_document, monkeypatch, tmp_path):
+    window, _layer = small_document
+    existing = tmp_path / "rendu.jpg"
+    existing.write_bytes(b"keep me")
+    answer_save(monkeypatch, tmp_path / "rendu", "JPEG (*.jpg)")
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *args, **_kw: asked.append(args[2]) or QMessageBox.StandardButton.No)
+    assert window._export("x.png", "Exporter l'image", lambda: Image.new("RGBA", (2, 2)), "ok", "ko") is None
+    assert asked and existing.read_bytes() == b"keep me"
+
+
 def test_too_large_documents_cannot_be_created_or_resized(window, monkeypatch, messages):
     from app.dialogs import NewProjectDialog, ResizeDocumentDialog
     dialog = ResizeDocumentDialog(16000, 16000, window)
