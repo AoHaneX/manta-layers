@@ -3144,32 +3144,6 @@ class MainWindow(QMainWindow):
             if 0 <= idx + direction < len(self.document.layers):
                 self.mutate("Changer l'ordre des calques", lambda doc: doc.reorder_layer(layer.id, direction), layer.id)
 
-    def move_layer_to_display_position(self, layer_id: str, insertion: int):
-        """Convertit une position visuelle haut->bas vers l'ordre interne bas->haut."""
-        layer = self.document.layer(layer_id)
-        if layer is None:
-            return
-        if layer.locked:
-            self.statusBar().showMessage("Déverrouillez le calque avant de le déplacer", 3000)
-            return
-        display_ids = [layer.id for layer in reversed(self.document.layers)]
-        current = display_ids.index(layer_id)
-        insertion = max(0, min(insertion, len(display_ids)))
-        display_ids.pop(current)
-        if insertion > current:
-            insertion -= 1
-        insertion = max(0, min(insertion, len(display_ids)))
-        display_ids.insert(insertion, layer_id)
-        if display_ids == [layer.id for layer in reversed(self.document.layers)]:
-            return
-
-        def apply_order(doc):
-            by_id = {layer.id: layer for layer in doc.layers}
-            doc.layers = [by_id[id_] for id_ in reversed(display_ids)]
-            doc.normalize_folders()
-
-        self.mutate("Réordonner le calque par glisser-déposer", apply_order, layer_id)
-
     def new_document(self):
         if not self.maybe_save():
             return
