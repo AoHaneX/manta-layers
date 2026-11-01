@@ -47,6 +47,9 @@ class TokenPreview(QLabel):
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self._last: QPointF | None = None
+        # Zoom kept as a float between wheel events: fine wheels (touchpads, high resolution
+        # mice) move by less than 1 % per event, which rounding alone would always cancel.
+        self._zoom: float | None = None
 
     def mousePressEvent(self, event):
         self._last = event.position()
@@ -66,7 +69,11 @@ class TokenPreview(QLabel):
     def wheelEvent(self, event):
         steps = event.angleDelta().y() / 120
         if steps:
-            self.dialog.zoom.setValue(round(self.dialog.zoom.value() * 1.1 ** steps))
+            slider = self.dialog.zoom
+            # Start again from the slider when it was moved by something else since the last event.
+            zoom = self._zoom if self._zoom is not None and round(self._zoom) == slider.value() else slider.value()
+            self._zoom = max(slider.minimum(), min(slider.maximum(), zoom * 1.1 ** steps))
+            slider.setValue(round(self._zoom))
         event.accept()
 
 

@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 from PIL import Image, ImageChops, ImageDraw
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QPoint, QPointF, QSettings, Qt
+from PySide6.QtGui import QWheelEvent
 from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
 
 from app import templates
@@ -247,6 +248,26 @@ def test_token_dialog_border_limit_follows_frame_and_size(window):
     dialog.frame.setCurrentIndex(dialog.frame.findData("square"))
     assert dialog.border_width.maximum() == 64
     dialog.settings().validate()
+
+
+def wheel(widget, delta):
+    event = QWheelEvent(QPointF(10, 10), QPointF(10, 10), QPoint(0, 0), QPoint(0, delta),
+                        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+    widget.wheelEvent(event)
+
+
+def test_fine_wheel_zooms_the_token_preview_at_low_values(window):
+    dialog = TokenDialog(window)
+    dialog.zoom.setValue(20)
+    for _index in range(20):
+        wheel(dialog.preview, 15)  # an eighth of a notch: touchpads, high resolution mice
+    assert dialog.zoom.value() == round(20 * 1.1 ** 2.5)
+    for _index in range(20):
+        wheel(dialog.preview, -15)
+    assert dialog.zoom.value() == 20
+    dialog.zoom.setValue(40)  # moved by the slider: the wheel starts again from there
+    wheel(dialog.preview, 120)
+    assert dialog.zoom.value() == 44
 def test_token_dialog_exports_a_png_and_adds_a_layer(window, monkeypatch, tmp_path):
     window.install_document(Document(600, 600), None)
     dialog = TokenDialog(window)
