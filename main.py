@@ -19,6 +19,23 @@ def configure_windows_taskbar() -> None:
         pass
 
 
+# Same lower bound as requirements.txt: older releases have known image decoding flaws.
+MINIMUM_PILLOW = 13
+
+
+def outdated_pillow() -> str | None:
+    """Installed Pillow version when it predates the security fixes required by requirements.txt."""
+    try:
+        from PIL import __version__ as version
+    except ImportError:
+        return None
+    try:
+        major = int(version.split(".")[0])
+    except ValueError:
+        return None
+    return version if major < MINIMUM_PILLOW else None
+
+
 def main() -> int:
     configure_windows_taskbar()
     # Started without a console: errors go to a log file in the user data folder.
@@ -48,6 +65,14 @@ def main() -> int:
         details = f"\n\nDétails : {log_file}" if log_file else ""
         QMessageBox.critical(None, "Manta Layers — Démarrage impossible", f"{exc}{details}")
         return 1
+    old_pillow = outdated_pillow()
+    if old_pillow:
+        QMessageBox.warning(
+            window, "Bibliothèques à mettre à jour",
+            f"Pillow {old_pillow} est installé ; Manta Layers demande Pillow {MINIMUM_PILLOW} ou plus récent, "
+            "qui corrige des failles de sécurité dans la lecture des images.\n\n"
+            "Fermez Manta Layers puis lancez installer_dependances.bat.",
+        )
     return app.exec()
 
 

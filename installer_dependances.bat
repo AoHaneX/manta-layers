@@ -29,5 +29,7 @@ rem La mise a jour de pip est utile mais pas indispensable : un echec (proxy, ho
 if errorlevel 1 echo Mise a jour de pip impossible, installation poursuivie avec la version actuelle.
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 exit /b 1
+rem Copie des besoins installes : le lanceur reinstalle quand requirements.txt change (correctifs de securite).
+copy /y "requirements.txt" ".venv\installed-requirements.txt" >nul
 echo Installation terminee.
 exit /b 0
