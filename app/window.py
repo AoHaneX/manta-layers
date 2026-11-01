@@ -1205,8 +1205,10 @@ class MainWindow(QMainWindow):
         """Affiche un document. Si son rendu échoue, l'état courant reste intact."""
         scene = make_scene(doc, interactive=True)
         self._revision += 1
-        # The scene is replaced: an editor typing into the old one is dropped.
+        # The scene is replaced: an editor typing into the old one is dropped,
+        # and a drag in progress forgets the items about to be deleted.
         self._close_inline_editor()
+        self.canvas.reset_interaction()
         self.refreshing = True
         try:
             self.document = doc

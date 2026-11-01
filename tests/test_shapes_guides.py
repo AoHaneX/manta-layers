@@ -1,6 +1,9 @@
 """Shape layers, alignment guides and snapping."""
 import pytest
-from PySide6.QtCore import QPointF, Qt
+from conftest import png_bytes
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QMouseEvent
+from PySide6.QtWidgets import QApplication
 
 from app.graphics import layer_transform, qimage_to_pil, render_document
 from app.model import Document, Layer
@@ -163,3 +166,50 @@ def test_checked_layers_move_together_in_one_step(two_squares):
     assert (window.document.layer(second).x, window.document.layer(second).y) == (155, 157)
     window.undo_stack.undo()
     assert window.document.layer(second).x == 150
+
+
+# --- Undo or redo while the mouse button is held ----------------------------------------
+
+
+def _mouse(widget, kind, position, button, buttons):
+    event = QMouseEvent(kind, QPointF(position), QPointF(widget.mapToGlobal(position)), button, buttons,
+                        NO_MODIFIER)
+    QApplication.sendEvent(widget, event)
+
+
+@pytest.fixture
+def one_image(window):
+    document = Document(400, 300)
+    layer = document.add_image_bytes(png_bytes(100, 100), "image")
+    window.install_document(document, layer.id)
+    window.undo_stack.clear()
+    return window, layer.id
+
+
+def _press_undo_move_release(window, layer_id):
+    viewport = window.canvas.viewport()
+    start = window.canvas.mapFromScene(window.canvas.graphic_for(layer_id).sceneBoundingRect().center())
+    end = start + QPoint(40, 0)
+    _mouse(viewport, QEvent.Type.MouseButtonPress, start, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton)
+    window.undo_stack.undo()  # Ctrl+Z while the button is held: the scene is rebuilt
+    _mouse(viewport, QEvent.Type.MouseMove, end, Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton)
+    _mouse(viewport, QEvent.Type.MouseButtonRelease, end, Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton)
+
+
+def test_undo_during_a_drag_abandons_the_drag(one_image):
+    window, layer_id = one_image
+    start_x = window.document.layer(layer_id).x
+    window.nudge_layer(5, 0)
+    _press_undo_move_release(window, layer_id)  # used to raise "C++ object already deleted"
+    assert window.canvas.mode is None and window.canvas.drag_item is None
+    assert window.document.layer(layer_id).x == start_x  # the undo is kept, the drag is dropped
+    assert window.undo_stack.index() == 0
+
+
+def test_undo_during_an_eraser_stroke_drops_the_stroke(one_image):
+    window, layer_id = one_image
+    window.nudge_layer(5, 0)
+    window.set_eraser_active(True)
+    _press_undo_move_release(window, layer_id)
+    assert window.canvas.eraser_item is None
+    assert window.document.layer(layer_id).eraser_strokes == []

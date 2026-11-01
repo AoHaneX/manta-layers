@@ -1654,6 +1654,19 @@ class CanvasView(QGraphicsView):
                 pass
         self._reset_eraser_preview()
 
+    def reset_interaction(self) -> None:
+        """Forget a mouse interaction in progress: the items it refers to are being deleted.
+
+        Called when the scene is replaced (undo or redo while a button is held,
+        for instance). Selection drags and lassos are kept: they only use
+        document coordinates.
+        """
+        self.mode = self.drag_item = self.old_layer = self.handle_index = None
+        self.move_start, self.active_guides = {}, []
+        # The lifted pixels come from the previous document.
+        self.lift = None
+        self._reset_eraser_preview()
+
     def cancel_selection_drag(self) -> None:
         self.selection_drag = None
         self.lasso_points, self.lasso_hover = None, None
