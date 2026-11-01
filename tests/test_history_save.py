@@ -463,3 +463,19 @@ def test_a_failed_selection_move_leaves_no_empty_history_step(window):
     window.selection_mask = selection.full((50, 50))
     window.move_selection_content(5, 5)  # no visible pixel to move
     assert window.undo_stack.count() == 0
+
+
+def test_folding_a_folder_survives_undo_and_is_saved(window, tmp_path):
+    document = Document(50, 50)
+    first = document.add_image_bytes(png_bytes(5, 5), "a")
+    second = document.add_image_bytes(png_bytes(5, 5), "b")
+    folder = document.create_folder([first.id, second.id], "Dossier")
+    window.install_document(document, None)
+    window.undo_stack.clear()
+    window.select_layer(first.id)
+    window.nudge_layer(1, 0)
+    window.toggle_folder_collapsed(folder.id)
+    window.undo_stack.undo()  # its snapshot predates the fold
+    assert window.document.folder(folder.id).collapsed
+    assert window._write_project(tmp_path / "plié.manta")
+    assert open_project(tmp_path / "plié.manta").folder(folder.id).collapsed

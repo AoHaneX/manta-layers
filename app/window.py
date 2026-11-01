@@ -216,6 +216,8 @@ class MainWindow(QMainWindow):
         self.selection_mask = None
         # Multiple selection of the layer panel (layer ids), see set_layer_checked.
         self.checked_ids: set[str] = set()
+        # Folded folders of the current document, kept across undo and redo.
+        self._collapsed_folders: dict[str, bool] = {}
         self._layer_rows: dict[str, QWidget] = {}
         self.models_dir = background.models_directory()
         self._clipboard_origin = None
@@ -1187,6 +1189,8 @@ class MainWindow(QMainWindow):
         # and a drag in progress forgets the items about to be deleted.
         self._close_inline_editor()
         self.canvas.reset_interaction()
+        for folder in doc.folders:
+            folder.collapsed = self._collapsed_folders.get(folder.id, folder.collapsed)
         self.refreshing = True
         try:
             self.document = doc
@@ -1328,6 +1332,9 @@ class MainWindow(QMainWindow):
         if folder is None:
             return
         folder.collapsed = not folder.collapsed
+        # Outside the history, but kept by undo and redo (their snapshots predate
+        # the fold) and saved with the project.
+        self._collapsed_folders[folder_id] = folder.collapsed
         self._rebuild_layer_list(self.document)
 
     def _unique_folder_name(self) -> str:
@@ -3171,6 +3178,7 @@ class MainWindow(QMainWindow):
             return
         try:
             document = dialog.document()
+            self._collapsed_folders = {}
             self.install_document(document, None)
         except Exception as exc:
             QMessageBox.critical(self, "Création impossible", str(exc))
@@ -3237,6 +3245,7 @@ class MainWindow(QMainWindow):
             return
         try:
             doc = open_project(path)
+            self._collapsed_folders = {}
             self.install_document(doc, None)
         except Exception as exc:
             QMessageBox.critical(self, "Projet illisible", str(exc))
@@ -3403,6 +3412,7 @@ class MainWindow(QMainWindow):
         if not self.maybe_save():
             return False
         try:
+            self._collapsed_folders = {}
             self.install_document(elements, None)
         except Exception as exc:
             QMessageBox.critical(self, "Modèle illisible", str(exc))
@@ -3675,6 +3685,7 @@ class MainWindow(QMainWindow):
     def _restore_recovery(self, candidate: dict) -> bool:
         try:
             document = open_project(candidate["project"])
+            self._collapsed_folders = {}
             self.install_document(document, None)
         except Exception as exc:
             QMessageBox.warning(self, "Restauration impossible",
