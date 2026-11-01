@@ -10,7 +10,7 @@ from shutil import copy2
 from uuid import uuid4
 
 from PIL import Image
-from PySide6.QtCore import QLockFile, QPointF, QRectF, QSettings, QSize, Qt, QThread, QTimer
+from PySide6.QtCore import QLockFile, QPointF, QRectF, QSettings, QSize, QStandardPaths, Qt, QThread, QTimer
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -214,6 +214,8 @@ class MainWindow(QMainWindow):
         self.project_path: Path | None = None
         # Element template opened for editing ({"path", "name"}): saving writes it back.
         self.editing_template: dict | None = None
+        # Template the document comes from (its key), for the remembered folders.
+        self.template_origin: str | None = None
         self.selected_id: str | None = None
         # Dernier calque choisi : les outils continuent de le viser même si la
         # sélection est vidée, par exemple après un clic dans le vide.
@@ -3079,8 +3081,10 @@ class MainWindow(QMainWindow):
         menu.exec(global_position)
 
     def add_images(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, "Importer des images", "",
+        paths, _ = QFileDialog.getOpenFileNames(self, "Importer des images", self.initial_path("import"),
                      "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif);;Tous les fichiers (*)")
+        if paths:
+            self.remember_directory("import", Path(paths[0]).parent)
         self._import_paths(paths)
 
     def _import_paths(self, paths):
@@ -3234,7 +3238,7 @@ class MainWindow(QMainWindow):
         if not self.maybe_save():
             return
         path, _ = QFileDialog.getOpenFileName(
-            self, "Ouvrir un projet", "",
+            self, "Ouvrir un projet", self.initial_path("project"),
             "Projet Manta Layers (*.manta);;Ancien projet Manta Layers (*.mcrab)"
         )
         if not path:
@@ -3246,6 +3250,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Projet illisible", str(exc))
             return
         opened_path = Path(path)
+        self.editing_template = self.template_origin = None
+        self.remember_directory("project", opened_path.parent)
         self.project_path = opened_path if opened_path.suffix.lower() == ".manta" else None
         self.undo_stack.clear()
         self.undo_stack.setClean()
@@ -3279,7 +3285,8 @@ class MainWindow(QMainWindow):
 
     def save_as_document(self) -> bool:
         path, _ = QFileDialog.getSaveFileName(
-            self, "Sauvegarder le projet", "MantaLayers.manta", "Projet Manta Layers (*.manta)"
+            self, "Sauvegarder le projet", self.initial_path("project", f"{self._file_stem()}.manta"),
+            "Projet Manta Layers (*.manta)"
         )
         if not path:
             return False
@@ -3289,6 +3296,7 @@ class MainWindow(QMainWindow):
         # Le chemin du projet ne change qu'après un enregistrement réussi.
         if not self._write_project(destination):
             return False
+        self.remember_directory("project", destination.parent)
         self.project_path = destination
         self.editing_template = None  # "save as" turns an edited template into a project
         self.update_title()
@@ -3361,6 +3369,33 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Modification du modèle · Sauvegarder le projet l'enregistre", 6000)
         return True
 
+    # --- Remembered folders ----------------------------------------------------------------
+    # The last folder of each kind of operation (project, export, import, token,
+    # sprites) is kept in QSettings. A document created from a template also
+    # keeps its own folders, so that templates never overwrite each other's.
+
+    def _setting_keys(self, kind: str) -> list[str]:
+        keys = [f"paths/templates/{self.template_origin}/{kind}"] if self.template_origin else []
+        return keys + [f"paths/{kind}"]
+
+    def initial_path(self, kind: str, filename: str = "") -> str:
+        """Folder (optionally with a file name) where a file dialog of this kind should open."""
+        directory = None
+        for key in self._setting_keys(kind):
+            value = str(self.settings.value(key, "") or "")
+            if value and Path(value).is_dir():
+                directory = value
+                break
+        if directory is None:
+            location = (QStandardPaths.StandardLocation.DocumentsLocation if kind == "project"
+                        else QStandardPaths.StandardLocation.PicturesLocation)
+            directory = QStandardPaths.writableLocation(location) or str(Path.home())
+        return str(Path(directory) / filename) if filename else directory
+
+    def remember_directory(self, kind: str, directory) -> None:
+        for key in self._setting_keys(kind):
+            self.settings.setValue(key, str(directory))
+
     def _file_stem(self) -> str:
         if self.editing_template is not None:
             return self.editing_template["name"]
@@ -3415,11 +3450,13 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Enregistrement du modèle impossible", str(exc))
 
     def export_image(self):
-        path, filter_ = QFileDialog.getSaveFileName(self, "Exporter l'image", "MantaLayers.png",
-                     "PNG (*.png);;JPEG (*.jpg);;WebP (*.webp)")
+        path, filter_ = QFileDialog.getSaveFileName(self, "Exporter l'image",
+                                                    self.initial_path("export", f"{self._file_stem()}.png"),
+                                                    "PNG (*.png);;JPEG (*.jpg);;WebP (*.webp)")
         if not path:
             return
         dest = Path(path)
+        self.remember_directory("export", dest.parent)
         if dest.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
             dest = dest.with_suffix(".jpg" if "JPEG" in filter_ else ".webp" if "WebP" in filter_ else ".png")
         try:
@@ -3448,12 +3485,13 @@ class MainWindow(QMainWindow):
         safe_name = "".join(character if character not in '<>:"/\\|?*' else "_"
                             for character in layer.name).strip() or "Calque"
         path, filter_ = QFileDialog.getSaveFileName(
-            self, "Enregistrer le calque sous", f"{safe_name}.png",
+            self, "Enregistrer le calque sous", self.initial_path("export", f"{safe_name}.png"),
             "PNG (*.png);;JPEG (*.jpg);;WebP (*.webp)"
         )
         if not path:
             return
         destination = Path(path)
+        self.remember_directory("export", destination.parent)
         if destination.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
             destination = destination.with_suffix(
                 ".jpg" if "JPEG" in filter_ else ".webp" if "WebP" in filter_ else ".png"
