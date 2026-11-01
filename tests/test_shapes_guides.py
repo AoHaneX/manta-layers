@@ -89,3 +89,67 @@ def test_shape_rows_follow_the_selected_layer(window):
     assert rows.fill.button.text() == "#123456"
     window.select_layer(document.layers[1].id)
     assert rows.width.isHidden()
+
+
+@pytest.fixture
+def two_squares(window):
+    document = Document(200, 200)
+    first = shape_from_drag("rectangle", (10, 10), (50, 50), False, "#FF0000")
+    second = shape_from_drag("rectangle", (150, 150), (190, 190), False, "#00FF00")
+    document.layers += [first, second]
+    window.install_document(document, first.id)
+    window.undo_stack.clear()
+    return window, first.id, second.id
+
+
+def drag(window, layer_id, travel: QPointF, modifiers=NO_MODIFIER):
+    window.install_document(window.document.clone(), window.selected_id)  # a fresh, undragged scene
+    canvas = window.canvas
+    item = canvas.graphic_for(layer_id)
+    press = item.sceneBoundingRect().center()
+    canvas.mode, canvas.drag_item = "move", item
+    canvas._start_move(item, press)
+    canvas._after_move_step(modifiers, press + travel)
+    return item
+
+
+def test_dragged_layer_snaps_to_the_document_centre_and_shows_guides(two_squares):
+    window, first, _second = two_squares
+    window.snap_enabled = True
+    item = drag(window, first, QPointF(67, 0))  # centre 30 -> 97, the document centre is 100
+    assert item.sceneBoundingRect().center().x() == pytest.approx(100, abs=0.01)
+    assert ("v", 100.0) in window.canvas.active_guides
+    exported = qimage_to_pil(render_document(window.document))
+    assert exported.getpixel((100, 5))[3] == 0  # guides never reach the export
+
+
+def test_snapping_can_be_disabled_or_bypassed_with_alt(two_squares):
+    window, first, _second = two_squares
+    window.snap_enabled = False
+    item = drag(window, first, QPointF(67, 0))
+    assert item.sceneBoundingRect().center().x() == pytest.approx(97, abs=0.01)
+    window.snap_enabled = True
+    item = drag(window, first, QPointF(67, 0), Qt.KeyboardModifier.AltModifier)
+    assert item.sceneBoundingRect().center().x() == pytest.approx(97, abs=0.01)
+
+
+def test_snapping_aligns_with_other_layers(two_squares):
+    window, first, second = two_squares
+    window.snap_enabled = True
+    item = drag(window, first, QPointF(138, 0))  # left edge 10 -> 148, the other square starts at 150
+    assert item.sceneBoundingRect().left() == pytest.approx(150, abs=0.01)
+
+
+def test_checked_layers_move_together_in_one_step(two_squares):
+    window, first, second = two_squares
+    window.snap_enabled = False
+    window.set_checked_layers([first, second])
+    drag(window, first, QPointF(5, 7))
+    group = window.canvas._finish_move()
+    assert len(group) == 2
+    before = window.document.clone()
+    positions = {graphic.data(0): (graphic.pos().x(), graphic.pos().y()) for graphic in group}
+    assert window.commit_canvas_moves(before, positions)
+    assert (window.document.layer(second).x, window.document.layer(second).y) == (155, 157)
+    window.undo_stack.undo()
+    assert window.document.layer(second).x == 150

@@ -43,6 +43,7 @@ MIN_ZOOM = 0.01
 MAX_ZOOM = 64.0
 CHECKER_TILE = 18
 ROTATION_HANDLE_DISTANCE = 35  # pixels écran au-dessus du cadre
+SNAP_DISTANCE = 8  # screen pixels within which a dragged layer snaps to a guide
 
 
 class CurvedTextGraphicItem(QGraphicsItem):
@@ -829,6 +830,11 @@ class CanvasView(QGraphicsView):
         self.lasso_modifiers = Qt.KeyboardModifier.NoModifier
         # Shape being drawn with a shape tool: {"start", "end", "modifiers"}.
         self.shape_drag: dict | None = None
+        # Layers being dragged (start positions), snapping targets and guides shown.
+        self.move_start: dict = {}
+        self.move_press = QPointF()
+        self.snap_targets: tuple[list[float], list[float]] = ([], [])
+        self.active_guides: list[tuple[str, float]] = []
         # Pixels being moved with Ctrl+drag inside the selection.
         self.lift = None
         self.selection_overlay_image: QImage | None = None
@@ -910,6 +916,7 @@ class CanvasView(QGraphicsView):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(QRectF(0, 0, self.main_window.document.width, self.main_window.document.height))
         self._draw_selection(painter)
+        self._draw_guides(painter)
         # Transform and shape handles only make sense without an active tool.
         item = None if self.main_window.any_tool_active() else self.selected_graphic()
         layer = self.main_window.document.layer(item.data(0)) if item else None
@@ -983,6 +990,99 @@ class CanvasView(QGraphicsView):
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawPath(scene_path)
         painter.restore()
+
+    # --- Alignment guides and snapping while a layer is dragged ------------------------
+
+    def _start_move(self, item, press: QPointF) -> None:
+        """Remember where the dragged layers start and what they can align with."""
+        window = self.main_window
+        moving = [item]
+        layer_id = item.data(0)
+        if layer_id in window.checked_ids:
+            # Dragging a checked layer moves the whole multiple selection.
+            for other_id in window.checked_layer_ids():
+                layer = window.document.layer(other_id)
+                graphic = self.graphic_for(other_id)
+                if other_id != layer_id and graphic is not None and not layer.locked and graphic.isVisible():
+                    moving.append(graphic)
+        self.move_start = {graphic: QPointF(graphic.pos()) for graphic in moving}
+        self.move_press = QPointF(press)
+        document = window.document
+        xs = [0.0, document.width / 2, float(document.width)]
+        ys = [0.0, document.height / 2, float(document.height)]
+        for graphic in self.scene().items():
+            if graphic in self.move_start or not graphic.isVisible() or not document.layer(graphic.data(0)):
+                continue
+            rect = graphic.sceneBoundingRect()
+            xs += [rect.left(), rect.center().x(), rect.right()]
+            ys += [rect.top(), rect.center().y(), rect.bottom()]
+        self.snap_targets = (xs, ys)
+        self.active_guides = []
+
+    @staticmethod
+    def _closest(edges, targets, threshold):
+        best = None
+        for edge in edges:
+            for target in targets:
+                distance = target - edge
+                if abs(distance) <= threshold and (best is None or abs(distance) < abs(best)):
+                    best = distance
+        return best
+
+    def _moving_rect(self) -> QRectF:
+        rect = QRectF()
+        for graphic in self.move_start:
+            rect = rect.united(graphic.sceneBoundingRect())
+        return rect
+
+    def _after_move_step(self, modifiers, mouse: QPointF) -> None:
+        """Snap the dragged layers to the nearest guide, show the guides, move the selection with them.
+
+        Positions always derive from the pointer travel since the press, so a
+        snap never accumulates once the pointer moves away from the guide.
+        """
+        if self.drag_item not in self.move_start:
+            return
+        delta = mouse - self.move_press
+        for graphic, origin in self.move_start.items():
+            graphic.setPos(origin + delta)
+        xs, ys = self.snap_targets
+        zoom = max(1e-6, self.transform().m11())
+        rect = self._moving_rect()
+        if self.main_window.snap_enabled and not modifiers & Qt.KeyboardModifier.AltModifier:
+            dx = self._closest((rect.left(), rect.center().x(), rect.right()), xs, SNAP_DISTANCE / zoom) or 0.0
+            dy = self._closest((rect.top(), rect.center().y(), rect.bottom()), ys, SNAP_DISTANCE / zoom) or 0.0
+            if dx or dy:
+                for graphic in self.move_start:
+                    graphic.setPos(graphic.pos() + QPointF(dx, dy))
+                rect = self._moving_rect()
+        horizontal = (rect.left(), rect.center().x(), rect.right())
+        vertical = (rect.top(), rect.center().y(), rect.bottom())
+        tolerance = 0.5 / zoom
+        self.active_guides = sorted(
+            {("v", x) for x in xs if any(abs(x - edge) <= tolerance for edge in horizontal)}
+            | {("h", y) for y in ys if any(abs(y - edge) <= tolerance for edge in vertical)}
+        )
+        self.viewport().update()
+
+    def _finish_move(self) -> list:
+        """Clear the guides; return the graphics moved along with the dragged one, if any."""
+        group = list(self.move_start)
+        self.move_start, self.active_guides = {}, []
+        return group if len(group) > 1 else []
+
+    def _draw_guides(self, painter: QPainter) -> None:
+        if not self.active_guides:
+            return
+        visible = self.mapToScene(self.viewport().rect()).boundingRect()
+        pen = QPen(QColor(COLORS["copper"]), 1, Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        for orientation, value in self.active_guides:
+            if orientation == "v":
+                painter.drawLine(QPointF(value, visible.top()), QPointF(value, visible.bottom()))
+            else:
+                painter.drawLine(QPointF(visible.left(), value), QPointF(visible.right(), value))
 
     def update_selection_visual(self, mask, show_mask: bool) -> None:
         """Recompute the tint and outline once per selection change."""
@@ -1221,6 +1321,7 @@ class CanvasView(QGraphicsView):
                 self.mode = "move"
                 self.old_layer = self.main_window.document.clone()
                 self.drag_item = at
+                self._start_move(at, self.mapToScene(event.position().toPoint()))
         super().mousePressEvent(event)
         self.viewport().update()
 
@@ -1391,6 +1492,8 @@ class CanvasView(QGraphicsView):
             event.accept()
             return
         super().mouseMoveEvent(event)
+        if self.mode == "move" and self.drag_item is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self._after_move_step(event.modifiers(), self.mapToScene(event.position().toPoint()))
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.MiddleButton and self._pan_last is not None:
@@ -1447,7 +1550,11 @@ class CanvasView(QGraphicsView):
             return
         if mode not in ("resize", "rotate"):
             super().mouseReleaseEvent(event)
-        if item and before and mode:
+        moved_group = self._finish_move()
+        if item and before and mode == "move" and moved_group:
+            positions = {graphic.data(0): (graphic.pos().x(), graphic.pos().y()) for graphic in moved_group}
+            self.main_window.commit_canvas_moves(before, positions)
+        elif item and before and mode:
             src = before.layer(item.data(0))
             if src:
                 sx = item.transform().m11()
