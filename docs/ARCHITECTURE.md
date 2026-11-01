@@ -18,6 +18,7 @@ Note pour les développeurs. L'usage est décrit dans le [README](../README.md).
 | `background.py` | Détourage : couleur de fond (sans IA) et modèles ONNX facultatifs, téléchargement explicite | non |
 | `storage.py` | Format `.manta` (ZIP + `manifest.json` + PNG), écriture atomique vérifiée | non |
 | `templates.py`, `paths.py` | Modèles de projet et d'éléments (extraction, insertion), dossier de données utilisateur | non |
+| `diagnostics.py` | Journal des erreurs (`logs/manta.log`, `crash.log`), `sys.excepthook`, messages Qt ; installé par `main.py` | non (Qt importé à la demande) |
 | `imaging.py` | Marges transparentes, grilles et extraction de spritesheets | non |
 | `tokens.py` | Composition des tokens de jeu de rôle (portrait, cadres, bordures) | non |
 | `builtin_templates.py` | Modèles d'éléments fournis, construits en formes et textes | non |
