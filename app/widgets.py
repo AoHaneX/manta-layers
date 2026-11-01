@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QMimeData, QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QDrag, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QListWidget, QPlainTextEdit, QToolButton, QWidget
+from shiboken6 import isValid
 
 if TYPE_CHECKING:
     from .window import MainWindow
@@ -99,9 +100,12 @@ class LayerDragHandle(QToolButton):
         mime = QMimeData()
         mime.setData(LAYER_MIME_TYPE, f"{self.kind}:{self.layer_id}".encode("utf-8"))
         drag.setMimeData(mime)
-        drag.exec(Qt.DropAction.MoveAction)
         self._press_position = None
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        drag.exec(Qt.DropAction.MoveAction)
+        # The drop rebuilds the layer list, row widgets (this handle) included: on
+        # platforms whose drag loop runs deferred deletions, the handle is gone.
+        if isValid(self):
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
 
     def mouseReleaseEvent(self, event):
         self._press_position = None
