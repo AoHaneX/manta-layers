@@ -19,6 +19,11 @@ COMBINE_LABELS = {
     "intersect": "Intersection",
 }
 SUPERSAMPLING = 4  # antialiased shapes are drawn larger, then reduced
+# Longest supersampled side: on larger areas the factor drops (2 at 8192 px, 1
+# at 16384 px), which leaves every document up to 4096 px at the full factor.
+SUPERSAMPLED_SIDE_LIMIT = 16384
+# Supersampled pixels drawn at once (bytes of one band of an "L" image).
+SUPERSAMPLED_BAND_PIXELS = 1 << 25
 
 
 def empty(size: tuple[int, int]) -> Image.Image:
@@ -40,6 +45,42 @@ def _pixel_box(box) -> tuple[int, int, int, int] | None:
     return left, top, right, bottom
 
 
+def _supersampling_scale(area) -> int:
+    """Supersampling factor for an area, lowered so its longest side stays bounded."""
+    longest = max(area[2] - area[0], area[3] - area[1])
+    return max(1, min(SUPERSAMPLING, SUPERSAMPLED_SIDE_LIMIT // longest))
+
+
+def _draw_supersampled(mask: Image.Image, area, draw, table=None) -> None:
+    """Draw ``area`` of ``mask`` supersampled, reduce it and paste it into ``mask``.
+
+    ``draw(image_draw, scale, offset)`` draws on an image whose first row is
+    ``offset`` supersampled rows below the top of ``area``. ``table``
+    optionally maps the reduced values (e.g. a threshold).
+    """
+    width, height = area[2] - area[0], area[3] - area[1]
+    scale = _supersampling_scale(area)
+    if scale == SUPERSAMPLING:
+        # Areas up to 4096 px: a single image (256 MiB at most), as before.
+        big = Image.new("L", (width * scale, height * scale), 0)
+        draw(ImageDraw.Draw(big), scale, 0)
+        small = big.resize((width, height), Image.Resampling.BOX)
+        del big
+        mask.paste(small if table is None else small.point(table), area[:2])
+        return
+    # Larger areas are drawn in horizontal bands of whole output rows so that
+    # memory stays bounded. reduce() averages each block with integer maths,
+    # so the bands join without seams (resize() may round rows differently).
+    rows = max(1, SUPERSAMPLED_BAND_PIXELS // (width * scale * scale))
+    for top in range(0, height, rows):
+        band_height = min(rows, height - top)
+        big = Image.new("L", (width * scale, band_height * scale), 0)
+        draw(ImageDraw.Draw(big), scale, top * scale)
+        small = big.reduce(scale) if scale > 1 else big
+        del big
+        mask.paste(small if table is None else small.point(table), (area[0], area[1] + top))
+
+
 def _shape(size, box, antialias: bool, draw_ellipse: bool) -> Image.Image:
     mask = empty(size)
     if antialias:
@@ -53,13 +94,18 @@ def _shape(size, box, antialias: bool, draw_ellipse: bool) -> Image.Image:
                 min(size[0], int(right) + 2), min(size[1], int(bottom) + 2))
         if area[2] <= area[0] or area[3] <= area[1]:
             return mask
-        scale = SUPERSAMPLING
-        big = Image.new("L", ((area[2] - area[0]) * scale, (area[3] - area[1]) * scale), 0)
-        shape = ((left - area[0]) * scale, (top - area[1]) * scale,
-                 (right - area[0]) * scale - 1, (bottom - area[1]) * scale - 1)
-        draw = ImageDraw.Draw(big)
-        (draw.ellipse if draw_ellipse else draw.rectangle)(shape, fill=255)
-        mask.paste(big.resize((area[2] - area[0], area[3] - area[1]), Image.Resampling.BOX), area[:2])
+
+        def draw(image_draw, scale, offset):
+            # Pillow truncates coordinates to integers: truncating first keeps
+            # the result identical once a band shifts them by whole rows.
+            shape = (int((left - area[0]) * scale), int((top - area[1]) * scale),
+                     int((right - area[0]) * scale - 1), int((bottom - area[1]) * scale - 1))
+            # Without supersampling (huge areas), a box under one pixel wide
+            # would end before it starts, which Pillow refuses.
+            shape = (shape[0], shape[1] - offset, max(shape[0], shape[2]), max(shape[1], shape[3]) - offset)
+            (image_draw.ellipse if draw_ellipse else image_draw.rectangle)(shape, fill=255)
+
+        _draw_supersampled(mask, area, draw)
         return mask
     pixels = _pixel_box(box)
     if pixels is None:
@@ -101,12 +147,16 @@ def polygon(size: tuple[int, int], points, antialias: bool = False) -> Image.Ima
             min(size[0], int(max(xs)) + 2), min(size[1], int(max(ys)) + 2))
     if area[2] <= area[0] or area[3] <= area[1]:
         return mask
-    scale = SUPERSAMPLING
-    big = Image.new("L", ((area[2] - area[0]) * scale, (area[3] - area[1]) * scale), 0)
-    ImageDraw.Draw(big).polygon([((x - area[0]) * scale - 0.5, (y - area[1]) * scale - 0.5)
-                                 for x, y in vertices], fill=255)
-    mask.paste(big.resize((area[2] - area[0], area[3] - area[1]), Image.Resampling.BOX), area[:2])
-    return mask if antialias else mask.point([0] * 128 + [255] * 128)
+
+    def draw(image_draw, scale, offset):
+        # Pillow truncates coordinates to integers: truncating first keeps the
+        # result identical once a band shifts them by whole rows.
+        image_draw.polygon([(int((x - area[0]) * scale - 0.5), int((y - area[1]) * scale - 0.5) - offset)
+                            for x, y in vertices], fill=255)
+
+    # The pixel-perfect variant keeps pixels covered by at least half.
+    _draw_supersampled(mask, area, draw, None if antialias else [0] * 128 + [255] * 128)
+    return mask
 
 
 def _within(channel: Image.Image, reference: int, tolerance: int) -> Image.Image:

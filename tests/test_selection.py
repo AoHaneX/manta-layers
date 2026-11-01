@@ -1,6 +1,11 @@
 """Selection masks (pure Pillow): shapes, magic wand, alpha and combinations."""
+import random
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from app import selection as S
 
@@ -131,3 +136,147 @@ def test_encode_decode_roundtrip():
 @pytest.mark.parametrize("side, expected", [(1, 1), (2, 4)])
 def test_tiny_ellipses_still_select_their_pixels(side, expected):
     assert selected_count(S.ellipse((5, 5), (0, 0, side, side))) == expected
+
+
+# --- Bounded supersampling ------------------------------------------------------
+
+
+def reference_polygon(size, points, antialias=False):
+    """Former implementation (uncapped x4 supersampling), kept to check equivalence."""
+    mask = S.empty(size)
+    vertices = [(float(x), float(y)) for x, y in points]
+    if len(set(vertices)) < 3:
+        return mask
+    xs, ys = [x for x, _ in vertices], [y for _, y in vertices]
+    area = (max(0, int(min(xs)) - 1), max(0, int(min(ys)) - 1),
+            min(size[0], int(max(xs)) + 2), min(size[1], int(max(ys)) + 2))
+    if area[2] <= area[0] or area[3] <= area[1]:
+        return mask
+    big = Image.new("L", ((area[2] - area[0]) * 4, (area[3] - area[1]) * 4), 0)
+    ImageDraw.Draw(big).polygon([((x - area[0]) * 4 - 0.5, (y - area[1]) * 4 - 0.5)
+                                 for x, y in vertices], fill=255)
+    mask.paste(big.resize((area[2] - area[0], area[3] - area[1]), Image.Resampling.BOX), area[:2])
+    return mask if antialias else mask.point([0] * 128 + [255] * 128)
+
+
+def reference_shape(size, box, draw_ellipse):
+    """Former antialiased rectangle / ellipse."""
+    mask = S.empty(size)
+    x0, y0, x1, y1 = box
+    left, right = sorted((x0, x1))
+    top, bottom = sorted((y0, y1))
+    if right - left < 0.5 or bottom - top < 0.5:
+        return mask
+    area = (max(0, int(left) - 1), max(0, int(top) - 1),
+            min(size[0], int(right) + 2), min(size[1], int(bottom) + 2))
+    if area[2] <= area[0] or area[3] <= area[1]:
+        return mask
+    big = Image.new("L", ((area[2] - area[0]) * 4, (area[3] - area[1]) * 4), 0)
+    shape = ((left - area[0]) * 4, (top - area[1]) * 4, (right - area[0]) * 4 - 1, (bottom - area[1]) * 4 - 1)
+    draw = ImageDraw.Draw(big)
+    (draw.ellipse if draw_ellipse else draw.rectangle)(shape, fill=255)
+    mask.paste(big.resize((area[2] - area[0], area[3] - area[1]), Image.Resampling.BOX), area[:2])
+    return mask
+
+
+def random_shapes(seed, count):
+    rnd = random.Random(seed)
+    for _ in range(count):
+        size = (rnd.randint(1, 80), rnd.randint(1, 80))
+        points = [(rnd.uniform(-20, 100), rnd.uniform(-20, 100)) for _ in range(rnd.randint(3, 9))]
+        if rnd.random() < 0.3:
+            points = [(round(x), round(y)) for x, y in points]
+        yield size, points, tuple(rnd.uniform(-20, 100) for _ in range(4))
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_supersampled_shapes_are_unchanged_up_to_4096(seed):
+    for size, points, box in random_shapes(seed, 150):
+        for antialias in (False, True):
+            assert S.polygon(size, points, antialias).tobytes() == \
+                reference_polygon(size, points, antialias).tobytes()
+        assert S.ellipse(size, box, True).tobytes() == reference_shape(size, box, True).tobytes()
+        assert S.rectangle(size, box, True).tobytes() == reference_shape(size, box, False).tobytes()
+
+
+def test_full_document_lasso_at_4096_is_unchanged():
+    side = 4096
+    points = [(0.3, 0), (side, 0.7), (side * 0.71, side * 0.93), (0, side)]
+    assert S._supersampling_scale((0, 0, side, side)) == 4
+    assert S.polygon((side, side), points, True).tobytes() == \
+        reference_polygon((side, side), points, True).tobytes()
+
+
+@pytest.mark.parametrize("side, scale", [(1, 4), (4096, 4), (4097, 3), (8192, 2), (16384, 1)])
+def test_supersampling_factor_drops_on_huge_areas(side, scale):
+    assert S._supersampling_scale((0, 0, side, side)) == scale
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_bands_join_without_seams(monkeypatch, seed):
+    # A low side limit forces the reduced factor (and banding) on small images.
+    monkeypatch.setattr(S, "SUPERSAMPLED_SIDE_LIMIT", 60)
+    rnd = random.Random(seed)
+    for size, points, box in random_shapes(seed, 60):
+        monkeypatch.setattr(S, "SUPERSAMPLED_BAND_PIXELS", 1 << 25)
+        whole = [S.polygon(size, points, True), S.polygon(size, points), S.ellipse(size, box, True),
+                 S.rectangle(size, box, True)]
+        monkeypatch.setattr(S, "SUPERSAMPLED_BAND_PIXELS", rnd.randint(1, 2000))
+        banded = [S.polygon(size, points, True), S.polygon(size, points), S.ellipse(size, box, True),
+                  S.rectangle(size, box, True)]
+        assert [mask.tobytes() for mask in whole] == [mask.tobytes() for mask in banded]
+
+
+def test_thin_shapes_without_supersampling_do_not_fail(monkeypatch):
+    monkeypatch.setattr(S, "SUPERSAMPLED_SIDE_LIMIT", 10)  # factor 1 on a 20 px area
+    assert S.ellipse((30, 30), (2.2, 2, 2.8, 22), True).size == (30, 30)
+    assert S.rectangle((30, 30), (2, 2.2, 22, 2.8), True).size == (30, 30)
+
+
+PEAK_MEMORY_SCRIPT = r"""
+import sys, time
+from app import selection
+
+def peak():
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("faults", wintypes.DWORD)] + [
+                (name, ctypes.c_size_t) for name in (
+                    "peak_ws", "ws", "peak_paged", "paged", "peak_nonpaged", "nonpaged",
+                    "pagefile", "peak_pagefile")]
+
+        counters = Counters()
+        counters.cb = ctypes.sizeof(Counters)
+        if not ctypes.windll.kernel32.K32GetProcessMemoryInfo(
+                wintypes.HANDLE(-1), ctypes.byref(counters), counters.cb):
+            raise OSError("GetProcessMemoryInfo")
+        return counters.peak_pagefile  # peak committed memory
+    import resource
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return usage if sys.platform == "darwin" else usage * 1024
+
+side = 8192
+before = peak()
+started = time.perf_counter()
+mask = selection.polygon((side, side), [(0, 0), (side, 0), (side, side), (0, side)], antialias=True)
+elapsed = time.perf_counter() - started
+assert mask.getextrema() == (255, 255)
+print((peak() - before) / 2**20, elapsed)
+"""
+
+
+def test_full_document_lasso_at_8192_has_bounded_memory():
+    # Pillow allocates image buffers in C, outside tracemalloc's view: the peak
+    # memory of a separate process is measured instead (about 1.4 GB before the
+    # cap, 112 MB with it).
+    if sys.platform not in ("win32", "linux", "darwin"):
+        pytest.skip("peak memory measurement not available")
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run([sys.executable, "-c", PEAK_MEMORY_SCRIPT], cwd=root, capture_output=True,
+                            text=True, timeout=120, check=True)
+    peak_mib, elapsed = map(float, result.stdout.split())
+    assert peak_mib < 300
+    assert elapsed < 2
