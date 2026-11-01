@@ -40,7 +40,19 @@ Le script `lancer_linux_mac.sh` est fourni à titre expérimental (Python 3.11 o
 | Restauration de la session après une fermeture imprévue | ✅ |
 | Déformation Warp réelle des formes de lettres | **Pas encore** — architecture préparée |
 | Pots de peinture, recolorisation et gomme non destructifs | ✅ |
-| Filtres et réglages d'image (luminosité, contraste…), recadrage | **Pas encore** |
+| Sélection multiple de calques (cases à cocher, Ctrl+clic) ; menu : dossier, fusion, suppression, modèle | ✅ |
+| Dossiers de calques : repli, renommage, visibilité globale, glisser-déposer | ✅ |
+| Fusion de calques (transparence, transformations, avertissement si l'aspect changerait) | ✅ |
+| Lasso libre et lasso polygonal | ✅ |
+| Rognage des marges transparentes d'un calque ; recadrage du document sur son contenu | ✅ |
+| Guides d'alignement et magnétisme pendant le déplacement | ✅ |
+| Formes vectorielles : rectangle, ellipse, polygone, ligne, flèche (bulles et bandeaux dans les modèles) | ✅ |
+| Pipette sur tout le bureau, même hors de Manta Layers | ✅ |
+| Bibliothèque de modèles d'éléments, avec modèles fournis (bulles, encadrés, bandeaux, étiquettes, cadres) | ✅ |
+| Créateur de tokens pour jeux de rôle (PNG transparent) | ✅ |
+| Découpe de spritesheets en PNG ou en calques | ✅ |
+| Mémorisation des dossiers d'enregistrement, par modèle | ✅ |
+| Filtres et réglages d'image (luminosité, contraste…) | **Pas encore** |
 | Segmentation d'un objet choisi au clic | **Non prise en charge** — seul le fond entier est supprimé |
 | Historique conservé après fermeture du logiciel | **Pas encore** — la session est restaurée, pas son historique |
 | Installation sous forme de `.exe` autonome | **Pas encore** — lancement `.bat` + Python |
@@ -57,6 +69,15 @@ Le script `lancer_linux_mac.sh` est fourni à titre expérimental (Python 3.11 o
 - **Import rapide** : glisse une ou plusieurs images depuis l'Explorateur directement sur le canvas ; un calque est créé pour chaque image.
 - **Ordre** : utilise les flèches ↑ et ↓ directement sur la ligne du calque.
 - **Ordre manuel** : maintiens la poignée ≡ d'un calque puis fais-la glisser vers sa nouvelle position dans la liste.
+- **Sélection multiple** : coche la case d'un calque, ou `Ctrl` + clic sur son nom. Un clic droit dans le panneau propose « Créer un dossier de calques », « Fusionner les calques », « Supprimer » et « Créer un modèle » pour les calques cochés ; un clic droit sur un calque non coché le coche seul. `Suppr` supprime les calques cochés (sauf pendant la saisie d'un texte). Glisser un calque coché sur le canvas déplace toute la sélection.
+- **Dossiers** : la flèche ▾/▸ replie ou déplie, l'œil masque tout le dossier (canvas et exports), un double-clic sur le nom le renomme, la poignée ≡ déplace le dossier. Glisse un calque sur la moitié basse d'un dossier pour l'y faire entrer, ailleurs pour l'en sortir. Un dossier vidé disparaît.
+- **Fusion** : les calques cochés visibles deviennent un seul calque image, à la place du plus haut. Si des calques non cochés situés entre eux les recouvrent, une confirmation prévient que l'aspect changerait.
+- **Formes** : onglet Outils > Formes, glisse sur le canvas (`Maj` : carré, cercle ou angle de 45°). La couleur de l'onglet Outils sert de remplissage ; dimensions, remplissage, contour, épaisseur, arrondi et nombre de côtés se règlent dans les propriétés.
+- **Guides et magnétisme** : en déplaçant un calque, des guides cuivrés apparaissent sur les bords et centres du document et des autres calques ; le calque s'y aimante. `Alt` ignore le magnétisme ; Affichage > Magnétisme des guides le désactive.
+- **Rognage** : Édition > Rogner les marges transparentes du calque (ou clic droit sur le canvas) ; Édition > Recadrer le document sur son contenu.
+- **Pipette écran** : bouton « Pipette écran » de l'onglet Outils ou menu Outils. L'écran est figé le temps du prélèvement : clique n'importe où, `Échap` ou clic droit pour annuler. La couleur va à l'outil actif (couleur des outils, ou couleur du texte si la pipette de texte était active).
+- **Modèles** : Insertion > Bibliothèque de modèles (`Ctrl+Maj+B`) insère un modèle au centre, ses calques restant séparés ; Renommer, Modifier (Sauvegarder le projet enregistre alors le modèle), Dupliquer et Supprimer gèrent vos modèles. Les modèles fournis se dupliquent pour être modifiés.
+- **Tokens et spritesheets** : menu Outils > Créateur de tokens / Découper une spritesheet.
 - **Verrouillage** : clique sur le cadenas de la ligne. Le bouton devient bleu et le calque ne peut plus être transformé, modifié, déplacé dans la liste, dupliqué ou supprimé jusqu'à son déverrouillage.
 - **Menu contextuel** : clic droit sur le canvas pour copier, couper, coller, verrouiller, retourner ou supprimer un calque.
 - **Symétrie** : retourne un calque image horizontalement ou verticalement sans modifier son fichier source.
@@ -111,7 +132,10 @@ Le script `lancer_linux_mac.sh` est fourni à titre expérimental (Python 3.11 o
 | Réduire/augmenter la gomme | `[` / `]` |
 | Outil texte | `T` |
 | Valider / annuler l'édition d'un texte | `Ctrl+Entrée` / `Échap` |
-| Sélection rectangulaire / baguette magique | `M` / `W` |
+| Sélection rectangulaire / baguette magique / lasso | `M` / `W` / `L` |
+| Lasso polygonal : fermer / retirer un point / annuler | double-clic ou `Entrée` / `Retour arrière` / `Échap` |
+| Bibliothèque de modèles | `Ctrl+Maj+B` |
+| Ignorer le magnétisme pendant un déplacement | `Alt` |
 | Tout sélectionner / désélectionner / inverser | `Ctrl+A` / `Ctrl+Maj+A` / `Ctrl+Maj+I` |
 | Afficher le masque de sélection | `Ctrl+M` |
 | Copier / couper la sélection vers un nouveau calque | `Ctrl+J` / `Ctrl+Maj+J` |
@@ -155,6 +179,15 @@ MantaLayers/
 │   ├── icons.py                # pictogrammes vectoriels
 │   ├── widgets.py              # widgets de la liste des calques et du panneau
 │   ├── dialogs.py              # nouveau projet et dimensions du document
+│   ├── layer_panel.py          # lignes de calques cochables et de dossiers
+│   ├── imaging.py              # marges transparentes et spritesheets (sans Qt)
+│   ├── shape_item.py           # formes vectorielles : géométrie et rendu
+│   ├── shape_panel.py          # propriétés des formes
+│   ├── screen_picker.py        # pipette sur tout le bureau
+│   ├── builtin_templates.py    # modèles d'éléments fournis
+│   ├── template_library.py     # bibliothèque de modèles d'éléments
+│   ├── tokens.py, token_dialog.py   # créateur de tokens
+│   ├── sprite_dialog.py        # découpe de spritesheets
 │   └── window.py               # fenêtre, actions, historique, contrôles
 ├── exemples/
 │   └── Manta_Demo.manta        # projet modifiable avec la mascotte
@@ -165,6 +198,9 @@ MantaLayers/
     ├── test_selection.py, test_selection_tools.py              # masques et outils de sélection
     ├── test_background.py, test_background_ui.py               # détourage (images synthétiques, sans modèle)
     ├── test_color_fill.py, test_edge_cases.py                  # pots, gomme, cas limites
+    ├── test_folders.py, test_layer_panel.py                    # dossiers, sélection multiple, fusion
+    ├── test_lasso_trim.py, test_shapes_guides.py               # lassos, rognage, formes, guides
+    ├── test_screen_picker.py, test_templates_tools.py          # pipette écran, modèles, tokens, sprites
     └── test_gui_smoke.py                                       # intégration Qt
 ```
 
@@ -176,7 +212,7 @@ L'interface applique la charte ReefKit commune : palette bleu nuit/cyan, composa
 
 Le panneau droit conserve la taille utile de ses onglets et de ses champs. Lorsque la fenêtre manque de hauteur, une barre de défilement verticale permet d'atteindre les propriétés sans comprimer ni superposer les contrôles.
 
-**Format `.manta` (version 2) :** ouvre-le avec 7-Zip pour consulter `manifest.json` et `assets/*.png`. Les images originales restent présentes ; position, rotation, échelle, formes de texte et masques de calque sont conservés séparément. Les projets en version 1 et les anciens fichiers `.mcrab` restent lisibles et sont enregistrés en version 2 lors de leur prochaine sauvegarde. Chaque sauvegarde est écrite dans un fichier temporaire, vérifiée par relecture, puis remplace l'ancien fichier.
+**Format `.manta` (versions 2 et 3) :** un projet qui utilise des dossiers ou des formes est enregistré en version 3 ; les autres restent en version 2, lisibles par les versions précédentes de Manta Layers. ouvre-le avec 7-Zip pour consulter `manifest.json` et `assets/*.png`. Les images originales restent présentes ; position, rotation, échelle, formes de texte et masques de calque sont conservés séparément. Les projets en version 1 et les anciens fichiers `.mcrab` restent lisibles et sont enregistrés en version 2 lors de leur prochaine sauvegarde. Chaque sauvegarde est écrite dans un fichier temporaire, vérifiée par relecture, puis remplace l'ancien fichier.
 
 Pour le détail technique (modules, rendu du texte, masques, détourage, historique), voir [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -219,7 +255,7 @@ Avant toute modification majeure : création d'un projet vide, import de 3 image
 
 ## Pour développer la suite
 
-1. Multisélection de calques et lasso.
+1. Dossiers imbriqués et réglages d'image non destructifs.
 2. Ajouter l'**enveloppe Warp** des glyphes (champ réservé `text_warp`).
 3. Ajouter recadrage, réglages d'image non destructifs et export calque par calque.
 4. Quand les fonctionnalités sont stables, envisager **PyInstaller** et intégration dans le launcher ReefKit.

@@ -13,5 +13,7 @@
 - Dépendances IA (`requirements-ai.txt`) facultatives et importées à la demande ; aucun téléchargement de modèle sans confirmation explicite.
 - Nouveaux commentaires de code en anglais.
 - Tester avec `python -m pytest` (installer `requirements-dev.txt`) ; vérifier manuellement sous Windows après toute modification Qt. Les tests doivent passer `settings` et `recovery_dir` temporaires à `MainWindow`.
-- Phase suivante : Warp à points de contrôle (champ réservé `text_warp`), sans casser le format `.manta` (version 2).
+- Format `.manta` : version 3 seulement si le projet contient des dossiers ou des formes (sinon version 2, lisible par les anciennes versions) ; tout nouveau champ doit rester facultatif.
+- Les membres d'un dossier restent contigus : passer par les méthodes de `Document` (`create_folder`, `move_layer`, `move_folder`, `remove_layers`, `normalize_folders`).
+- Phase suivante : Warp à points de contrôle (champ réservé `text_warp`).
 - Ne pas introduire d'API distante, de télémétrie ni de comptes utilisateur sans demande explicite.
