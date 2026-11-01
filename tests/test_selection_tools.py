@@ -231,3 +231,18 @@ def test_separate_button_moves_the_selection_to_a_new_layer(setup, tool):
     assert render_layers(window.document, [new.id]).getpixel((25, 35)) == (220, 20, 20, 255)
     assert render_layers(window.document, [layer_id]).getpixel((25, 35))[3] == 0
     assert window.undo_stack.count() == count + 1
+
+
+def test_enter_separates_the_selection_into_a_new_layer(setup):
+    window, layer_id = setup
+    window.canvas.setFocus()
+    QTest.keyClick(window.canvas, Qt.Key.Key_Return)  # no selection: nothing happens
+    assert len(window.document.layers) == 1
+    window.set_selection_tool("rect")
+    drag(window, QPointF(10, 20), QPointF(40, 50))
+    window.canvas.setFocus()
+    QTest.keyClick(window.canvas, Qt.Key.Key_Return)
+    new = window.document.layer(window.selected_id)
+    assert new.id != layer_id and len(window.document.layers) == 2
+    assert render_layers(window.document, [new.id]).getpixel((25, 35)) == (220, 20, 20, 255)
+    assert render_layers(window.document, [layer_id]).getpixel((25, 35))[3] == 0

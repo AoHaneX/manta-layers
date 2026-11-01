@@ -1353,6 +1353,13 @@ class CanvasView(QGraphicsView):
             self.finish_lasso()
             event.accept()
             return
+        if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and event.modifiers() in (Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.KeypadModifier)
+                and self.main_window.selection_mask is not None):
+            # Enter separates the selected pixels into a new layer, like the button of the selection tools.
+            self.main_window.selection_to_new_layer(cut=True)
+            event.accept()
+            return
         if self.lasso_points is not None and event.key() == Qt.Key.Key_Backspace:
             self.lasso_points.pop()  # polygonal lasso: remove the last point
             if not self.lasso_points:
