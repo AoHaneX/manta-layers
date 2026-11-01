@@ -246,6 +246,7 @@ class MainWindow(QMainWindow):
         self.left_sidebar_width = 245
         self.settings = settings if settings is not None else QSettings("Blue Shrimp", "Manta Layers")
         self.last_font_family = str(self.settings.value("text/last_font", "Arial"))
+        self.snap_enabled = self.settings.value("canvas/snap", True, type=bool)
         self.undo_stack = QUndoStack(self)
         self.undo_stack.setUndoLimit(100)
         self.custom_font_ids: list[int] = []
@@ -1132,6 +1133,9 @@ class MainWindow(QMainWindow):
         v = self.menuBar().addMenu("Affichage")
         self._action(v, "Afficher / masquer le panneau d'utilitaires", self.toggle_left_sidebar, "F9")
         self._action(v, "Ajuster à la fenêtre", self.canvas.fit_document, "Ctrl+0")
+        self.snap_action = self._action(v, "Magnétisme des guides (Alt pour l'ignorer)", self.toggle_snap)
+        self.snap_action.setCheckable(True)
+        self.snap_action.setChecked(self.snap_enabled)
         self._action(v, "Zoom +", lambda: self.change_zoom(1.2), "Ctrl++")
         self._action(v, "Zoom -", lambda: self.change_zoom(1/1.2), "Ctrl+-")
         h = self.menuBar().addMenu("Aide")
@@ -1734,6 +1738,22 @@ class MainWindow(QMainWindow):
 
     def _report_failure(self, description: str, exc: Exception):
         QMessageBox.warning(self, "Action impossible", f"{description} : {exc}")
+
+    def commit_canvas_moves(self, before: Document, positions: dict[str, tuple[float, float]]) -> bool:
+        """Record layers dragged together as one undoable step."""
+        after = before.clone()
+        for layer_id, (x, y) in positions.items():
+            layer = after.layer(layer_id)
+            if layer is not None:
+                layer.x, layer.y = x, y
+        return self._push(DocumentCommand(self, before, after, f"Déplacer {len(positions)} calques",
+                                          self.selected_id, self.selected_id))
+
+    def toggle_snap(self, enabled: bool):
+        self.snap_enabled = bool(enabled)
+        self.settings.setValue("canvas/snap", self.snap_enabled)
+        self.statusBar().showMessage(
+            "Magnétisme activé · maintenez Alt pour l'ignorer" if enabled else "Magnétisme désactivé", 3000)
 
     def commit_canvas_transform(self, before, layer_id, state, description):
         after = before.clone()
