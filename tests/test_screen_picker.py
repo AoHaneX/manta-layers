@@ -1,5 +1,6 @@
 """Desktop-wide colour picker: sampling, scaling, sessions and their effect."""
-from PySide6.QtCore import QPointF, QRect, QSize, Qt
+import shiboken6
+from PySide6.QtCore import QCoreApplication, QEvent, QPointF, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QPixmap
 from PySide6.QtWidgets import QMessageBox
 
@@ -95,3 +96,36 @@ def test_failure_is_reported_without_side_effect(window, monkeypatch):
     monkeypatch.setattr(QGuiApplication, "screens", staticmethod(lambda: []))
     assert not window.start_screen_picker()
     assert warnings and window._screen_picker is None
+
+
+def two_screens():
+    return [FakeScreen(QRect(0, 0, 100, 80), capture(100, 80, "#FF0000", "#00FF00")),
+            FakeScreen(QRect(100, 0, 50, 40), capture(100, 80, "#0000FF", "#0000FF"))]
+
+
+def test_an_overlay_closed_from_outside_ends_the_session(qapp, monkeypatch):
+    monkeypatch.setattr(QGuiApplication, "screens", staticmethod(two_screens))
+    picker = ScreenColorPicker()
+    cancelled = []
+    picker.cancelled.connect(lambda: cancelled.append(True))
+    assert picker.start()
+    first, second = picker.overlays
+    first.close()  # Alt+F4 or the window manager: the overlay deletes itself
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert cancelled == [True] and not picker.active
+    assert not shiboken6.isValid(first) and not shiboken6.isValid(second)  # no frozen overlay left
+    assert picker.start() and len(picker.overlays) == 2  # the tool is still available
+    picker.cancel()
+    assert cancelled == [True, True]
+
+
+def test_an_overlay_deleted_behind_the_picker_is_skipped(qapp, monkeypatch):
+    monkeypatch.setattr(QGuiApplication, "screens", staticmethod(two_screens))
+    picker = ScreenColorPicker()
+    cancelled = []
+    picker.cancelled.connect(lambda: cancelled.append(True))
+    assert picker.start()
+    shiboken6.delete(picker.overlays[0])  # destroyed without any close event
+    from PySide6.QtTest import QTest
+    QTest.keyClick(picker.overlays[1], Qt.Key.Key_Escape)  # used to raise "already deleted"
+    assert cancelled == [True] and not picker.active

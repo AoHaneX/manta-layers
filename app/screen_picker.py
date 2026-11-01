@@ -12,6 +12,7 @@ display scaling, mixed-DPI multi-screen setups).
 """
 from __future__ import annotations
 
+import shiboken6
 from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPen
 from PySide6.QtWidgets import QWidget
@@ -112,6 +113,14 @@ class _ScreenOverlay(QWidget):
         else:
             super().keyPressEvent(event)
 
+    def closeEvent(self, event):
+        super().closeEvent(event)
+        # Closed from outside (Alt+F4, window manager): the overlay is about to be deleted
+        # (WA_DeleteOnClose), so the whole session ends as with Escape. When the picker
+        # closes its overlays itself, they are no longer listed and ``cancel`` is guarded.
+        if any(overlay is self for overlay in self.picker.overlays):
+            self.picker.cancel()
+
 
 class ScreenColorPicker(QObject):
     """One picking session: ``picked`` (hex colour), ``cancelled`` or ``failed`` (message)."""
@@ -123,6 +132,7 @@ class ScreenColorPicker(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.overlays: list[_ScreenOverlay] = []
+        self._closing = False  # guards against the overlays' closeEvent calling back
 
     @property
     def active(self) -> bool:
@@ -148,15 +158,21 @@ class ScreenColorPicker(QObject):
 
     def _close(self) -> None:
         overlays, self.overlays = self.overlays, []
-        for overlay in overlays:
-            overlay.capture = QImage()  # free the capture at once
-            overlay.close()
+        self._closing = True
+        try:
+            for overlay in overlays:
+                if not shiboken6.isValid(overlay):
+                    continue  # already deleted (closed from outside)
+                overlay.capture = QImage()  # free the capture at once
+                overlay.close()
+        finally:
+            self._closing = False
 
     def finish(self, color: QColor) -> None:
         self._close()
         self.picked.emit(color.name().upper())
 
     def cancel(self) -> None:
-        if self.overlays:
+        if self.overlays and not self._closing:
             self._close()
             self.cancelled.emit()
