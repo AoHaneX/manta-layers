@@ -1,8 +1,10 @@
 """Element templates and their library, tokens, spritesheets and remembered folders."""
 import io
+from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QDialog, QInputDialog, QMessageBox
 
 from app import templates
@@ -115,6 +117,48 @@ def test_editing_a_template_saves_it_back_with_its_name(window, library):
     info = templates.read_template_info(path)
     assert (info.name, info.kind) == ("Ma bulle", "elements")
     assert len(open_project(path).layers) == 3
+
+
+
+
+# --- Remembered folders ------------------------------------------------------------------
+
+
+def test_folders_are_remembered_per_kind_per_template_and_across_sessions(qapp, tmp_path):
+    from app.window import MainWindow
+    settings_path = str(tmp_path / "settings.ini")
+    first = MainWindow(settings=QSettings(settings_path, QSettings.Format.IniFormat), recovery_dir=tmp_path / "r")
+    exports, other, projects = tmp_path / "exports", tmp_path / "modele_a", tmp_path / "projets"
+    for directory in (exports, other, projects):
+        directory.mkdir()
+    try:
+        first.remember_directory("export", exports)
+        first.remember_directory("project", projects)
+        first.template_origin = "modele-a"
+        first.remember_directory("export", other)  # also becomes the general default
+        first.template_origin = "modele-b"
+        assert first.initial_path("export") == str(other)  # B never exported: general default
+        first.remember_directory("export", exports)
+        first.template_origin = "modele-a"
+        assert first.initial_path("export") == str(other)  # B did not overwrite A's folder
+        first.template_origin = None
+        first.settings.sync()
+    finally:
+        first.undo_stack.setClean()
+        first.close()
+    second = MainWindow(settings=QSettings(settings_path, QSettings.Format.IniFormat), recovery_dir=tmp_path / "r")
+    try:
+        assert second.initial_path("export", "image.png") == str(exports / "image.png")
+        assert second.initial_path("project") == str(projects)
+        assert Path(second.initial_path("sprites")).is_dir()  # never used: a standard folder
+    finally:
+        second.close()
+
+
+def test_missing_remembered_folder_falls_back_to_a_default(window, tmp_path):
+    window.remember_directory("import", tmp_path / "supprime")
+    assert Path(window.initial_path("import")).is_dir()
+    assert window.initial_path("import") != str(tmp_path / "supprime")
 
 
 def test_template_layer_fields_survive_extraction(qapp):
