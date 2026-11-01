@@ -3780,42 +3780,80 @@ class MainWindow(QMainWindow):
         return sorted(candidates, key=lambda item: item["meta"].get("saved_at") or 0, reverse=True)
 
     def offer_session_recovery(self) -> bool:
+        """Offer the copies left by crashed sessions, newest first; True when one was restored.
+
+        Each copy is restored, deleted or kept for the next start, as the user
+        chooses: a copy is never deleted without having been shown. Only one
+        copy can be restored (the window holds one document); the others stay.
+        """
         candidates = self.recovery_candidates()
-        if not candidates:
-            return False
-        newest = candidates[0]
-        saved_at = newest["meta"].get("saved_at")
-        when = time.strftime("%d/%m/%Y à %H:%M", time.localtime(saved_at)) if saved_at else "une date inconnue"
-        answer = QMessageBox.question(
-            self, "Restaurer la session",
-            f"Manta Layers s'est fermé de façon imprévue. Une copie de travail du {when} a été conservée.\n\n"
-            "Restaurer cette copie ? Sinon, elle sera supprimée.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
         restored = False
-        if answer == QMessageBox.StandardButton.Yes:
-            try:
-                document = open_project(newest["project"])
-                self.install_document(document, None)
-            except Exception as exc:
-                QMessageBox.warning(self, "Restauration impossible",
-                                    f"{exc}\n\nLa copie reste disponible : {newest['project']}")
-                for candidate in candidates:
-                    candidate["lock"].unlock()
-                return False
-            original = newest["meta"].get("project_path")
-            self.project_path = Path(original) if original and Path(original).suffix == ".manta" else None
-            self.undo_stack.clear()
-            self.undo_stack.resetClean()  # restored work is unsaved
-            self._reset_selection()
-            self.canvas.fit_document()
-            self.update_title()
-            restored = True
-        for candidate in candidates:
-            self._discard_recovery(candidate["id"])
-            candidate["lock"].unlock()
+        try:
+            for index, candidate in enumerate(candidates):
+                choice = self._ask_recovery(candidate, index, len(candidates))
+                if choice == "later":
+                    break
+                if choice == "discard":
+                    self._discard_recovery(candidate["id"])
+                    continue
+                restored = self._restore_recovery(candidate)
+                break
+        finally:
+            for candidate in candidates:
+                candidate["lock"].unlock()
         return restored
+
+    def _ask_recovery(self, candidate: dict, index: int, count: int) -> str:
+        """Ask what to do with one recovery copy: "restore", "discard" or "later"."""
+        text, details = self._recovery_text(candidate, index, count)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Restaurer la session")
+        box.setText(text)
+        box.setInformativeText(details)
+        restore = box.addButton("Restaurer", QMessageBox.ButtonRole.AcceptRole)
+        discard = box.addButton("Supprimer", QMessageBox.ButtonRole.DestructiveRole)
+        later = box.addButton("Plus tard", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(restore)
+        box.setEscapeButton(later)
+        box.exec()
+        clicked = box.clickedButton()
+        box.deleteLater()
+        if clicked is restore:
+            return "restore"
+        return "discard" if clicked is discard else "later"
+
+    @staticmethod
+    def _recovery_text(candidate: dict, index: int, count: int) -> tuple[str, str]:
+        saved_at = candidate["meta"].get("saved_at")
+        when = time.strftime("%d/%m/%Y à %H:%M", time.localtime(saved_at)) if saved_at else "une date inconnue"
+        original = candidate["meta"].get("project_path")
+        project = f"\nProjet : {Path(original).name}" if original else "\nProjet jamais enregistré"
+        position = f" (copie {index + 1} sur {count})" if count > 1 else ""
+        others = ("\n\nLes autres copies restent disponibles et seront proposées au prochain démarrage."
+                  if count - index > 1 else "")
+        return (f"Manta Layers s'est fermé de façon imprévue. Une copie de travail du {when} "
+                f"a été conservée{position}.{project}",
+                "Restaurer cette copie, la supprimer, ou décider au prochain démarrage ?" + others)
+
+    def _restore_recovery(self, candidate: dict) -> bool:
+        try:
+            document = open_project(candidate["project"])
+            self.install_document(document, None)
+        except Exception as exc:
+            QMessageBox.warning(self, "Restauration impossible",
+                                f"{exc}\n\nLa copie reste disponible : {candidate['project']}")
+            return False
+        original = candidate["meta"].get("project_path")
+        self.project_path = Path(original) if original and Path(original).suffix == ".manta" else None
+        self.undo_stack.clear()
+        self.undo_stack.resetClean()  # restored work is unsaved
+        self._reset_selection()
+        self.canvas.fit_document()
+        self.update_title()
+        # The restored work now belongs to this session: its own copies take over.
+        self._discard_recovery(candidate["id"])
+        return True
 
     def _close_recovery(self):
         self.autosave_timer.stop()
