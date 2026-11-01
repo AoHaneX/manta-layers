@@ -452,3 +452,14 @@ def test_the_recovery_question_offers_restore_delete_and_later(two_copies):
             item["lock"].unlock()
     assert sorted(seen) == ["Plus tard", "Restaurer", "Supprimer"]
     assert candidate["id"] == newer
+
+
+def test_a_failed_selection_move_leaves_no_empty_history_step(window):
+    from app import selection
+    document = Document(50, 50)
+    layer = document.add_image_bytes(png_bytes(20, 20, (0, 0, 0, 0)), "transparent")
+    window.install_document(document, layer.id)
+    window.undo_stack.clear()
+    window.selection_mask = selection.full((50, 50))
+    window.move_selection_content(5, 5)  # no visible pixel to move
+    assert window.undo_stack.count() == 0

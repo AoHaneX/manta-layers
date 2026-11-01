@@ -2521,6 +2521,9 @@ class MainWindow(QMainWindow):
         """Move the selected pixels to a new layer, and the selection with them."""
         if dx == 0 and dy == 0 or self.selection_mask is None:
             return
+        layer = self._selection_layer(editable=True)
+        if layer is None or self.selected_pixels(layer) is None:
+            return  # nothing to move: no empty step in the history
         moved = selection.translate(self.selection_mask, dx, dy)
         self.undo_stack.beginMacro("Déplacer la sélection")
         try:
