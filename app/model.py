@@ -307,6 +307,9 @@ class Document:
             source = Image.open(BytesIO(contents), formats=IMPORT_FORMATS)
         except UnidentifiedImageError as exc:
             raise ValueError("Format d'image non pris en charge (PNG, JPEG, WebP, BMP ou GIF)") from exc
+        except Image.DecompressionBombError as exc:
+            # Pillow refuses the largest images before their size can be checked below.
+            raise ValueError("Image trop grande : maximum 67 mégapixels, soit 8192 × 8192 px") from exc
         with source:
             if source.width > MAX_DIMENSION or source.height > MAX_DIMENSION:
                 raise ValueError("Image trop grande (maximum 16 384 px par dimension)")
