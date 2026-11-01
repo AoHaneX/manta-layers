@@ -43,6 +43,7 @@
 - Fermer le dialogue de détourage n'attend plus la fin du calcul ou du téléchargement ; un échec de téléchargement inattendu n'est plus annoncé comme une installation réussie.
 - Une copie de récupération dont les métadonnées manquent est proposée au lieu de rester sur le disque ; les métadonnées sans copie sont nettoyées.
 - Quitter un champ X, Y ou rotation qui affiche une valeur bornée ne déplace plus le calque ; plages élargies.
+- Les erreurs inattendues sont enregistrées dans `%LOCALAPPDATA%\MantaLayers\logs` et signalées, même sans console.
 
 ### Améliorations
 - Rendu des calques image mis en cache : une action ne recalcule plus que les calques modifiés.
