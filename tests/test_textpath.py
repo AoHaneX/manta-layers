@@ -100,3 +100,17 @@ def test_layer_from_dict_restores_text_shape_and_controls():
                              "path_orientation": "horizontal"})
     assert (layer.text_deformation, layer.path_controls, layer.path_orientation) == \
         ("custom", [[0.3, -0.4], [0.7, 0.4]], "horizontal")
+
+
+@pytest.mark.parametrize("raw, intensity, expected", [
+    ("arc", float("nan"), ("arc", 0.0)),
+    ("arc", float("inf"), ("arc", 0.0)),
+    ("u", float("-inf"), ("u", 0.0)),
+    ("curve", None, ("straight", 0.0)),
+    ("arc", "abc", ("arc", 0.0)),
+    ("arc", [1], ("arc", 0.0)),
+    ("arc", 10 ** 400, ("arc", 0.0)),
+    ("arc", "40", ("arc", 40.0)),
+])
+def test_invalid_intensities_count_as_straight(raw, intensity, expected):
+    assert normalize_shape(raw, intensity) == expected

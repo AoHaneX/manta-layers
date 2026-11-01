@@ -46,6 +46,12 @@ def test_already_transparent_background_keeps_the_opaque_subject():
     assert B.dominant_border_colour(image) == (0, 0, 0, 0)
 
 
+@pytest.mark.parametrize("size", [(0, 0), (0, 5), (5, 0)])
+def test_empty_images_are_refused_with_a_clear_error(size):
+    with pytest.raises(ValueError, match="Image vide"):
+        B.dominant_border_colour(Image.new("RGBA", size))
+
+
 def test_tiny_images_and_feathering():
     assert B.border_colour_mask(Image.new("RGBA", (1, 1), (5, 5, 5, 255))).getpixel((0, 0)) == 0
     soft = B.border_colour_mask(disc_on_flat_background(), feather=2)

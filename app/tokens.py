@@ -6,6 +6,7 @@ drawing at four times the size, then reducing.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from math import ceil, cos, floor, pi, sin
 
@@ -24,11 +25,14 @@ MAX_DRAWN_SIZE = 4096
 MIN_SIZE, MAX_SIZE = 32, 4096
 
 
+_HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
+
+
 def _rgb(color: str) -> tuple[int, int, int]:
-    color = color.lstrip("#")
-    if len(color) != 6:
-        raise ValueError("Couleur de bordure invalide")
-    return int(color[0:2], 16), int(color[2:4], 16), int(color[4:6], 16)
+    # Strict "#RRGGBB": int(..., 16) alone would accept "+1+2+3" or a doubled "#".
+    if not isinstance(color, str) or not _HEX_COLOR.fullmatch(color):
+        raise ValueError(f"Couleur de bordure invalide : {color!r} (format #RRGGBB attendu)")
+    return int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
 
 
 def max_border(size: int, frame: str) -> int:
