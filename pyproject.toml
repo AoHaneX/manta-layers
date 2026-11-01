@@ -19,5 +19,7 @@ known-first-party = ["app"]
 split-on-trailing-comma = false
 
 [tool.mypy]
-python_version = "3.11"
+# The application runs on Python 3.11 (ruff checks its syntax), but the stubs of
+# numpy, an optional AI dependency, use 3.12 syntax that mypy refuses for 3.11.
+python_version = "3.12"
 ignore_missing_imports = true

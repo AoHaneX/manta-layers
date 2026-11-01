@@ -213,14 +213,14 @@ class MainWindow(QMainWindow):
         self.selection_tool_buttons: dict[str, QToolButton] = {}
         # Floating editor used to type a text directly on the canvas.
         self._inline: dict | None = None
-        self.selection_mask = None
+        self.selection_mask: Image.Image | None = None
         # Multiple selection of the layer panel (layer ids), see set_layer_checked.
         self.checked_ids: set[str] = set()
         # Folded folders of the current document, kept across undo and redo.
         self._collapsed_folders: dict[str, bool] = {}
         self._layer_rows: dict[str, QWidget] = {}
         self.models_dir = background.models_directory()
-        self._clipboard_origin = None
+        self._clipboard_origin: tuple[tuple[int, int], tuple[int, int]] | None = None
         self._setting_clipboard = False
         self.last_eraser_point: tuple[float, float] | None = None
         self.last_eraser_layer_id: str | None = None
@@ -1259,6 +1259,10 @@ class MainWindow(QMainWindow):
     # Checked layers form the multiple selection: a view state, outside the
     # document and the history, used by the folder, merge, delete and template actions.
 
+    def checked_layers(self) -> list[Layer]:
+        """Checked layers that still exist, bottom to top."""
+        return [layer for layer in self.document.layers if layer.id in self.checked_ids]
+
     def checked_layer_ids(self) -> list[str]:
         """Checked layers that still exist, bottom to top."""
         return [layer.id for layer in self.document.layers if layer.id in self.checked_ids]
@@ -1369,7 +1373,7 @@ class MainWindow(QMainWindow):
         return self.mutate("Dissocier le dossier", lambda doc: doc.dissolve_folder(folder_id))
 
     def delete_checked_layers(self) -> bool:
-        layers = [self.document.layer(layer_id) for layer_id in self.checked_layer_ids()]
+        layers = self.checked_layers()
         removable = [layer.id for layer in layers if not layer.locked]
         if not removable:
             self.statusBar().showMessage(
@@ -1387,7 +1391,7 @@ class MainWindow(QMainWindow):
 
     def merge_checked_layers(self) -> bool:
         """Merge the checked visible layers into one image layer, at the place of the topmost."""
-        layers = [self.document.layer(layer_id) for layer_id in self.checked_layer_ids()]
+        layers = self.checked_layers()
         sources = [layer for layer in layers if self.document.is_visible(layer)]
         if len(sources) < 2:
             self.statusBar().showMessage("Cochez au moins deux calques visibles à fusionner", 3500)
@@ -1445,7 +1449,7 @@ class MainWindow(QMainWindow):
         if bounds is None:
             self.statusBar().showMessage("Cochez les calques qui composeront le modèle", 3000)
             return None
-        default = self.document.layer(layer_ids[-1]).name if len(layer_ids) == 1 else "Nouveau modèle"
+        default = self.checked_layers()[-1].name if len(layer_ids) == 1 else "Nouveau modèle"
         name, accepted = QInputDialog.getText(self, "Créer un modèle", "Nom du modèle :", text=default)
         if not accepted or not name.strip():
             return None
@@ -1911,6 +1915,8 @@ class MainWindow(QMainWindow):
             return
         after = before.clone()
         target = after.layer(layer_id)
+        if target is None:
+            return
         target.text_deformation, target.curve_intensity, target.path_controls = shape, intensity, controls
         self._push(DocumentCommand(
             self, before, after, "Déformer le texte", layer_id, layer_id
@@ -2409,6 +2415,8 @@ class MainWindow(QMainWindow):
 
     def selected_pixels(self, layer) -> tuple[Image.Image, tuple[int, int]] | None:
         """Visible pixels of a layer inside the selection, cropped, with their position."""
+        if self.selection_mask is None:
+            return None
         rendered = render_layers(self.document, [layer.id])
         cut = selection.apply_alpha(rendered, self.selection_mask)
         box = cut.getchannel("A").getbbox()
@@ -2424,7 +2432,11 @@ class MainWindow(QMainWindow):
     def _edit_layer_mask(self, doc: Document, layer_id: str, operation: str, area=None):
         """Change a layer mask inside a mutation: hide, reveal or follow ``area``."""
         layer = doc.layer(layer_id)
+        if layer is None:
+            raise ValueError("Calque introuvable")
         if area is None:
+            if self.selection_mask is None:
+                raise ValueError("Aucune sélection active")
             area = document_mask_to_layer(self.selection_mask, layer, self._source_size(layer),
                                           smooth=not self.selection_pixel_perfect.isChecked())
         current = selection.decode(doc.assets[layer.mask]) if layer.mask else None
@@ -3282,6 +3294,8 @@ class MainWindow(QMainWindow):
         """Save the element template being edited, with a fresh thumbnail."""
         self._flush_pending_curve()
         template = self.editing_template
+        if template is None:
+            return False
         try:
             save_template(self.document, template["name"], self._template_thumbnail(self.document),
                           destination=template["path"], kind="elements")
@@ -3590,6 +3604,8 @@ class MainWindow(QMainWindow):
         before = self.document.clone()
         after = before.clone()
         target = after.layer(layer.id)
+        if target is None:
+            return False
         target.x += dx
         target.y += dy
         self._push(DocumentCommand(self, before, after, "Déplacer au clavier", layer.id, layer.id,

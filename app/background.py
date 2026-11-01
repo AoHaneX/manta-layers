@@ -26,7 +26,7 @@ import urllib.request
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, cast
 
 from PIL import Image, ImageChops, ImageFilter
 
@@ -105,12 +105,12 @@ def dominant_border_colour(image: Image.Image) -> tuple[int, int, int, int]:
     """Most frequent colour on the outer frame; fully transparent pixels count as one."""
     rgba = image.convert("RGBA")
     width, height = rgba.size
-    pixels = rgba.load()
     if width == 0 or height == 0:
         raise ValueError("Image vide : impossible de déterminer la couleur des bords")
     border = {(x, y) for x in range(width) for y in (0, height - 1)}
     border |= {(x, y) for y in range(height) for x in (0, width - 1)}
-    counts = Counter((0, 0, 0, 0) if pixels[x, y][3] == 0 else pixels[x, y] for x, y in border)
+    colours = [cast(tuple[int, int, int, int], rgba.getpixel(point)) for point in border]
+    counts = Counter((0, 0, 0, 0) if colour[3] == 0 else colour for colour in colours)
     return counts.most_common(1)[0][0]
 
 
@@ -159,10 +159,10 @@ def onnx_mask(image: Image.Image, model_path: Path, progress: Progress | None = 
     spec = spec_for(model_path)
     progress("Préparation de l'image…", 30)
     rgb = image.convert("RGB").resize((spec.input_size, spec.input_size), Image.Resampling.LANCZOS)
-    array = np.asarray(rgb, dtype=np.float32)
-    array = array / max(float(array.max()), 1e-6)
-    array = (array - np.array(spec.mean, dtype=np.float32)) / np.array(spec.std, dtype=np.float32)
-    tensor = array.transpose(2, 0, 1)[np.newaxis].astype(np.float32)
+    pixels = np.asarray(rgb, dtype=np.float32)
+    scaled = pixels / max(float(pixels.max()), 1e-6)
+    normalised_input = (scaled - np.array(spec.mean, dtype=np.float32)) / np.array(spec.std, dtype=np.float32)
+    tensor = normalised_input.transpose(2, 0, 1)[np.newaxis].astype(np.float32)
     progress("Analyse de l'image (processeur)…", 50)
     try:
         outputs = session.run(None, {session.get_inputs()[0].name: tensor})
