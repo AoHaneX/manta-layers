@@ -222,6 +222,22 @@ def test_save_prompt_answers(small_document, monkeypatch, tmp_path, answer, expe
     assert window.is_modified() is not saved
 
 
+def test_too_large_documents_cannot_be_created_or_resized(window, monkeypatch, messages):
+    from app.dialogs import NewProjectDialog, ResizeDocumentDialog
+    dialog = ResizeDocumentDialog(16000, 16000, window)
+    dialog.accept()  # 256 Mpx: editable but impossible to export
+    assert dialog.result() != dialog.DialogCode.Accepted and messages["warning"]
+    dialog.width_input.setValue(10000)
+    dialog.height_input.setValue(12000)
+    dialog.accept()
+    assert dialog.result() == dialog.DialogCode.Accepted
+    new = NewProjectDialog(window)
+    new.width_input.setValue(16384)
+    new.height_input.setValue(16384)
+    new.accept()
+    assert new.result() != new.DialogCode.Accepted
+
+
 def test_project_images_are_stored_without_recompression(tmp_path):
     from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
     document = Document(20, 20)
