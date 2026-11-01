@@ -91,6 +91,16 @@ def test_shape_rows_follow_the_selected_layer(window):
     assert rows.width.isHidden()
 
 
+def test_colour_values_are_shown_in_full(window, qapp):
+    document = Document(100, 100)
+    document.layers.append(shape_from_drag("rectangle", (0, 0), (50, 50), False, "#092B40"))
+    window.install_document(document, document.layers[0].id)
+    qapp.processEvents()
+    for field in (window.shape_rows.fill, window.shape_rows.stroke):
+        text_width = field.button.fontMetrics().horizontalAdvance(field.button.text())
+        assert field.button.width() >= field.button.minimumWidth() >= text_width + 12
+
+
 @pytest.fixture
 def two_squares(window):
     document = Document(200, 200)

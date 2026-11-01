@@ -46,9 +46,11 @@ class ColorField(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self.swatch = QPushButton()
-        self.swatch.setFixedSize(36, 28)
+        self.swatch.setFixedSize(30, 28)
         self.swatch.setToolTip(f"Choisir la couleur : {title.lower()}")
         self.button = QPushButton(empty_label)
+        # The hexadecimal value must always show in full: a narrower padding than the theme's.
+        self.button.setStyleSheet("padding-left: 6px; padding-right: 6px;")
         self.clear = QToolButton()
         self.clear.setObjectName("colorTool")
         self.clear.setText("×")
@@ -60,7 +62,18 @@ class ColorField(QWidget):
         layout.addWidget(self.button, stretch=1)
         layout.addWidget(self.clear)
 
+    def fit_value(self) -> None:
+        """Minimum width of the value button: the widest value in the font actually used.
+
+        Measured once the field is in the window, whose style sheet sets the font.
+        """
+        self.button.ensurePolished()
+        metrics = self.button.fontMetrics()
+        widest = max(metrics.horizontalAdvance(text) for text in ("#000000", "#DDDDDD", "#BBBBBB", self.empty_label))
+        self.button.setMinimumWidth(widest + 18)  # side paddings, border and a little air
+
     def show_color(self, color: str | None, editable: bool) -> None:
+        self.fit_value()
         muted = COLORS["muted"]
         self.button.setText(color.upper() if color else self.empty_label)
         self.swatch.setStyleSheet(
