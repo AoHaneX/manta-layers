@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 from .graphics import checker_brush, pil_to_qimage, render_layers_region
 from .model import IMPORT_FORMATS, MAX_PIXELS
 from .theme import COLORS
-from .tokens import FRAMES, MAX_SIZE, MIN_SIZE, TokenSettings, render_token
+from .tokens import FRAMES, MAX_SIZE, MIN_SIZE, TokenSettings, max_border, render_token
 
 if TYPE_CHECKING:
     from .window import MainWindow
@@ -135,6 +135,10 @@ class TokenDialog(QDialog):
         self.border_width.setValue(16)
         self.border_width.setSuffix(" px")
         form.addRow("Épaisseur de bordure", self.border_width)
+        # The thickest border depends on the frame and the size (the thick frame doubles it).
+        self.frame.currentIndexChanged.connect(self._update_border_limit)
+        self.size_spin.valueChanged.connect(self._update_border_limit)
+        self._update_border_limit()
         self.pixel_art = QCheckBox("Illustration en pixel art (sans lissage)")
         form.addRow("Mise à l'échelle", self.pixel_art)
         form_column.addLayout(form)
@@ -206,9 +210,14 @@ class TokenDialog(QDialog):
             size=size or full, frame=self.frame.currentData(), zoom=self.zoom.value() / 100,
             offset_x=self.offset_x.value() * ratio, offset_y=self.offset_y.value() * ratio,
             border_color=self.border_color,
-            border_width=min(round(self.border_width.value() * ratio), (size or full) // 4),
+            border_width=min(round(self.border_width.value() * ratio),
+                             max_border(size or full, self.frame.currentData())),
             pixel_art=self.pixel_art.isChecked(),
         )
+
+    def _update_border_limit(self) -> None:
+        # Lowering the maximum also lowers a value above it, which refreshes the preview.
+        self.border_width.setMaximum(max_border(self.size_spin.value(), self.frame.currentData()))
 
     def shift_portrait(self, dx: float, dy: float) -> None:
         ratio = self.size_spin.value() / PREVIEW
