@@ -124,3 +124,48 @@ def test_huge_images_are_refused_with_the_application_message():
     Image.new("1", (16000, 12000)).save(output, format="PNG")  # Pillow's own bomb guard trips first
     with pytest.raises(ValueError, match="Image trop grande"):
         Document(10, 10).add_image_bytes(output.getvalue(), "énorme")
+
+
+# --- Eraser placement ------------------------------------------------------------------
+
+def _erase(point, size, centered):
+    from PIL import Image
+
+    from app.graphics import apply_eraser_strokes
+    stroke = {"points": [point], "size": size, "shape": "square", "pixel_art": True,
+              "hardness": 100, "opacity": 100}
+    if centered is not None:
+        stroke["pixel_centered"] = centered
+    erased = apply_eraser_strokes(Image.new("RGBA", (6, 1), (255, 0, 0, 255)), [stroke])
+    return [x for x in range(6) if erased.getpixel((x, 0))[3] == 0]
+
+
+@pytest.mark.parametrize("x, size, expected", [
+    (1.2, 1, [1]), (1.7, 1, [1]), (1.2, 2, [0, 1]), (1.7, 2, [1, 2]), (2.5, 3, [1, 2, 3]),
+])
+def test_new_eraser_strokes_cover_the_pixel_under_the_pointer(x, size, expected):
+    assert _erase([x, 0.5], size, True) == expected
+
+
+def test_older_eraser_strokes_keep_their_placement():
+    assert _erase([1.7, 0.5], 1, None) == [2]  # projects saved before the fix look the same
+
+
+def test_trimming_a_layer_with_new_strokes_keeps_its_look_for_any_shift():
+    from PIL import Image
+
+    from app.graphics import crop_image_layer, render_layer_with_mask
+    document = Document(40, 40)
+    image = Image.new("RGBA", (20, 20), (0, 0, 0, 0))
+    image.paste((0, 200, 0, 255), (3, 5, 17, 15))
+    import io
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    layer = document.add_image_bytes(output.getvalue(), "trim", center=False)
+    layer.eraser_strokes = [{"points": [[8.3, 9.6], [12.7, 9.6]], "size": 3, "shape": "square",
+                             "pixel_art": True, "hardness": 100, "opacity": 100, "pixel_centered": True}]
+    trimmed, _assets = crop_image_layer(layer, document, (3, 5, 17, 15))  # odd shift: allowed now
+    probe = Document(40, 40, None, [trimmed], {**document.assets, **_assets})
+    expected = render_layer_with_mask(layer, document).crop((3, 5, 17, 15))
+    assert render_layer_with_mask(trimmed, probe).tobytes() == expected.tobytes()
+    assert (trimmed.x, trimmed.y) == (3, 5)
