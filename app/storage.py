@@ -19,8 +19,7 @@ def save_project(
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp = destination.with_name(destination.name + ".tmp")
-    used = {asset for layer in document.layers if layer.kind == "image"
-            for asset in (layer.asset, layer.mask) if asset}
+    used = document.used_assets()
     try:
         with open(tmp, "wb") as handle:
             with ZipFile(handle, "w", ZIP_DEFLATED) as z:
