@@ -2,7 +2,7 @@
 import pytest
 from PIL import Image, ImageDraw
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QInputDialog, QLineEdit, QMessageBox
+from PySide6.QtWidgets import QApplication, QCheckBox, QInputDialog, QLineEdit, QMessageBox
 
 from app import templates
 from app.graphics import qimage_to_pil, render_document, render_layers
@@ -226,3 +226,20 @@ def test_layer_cut_from_a_selection_stays_in_its_source_folder(three_layers, mon
     assert new_layer.folder == folder_id
     members = [layer.id for layer in window.document.folder_members(folder_id)]
     assert members == [red, new_layer.id, text]
+
+
+def test_the_folder_check_box_toggles_at_every_click(window):
+    document = Document(100, 100)
+    first = document.add_image_bytes(png(10, 10, (255, 0, 0, 255)), "a")
+    second = document.add_image_bytes(png(10, 10, (0, 0, 255, 255)), "b")
+    folder = document.create_folder([first.id, second.id], "Dossier")
+    window.install_document(document, None)
+    row = next(window.layer_list.item(index) for index in range(window.layer_list.count())
+               if window.layer_list.item(index).data(FOLDER_ROLE))
+    assert row.data(Qt.ItemDataRole.UserRole) == folder.id
+    box = window.layer_list.itemWidget(row).findChild(QCheckBox, "layerCheck")
+    states = []
+    for _ in range(3):
+        box.click()  # the row is updated in place: its captured state used to stay "unchecked"
+        states.append(set(window.checked_ids))
+    assert states == [{first.id, second.id}, set(), {first.id, second.id}]

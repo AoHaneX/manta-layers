@@ -138,11 +138,9 @@ def build_folder_row(window: MainWindow, folder: Folder, check_state: Qt.CheckSt
     check.setCheckState(check_state)
     check.setToolTip("Sélectionner tous les calques du dossier")
     check.setAccessibleName(f"Sélectionner les calques du dossier {folder.name}")
-    # A click always toggles between "all" and "none" members.
-    check.clicked.connect(
-        lambda _checked=False, folder_id=folder.id, state=check_state:
-        window.set_folder_checked(folder_id, state != Qt.CheckState.Checked)
-    )
+    # A click always toggles between "all" and "none" members. The state is read
+    # at click time: the row is updated in place, not rebuilt, after each click.
+    check.clicked.connect(lambda _checked=False, folder_id=folder.id: window.toggle_folder_checked(folder_id))
     layout.addWidget(check)
     layout.addWidget(_visibility_button(
         folder.visible, "Masquer le dossier", "Afficher le dossier",

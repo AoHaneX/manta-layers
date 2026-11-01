@@ -1302,6 +1302,11 @@ class MainWindow(QMainWindow):
             self.checked_ids -= members
         self._refresh_checks()
 
+    def toggle_folder_checked(self, folder_id: str):
+        """Check every layer of the folder, or none when they all are already."""
+        state = self._folder_check_state(self.document, folder_id)
+        self.set_folder_checked(folder_id, state != Qt.CheckState.Checked)
+
     def _refresh_checks(self):
         """Update check boxes and highlights in place (the list keeps its scroll position)."""
         self.refreshing = True
