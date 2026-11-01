@@ -139,6 +139,7 @@ Le script `lancer_linux_mac.sh` est fourni à titre expérimental (Python 3.11 o
 | Tout sélectionner / désélectionner / inverser | `Ctrl+A` / `Ctrl+Maj+A` / `Ctrl+Maj+I` |
 | Afficher le masque de sélection | `Ctrl+M` |
 | Copier / couper la sélection vers un nouveau calque | `Ctrl+J` / `Ctrl+Maj+J` |
+| Séparer la sélection en nouveau calque (sur le canvas) | `Entrée` |
 | Déplacer le contenu sélectionné | `Ctrl` + glisser |
 | Déplacer le calque de 1 px / 10 px | flèches / `Maj` + flèches |
 

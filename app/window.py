@@ -600,7 +600,7 @@ class MainWindow(QMainWindow):
         self.separate_selection_btn = QPushButton("Séparer en nouveau calque")
         self.separate_selection_btn.setProperty("variant", "primary")
         self.separate_selection_btn.setToolTip(
-            "Déplace la partie sélectionnée dans un nouveau calque · Ctrl+Maj+J"
+            "Déplace la partie sélectionnée dans un nouveau calque · Entrée ou Ctrl+Maj+J"
         )
         self.separate_selection_btn.clicked.connect(lambda: self.selection_to_new_layer(cut=True))
         layout.addRow(self.separate_selection_btn)

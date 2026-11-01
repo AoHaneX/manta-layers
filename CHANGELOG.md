@@ -7,6 +7,7 @@
 - Dossiers de calques : repli, renommage, visibilité globale (canvas et exports), déplacement et glisser-déposer des calques ; structure enregistrée (format 3).
 - Fusion de calques avec transparence et transformations, et avertissement quand des calques intermédiaires changeraient l'aspect.
 - Lasso libre et lasso polygonal.
+- La touche Entrée sépare la sélection en nouveau calque (comme le bouton « Séparer en nouveau calque »).
 - Rognage des marges transparentes d'un calque sans le déplacer ; recadrage du document sur son contenu.
 - Guides d'alignement cuivrés et magnétisme (désactivable, Alt pour l'ignorer).
 - Formes vectorielles éditables : rectangle, ellipse, polygone, ligne, flèche, et bulles, pensées et bandeaux.
