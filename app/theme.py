@@ -38,6 +38,11 @@ QWidget#sidePanel {{
     background-color: {COLORS['panel']};
     border: none;
 }}
+QDialog {{
+    /* Dialogs take the side panel colour instead of the system window colour,
+       on which the light labels of the theme were barely readable. */
+    background-color: {COLORS['panel']};
+}}
 QWidget#propertyCard {{
     background-color: transparent;
     border: none;
