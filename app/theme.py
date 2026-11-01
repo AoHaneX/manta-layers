@@ -199,6 +199,11 @@ QPushButton#layerName {{
     text-align: left;
 }}
 QPushButton#layerName:hover {{ color: {COLORS['primary_hover']}; }}
+QWidget#layerRow[checked="true"] {{
+    background-color: {COLORS['panel']};
+    border: 1px solid {COLORS['primary']};
+    border-radius: 6px;
+}}
 QPushButton#sidebarToggle {{
     background: {COLORS['primary']};
     border: 1px solid {COLORS['primary']};

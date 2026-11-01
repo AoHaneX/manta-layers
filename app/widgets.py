@@ -70,11 +70,12 @@ class InlineTextEditor(QPlainTextEdit):
 
 
 class LayerDragHandle(QToolButton):
-    """Poignée qui démarre le glissement d'une ligne de calque."""
+    """Poignée qui démarre le glissement d'une ligne de calque (ou de dossier)."""
 
-    def __init__(self, layer_id: str, parent=None):
+    def __init__(self, layer_id: str, parent=None, kind: str = "layer"):
         super().__init__(parent)
         self.layer_id = layer_id
+        self.kind = kind
         self._press_position: QPoint | None = None
         self.setObjectName("layerDragHandle")
         self.setText("≡")
@@ -96,7 +97,7 @@ class LayerDragHandle(QToolButton):
             return
         drag = QDrag(self)
         mime = QMimeData()
-        mime.setData(LAYER_MIME_TYPE, self.layer_id.encode("utf-8"))
+        mime.setData(LAYER_MIME_TYPE, f"{self.kind}:{self.layer_id}".encode("utf-8"))
         drag.setMimeData(mime)
         drag.exec(Qt.DropAction.MoveAction)
         self._press_position = None
@@ -134,17 +135,20 @@ class LayerListWidget(QListWidget):
         if not event.mimeData().hasFormat(LAYER_MIME_TYPE):
             super().dropEvent(event)
             return
-        layer_id = bytes(event.mimeData().data(LAYER_MIME_TYPE)).decode("utf-8")
+        payload = bytes(event.mimeData().data(LAYER_MIME_TYPE)).decode("utf-8")
+        kind, _separator, item_id = payload.partition(":")
+        if not item_id:  # payload of an older drag: a bare layer id
+            kind, item_id = "layer", payload
         target_item = self.itemAt(event.position().toPoint())
-        if target_item is None:
-            insertion = self.count()
-        else:
-            target_row = self.row(target_item)
-            insertion = target_row + (
-                event.position().y() > self.visualItemRect(target_item).center().y()
-            )
-        self.main_window.move_layer_to_display_position(layer_id, insertion)
+        upper = target_item is not None and (
+            event.position().y() <= self.visualItemRect(target_item).center().y()
+        )
+        self.main_window.drop_in_layer_list(kind, item_id, target_item, upper)
         event.acceptProposedAction()
+
+    def contextMenuEvent(self, event):
+        self.main_window.show_layer_context_menu(self.itemAt(event.pos()), event.globalPos())
+        event.accept()
 
 
 class SidebarBackground(QWidget):

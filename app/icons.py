@@ -70,6 +70,18 @@ def layer_kind_icon(kind: str) -> QPixmap:
         font.setPixelSize(15)
         painter.setFont(font)
         painter.drawText(QRectF(0, 0, 18, 18), Qt.AlignmentFlag.AlignCenter, "T")
+    elif kind == "folder":
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        outline = QPainterPath(QPointF(2, 5))
+        for x, y in ((7, 5), (8.5, 3.5), (16, 3.5), (16, 15), (2, 15)):
+            outline.lineTo(x, y)
+        outline.closeSubpath()
+        painter.drawPath(outline)
+        painter.drawLine(QPointF(2, 7), QPointF(16, 7))
+    elif kind == "shape":
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.drawRect(QRectF(2, 7, 9, 9))
+        painter.drawEllipse(QRectF(7, 2, 9, 9))
     else:
         painter.drawRoundedRect(QRectF(2, 3, 14, 12), 2, 2)
         painter.drawEllipse(QRectF(11, 5, 2, 2))

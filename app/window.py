@@ -26,6 +26,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QAbstractSpinBox,
     QApplication,
     QButtonGroup,
     QCheckBox,
@@ -67,30 +68,26 @@ from .graphics import (
     CanvasView,
     CurvedTextGraphicItem,
     document_mask_to_layer,
+    layers_bounds,
     make_scene,
+    merge_changes_appearance,
     pil_to_qimage,
     qimage_png,
     render_document,
     render_layer_image,
     render_layers,
+    render_layers_region,
 )
-from .icons import (
-    alignment_icon,
-    color_tool_icon,
-    eye_icon,
-    history_arrow_icon,
-    layer_kind_icon,
-    lock_icon,
-    sidebar_arrow_icon,
-)
+from .icons import alignment_icon, color_tool_icon, history_arrow_icon, sidebar_arrow_icon
+from .layer_panel import FOLDER_ROLE, build_folder_row, build_layer_row, set_row_checked
 from .model import ASSET_FORMATS, MAX_DIMENSION, Document, Layer, new_id
 from .paths import user_data_directory
 from .selection import COMBINE_LABELS, COMBINE_MODES
 from .storage import open_project, save_project
-from .templates import list_templates, save_template
+from .templates import extract_elements, list_templates, save_template
 from .textpath import DEFAULT_CONTROLS, SHAPE_LABELS, TEXT_SHAPES, normalize_controls
 from .theme import COLORS, STYLE, dialog_button_style
-from .widgets import CommitPlainTextEdit, InlineTextEditor, LayerDragHandle, LayerListWidget, SidebarBackground
+from .widgets import CommitPlainTextEdit, InlineTextEditor, LayerListWidget, SidebarBackground
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
@@ -224,6 +221,9 @@ class MainWindow(QMainWindow):
         # Floating editor used to type a text directly on the canvas.
         self._inline: dict | None = None
         self.selection_mask = None
+        # Multiple selection of the layer panel (layer ids), see set_layer_checked.
+        self.checked_ids: set[str] = set()
+        self._layer_rows: dict[str, QWidget] = {}
         self.models_dir = background.models_directory()
         self._clipboard_origin = None
         self._setting_clipboard = False
@@ -1151,6 +1151,7 @@ class MainWindow(QMainWindow):
         self.refreshing = True
         try:
             self.document = doc
+            self.checked_ids &= {layer.id for layer in doc.layers}
             self.selected_id = selected if doc.layer(selected) else None
             if self.selected_id:
                 self.last_selected_id = self.selected_id
@@ -1174,74 +1175,341 @@ class MainWindow(QMainWindow):
         self.update_title()
 
     def _rebuild_layer_list(self, doc: Document):
+        """Rows from top to bottom; a folder row precedes its (unless collapsed) layers."""
+        scroll = self.layer_list.verticalScrollBar().value()
         self.layer_list.clear()
+        self._layer_rows = {}
+        shown_folders = set()
         for layer in reversed(doc.layers):
-            row = QListWidgetItem()
-            row.setData(Qt.ItemDataRole.UserRole, layer.id)
-            self.layer_list.addItem(row)
-            controls = QWidget()
-            controls_layout = QHBoxLayout(controls)
-            controls_layout.setContentsMargins(3, 1, 3, 1)
-            controls_layout.setSpacing(3)
-            drag_handle = LayerDragHandle(layer.id)
-            drag_handle.setEnabled(not layer.locked)
-            controls_layout.addWidget(drag_handle)
-            visible = QToolButton()
-            visible.setObjectName("layerAction")
-            visible.setCheckable(True)
-            visible.setChecked(layer.visible)
-            visible.setIcon(eye_icon(layer.visible))
-            visible.setIconSize(QSize(18, 18))
-            visible.setFixedSize(32, 27)
-            visible.setToolTip("Masquer le calque" if layer.visible else "Afficher le calque")
-            visible.clicked.connect(
-                lambda checked, layer_id=layer.id: self.set_layer_visibility(layer_id, checked)
-            )
-            controls_layout.addWidget(visible)
-            kind = QLabel()
-            kind.setPixmap(layer_kind_icon(layer.kind))
-            kind.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            kind.setFixedSize(20, 27)
-            kind.setToolTip("Calque texte" if layer.kind == "text" else "Calque image")
-            controls_layout.addWidget(kind)
-            name = QPushButton(layer.name)
-            name.setObjectName("layerName")
-            name.setToolTip(layer.name)
-            name.setFlat(True)
-            name.setMinimumWidth(0)
-            name.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-            name.clicked.connect(lambda _checked=False, layer_id=layer.id: self.select_layer(layer_id))
-            controls_layout.addWidget(name, stretch=1)
-            for symbol, tooltip, direction in (("▲", "Monter le calque", 1),
-                                                ("▼", "Descendre le calque", -1)):
-                button = QToolButton()
-                button.setObjectName("layerAction")
-                button.setText(symbol)
-                button.setToolTip(tooltip)
-                button.setFixedSize(30, 27)
-                button.setEnabled(not layer.locked)
-                button.clicked.connect(
-                    lambda _checked=False, layer_id=layer.id, delta=direction:
-                    self.reorder_layer(delta, layer_id)
-                )
-                controls_layout.addWidget(button)
-            lock = QToolButton()
-            lock.setObjectName("layerAction")
-            lock.setIcon(lock_icon(layer.locked))
-            lock.setIconSize(QSize(18, 18))
-            lock.setToolTip("Déverrouiller le calque" if layer.locked else "Verrouiller le calque")
-            lock.setCheckable(True)
-            lock.setChecked(layer.locked)
-            lock.setFixedSize(32, 27)
-            lock.clicked.connect(
-                lambda _checked=False, layer_id=layer.id: self.toggle_lock(layer_id)
-            )
-            controls_layout.addWidget(lock)
-            row.setSizeHint(QSize(row.sizeHint().width(), 34))
-            self._name_icon_buttons(controls)
-            self.layer_list.setItemWidget(row, controls)
+            folder = doc.folder(layer.folder)
+            if folder is not None and folder.id not in shown_folders:
+                shown_folders.add(folder.id)
+                self._add_layer_list_row(folder.id, True, build_folder_row(
+                    self, folder, self._folder_check_state(doc, folder.id)))
+            if folder is not None and folder.collapsed:
+                continue
+            controls = build_layer_row(self, layer, layer.id in self.checked_ids)
+            self._layer_rows[layer.id] = controls
+            row = self._add_layer_list_row(layer.id, False, controls)
             if layer.id == self.selected_id:
                 self.layer_list.setCurrentItem(row)
+        self.layer_list.verticalScrollBar().setValue(scroll)
+
+    def _add_layer_list_row(self, item_id: str, is_folder: bool, controls: QWidget) -> QListWidgetItem:
+        row = QListWidgetItem()
+        row.setData(Qt.ItemDataRole.UserRole, item_id)
+        row.setData(FOLDER_ROLE, is_folder)
+        self.layer_list.addItem(row)
+        row.setSizeHint(QSize(row.sizeHint().width(), 34))
+        self._name_icon_buttons(controls)
+        self.layer_list.setItemWidget(row, controls)
+        return row
+
+    def _folder_check_state(self, doc: Document, folder_id: str) -> Qt.CheckState:
+        members = {layer.id for layer in doc.folder_members(folder_id)}
+        checked = len(members & self.checked_ids)
+        if checked == 0:
+            return Qt.CheckState.Unchecked
+        return Qt.CheckState.Checked if checked == len(members) else Qt.CheckState.PartiallyChecked
+
+    # --- Multiple selection and folders ----------------------------------------------------
+    # Checked layers form the multiple selection: a view state, outside the
+    # document and the history, used by the folder, merge, delete and template actions.
+
+    def checked_layer_ids(self) -> list[str]:
+        """Checked layers that still exist, bottom to top."""
+        return [layer.id for layer in self.document.layers if layer.id in self.checked_ids]
+
+    def set_layer_checked(self, layer_id: str, checked: bool):
+        if self.refreshing or self.document.layer(layer_id) is None:
+            return
+        if checked:
+            self.checked_ids.add(layer_id)
+        else:
+            self.checked_ids.discard(layer_id)
+        self._refresh_checks()
+
+    def set_checked_layers(self, layer_ids) -> None:
+        self.checked_ids = {layer_id for layer_id in layer_ids if self.document.layer(layer_id)}
+        self._refresh_checks()
+
+    def set_folder_checked(self, folder_id: str, checked: bool):
+        members = {layer.id for layer in self.document.folder_members(folder_id)}
+        if checked:
+            self.checked_ids |= members
+        else:
+            self.checked_ids -= members
+        self._refresh_checks()
+
+    def _refresh_checks(self):
+        """Update check boxes and highlights in place (the list keeps its scroll position)."""
+        self.refreshing = True
+        try:
+            for index in range(self.layer_list.count()):
+                row = self.layer_list.item(index)
+                controls = self.layer_list.itemWidget(row)
+                item_id = row.data(Qt.ItemDataRole.UserRole)
+                box = controls.findChild(QCheckBox, "layerCheck") if controls else None
+                if box is None:
+                    continue
+                if row.data(FOLDER_ROLE):
+                    state = self._folder_check_state(self.document, item_id)
+                    box.setTristate(state == Qt.CheckState.PartiallyChecked)
+                    box.setCheckState(state)
+                    set_row_checked(controls, state == Qt.CheckState.Checked)
+                else:
+                    box.setChecked(item_id in self.checked_ids)
+                    set_row_checked(controls, item_id in self.checked_ids)
+        finally:
+            self.refreshing = False
+        self.statusBar().showMessage(f"{len(self.checked_ids)} calque(s) dans la sélection multiple", 2500)
+
+    def layer_name_clicked(self, layer_id: str):
+        """Click selects the layer; Ctrl+click adds it to (or removes it from) the multiple selection."""
+        if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.set_layer_checked(layer_id, layer_id not in self.checked_ids)
+            return
+        self.select_layer(layer_id)
+
+    def set_folder_visibility(self, folder_id: str, visible: bool):
+        folder = self.document.folder(folder_id)
+        if self.refreshing or folder is None or folder.visible == visible:
+            return
+        self.mutate("Afficher / masquer le dossier",
+                    lambda doc: setattr(doc.folder(folder_id), "visible", visible))
+
+    def toggle_folder_collapsed(self, folder_id: str):
+        """Folding only changes the list: a view state saved with the project, outside the history."""
+        folder = self.document.folder(folder_id)
+        if folder is None:
+            return
+        folder.collapsed = not folder.collapsed
+        self._rebuild_layer_list(self.document)
+
+    def _unique_folder_name(self) -> str:
+        names = {folder.name for folder in self.document.folders}
+        return next(f"Dossier {index}" for index in range(1, len(names) + 2) if f"Dossier {index}" not in names)
+
+    def create_folder_from_checked(self) -> bool:
+        layer_ids = self.checked_layer_ids()
+        if not layer_ids:
+            self.statusBar().showMessage("Cochez les calques à regrouper", 3000)
+            return False
+        name, accepted = QInputDialog.getText(self, "Créer un dossier de calques", "Nom du dossier :",
+                                              text=self._unique_folder_name())
+        if not accepted:
+            return False
+        return self.mutate("Créer un dossier de calques",
+                           lambda doc: doc.create_folder(layer_ids, name.strip() or "Dossier"))
+
+    def rename_folder(self, folder_id: str) -> bool:
+        folder = self.document.folder(folder_id)
+        if folder is None:
+            return False
+        name, accepted = QInputDialog.getText(self, "Renommer le dossier", "Nom du dossier :", text=folder.name)
+        clean = " ".join(name.split())
+        if not accepted or not clean or clean == folder.name:
+            return False
+        return self.mutate("Renommer le dossier", lambda doc: setattr(doc.folder(folder_id), "name", clean))
+
+    def dissolve_folder(self, folder_id: str) -> bool:
+        if self.document.folder(folder_id) is None:
+            return False
+        return self.mutate("Dissocier le dossier", lambda doc: doc.dissolve_folder(folder_id))
+
+    def delete_checked_layers(self) -> bool:
+        layers = [self.document.layer(layer_id) for layer_id in self.checked_layer_ids()]
+        removable = [layer.id for layer in layers if not layer.locked]
+        if not removable:
+            self.statusBar().showMessage(
+                "Déverrouillez les calques avant de les supprimer" if layers else "Aucun calque coché", 3000)
+            return False
+        if not self.mutate(f"Supprimer {len(removable)} calque(s)", lambda doc: doc.remove_layers(removable)):
+            return False
+        self.checked_ids -= set(removable)
+        if self.selected_id in removable:
+            self.select_layer(None)
+        self._refresh_checks()
+        if len(removable) < len(layers):
+            self.statusBar().showMessage("Les calques verrouillés ont été conservés", 4000)
+        return True
+
+    def merge_checked_layers(self) -> bool:
+        """Merge the checked visible layers into one image layer, at the place of the topmost."""
+        layers = [self.document.layer(layer_id) for layer_id in self.checked_layer_ids()]
+        sources = [layer for layer in layers if self.document.is_visible(layer)]
+        if len(sources) < 2:
+            self.statusBar().showMessage("Cochez au moins deux calques visibles à fusionner", 3500)
+            return False
+        if any(layer.locked for layer in sources):
+            self.statusBar().showMessage("Déverrouillez les calques avant de les fusionner", 3500)
+            return False
+        if merge_changes_appearance(self.document, [layer.id for layer in sources]):
+            answer = QMessageBox.question(
+                self, "Fusionner les calques",
+                "Des calques non cochés se trouvent entre les calques à fusionner et les recouvrent. "
+                "Le calque fusionné sera placé au-dessus d'eux : l'image changera d'aspect.\n\n"
+                "Fusionner quand même ?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return False
+        try:
+            merged = render_layers_region(self.document, [layer.id for layer in sources])
+        except ValueError as exc:
+            self._report_failure("Fusionner les calques", exc)
+            return False
+        if merged is None:
+            self.statusBar().showMessage("Les calques à fusionner n'ont aucun pixel visible", 3500)
+            return False
+        image, (left, top) = merged
+        output = BytesIO()
+        image.save(output, format="PNG")
+        data, source_ids, holder = output.getvalue(), [layer.id for layer in sources], {}
+
+        def apply(doc):
+            top_layer = max((doc.layer(layer_id) for layer_id in source_ids), key=doc.layers.index)
+            position = sum(1 for layer in doc.layers[:doc.layers.index(top_layer)] if layer.id not in source_ids)
+            new = doc.add_image_bytes(data, f"Fusion de {len(source_ids)} calques", center=False)
+            doc.layers.remove(new)
+            new.x, new.y, new.folder = float(left), float(top), top_layer.folder
+            doc.layers = [layer for layer in doc.layers if layer.id not in source_ids]
+            doc.layers.insert(position, new)
+            doc.normalize_folders()
+            holder["id"] = new.id
+
+        if not self.mutate("Fusionner les calques", apply):
+            return False
+        self.checked_ids = {holder["id"]}
+        self.select_layer(holder["id"])
+        self._refresh_checks()
+        if len(sources) < len(layers):
+            self.statusBar().showMessage("Les calques masqués n'ont pas été fusionnés", 4000)
+        return True
+
+    def create_template_from_checked(self) -> Path | None:
+        """Save the checked layers, their folders and images as a reusable element template."""
+        layer_ids = self.checked_layer_ids()
+        bounds = layers_bounds(self.document, layer_ids) if layer_ids else None
+        if bounds is None:
+            self.statusBar().showMessage("Cochez les calques qui composeront le modèle", 3000)
+            return None
+        default = self.document.layer(layer_ids[-1]).name if len(layer_ids) == 1 else "Nouveau modèle"
+        name, accepted = QInputDialog.getText(self, "Créer un modèle", "Nom du modèle :", text=default)
+        if not accepted or not name.strip():
+            return None
+        try:
+            elements = extract_elements(self.document, layer_ids, bounds)
+            destination = self._confirm_template_replacement(name, "elements")
+            if destination is False:
+                return None
+            path = save_template(elements, name, self._template_thumbnail(elements),
+                                 destination=destination, kind="elements")
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Création du modèle impossible", str(exc))
+            return None
+        self.statusBar().showMessage(f"Modèle créé : {name.strip()} · Insertion > Bibliothèque de modèles", 6000)
+        return path
+
+    def _confirm_template_replacement(self, name: str, kind: str):
+        """Path of a same-named template to replace, None for a new one, False if cancelled."""
+        existing = next((info for info in list_templates(kind=kind)
+                         if info.name.casefold() == name.strip().casefold()), None)
+        if existing is None:
+            return None
+        answer = QMessageBox.question(
+            self, "Remplacer le modèle",
+            f"Un modèle nommé « {existing.name} » existe déjà. Le remplacer ?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
+        )
+        return existing.path if answer == QMessageBox.StandardButton.Yes else False
+
+    @staticmethod
+    def _template_thumbnail(document: Document) -> bytes:
+        return qimage_png(render_document(document).scaled(
+            320, 180, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+
+    def show_layer_context_menu(self, row: QListWidgetItem | None, global_position):
+        self.layer_context_menu(row).exec(global_position)
+
+    def layer_context_menu(self, row: QListWidgetItem | None) -> QMenu:
+        """Menu of a panel row; right-clicking a layer applies the multiple selection rule first."""
+        menu = QMenu(self)
+        menu.setObjectName("canvasContextMenu")
+        if row is not None and row.data(FOLDER_ROLE):
+            folder_id = row.data(Qt.ItemDataRole.UserRole)
+            menu.addAction("Renommer le dossier…").triggered.connect(lambda: self.rename_folder(folder_id))
+            menu.addAction("Cocher les calques du dossier").triggered.connect(
+                lambda: self.set_folder_checked(folder_id, True))
+            menu.addAction("Dissocier le dossier").triggered.connect(lambda: self.dissolve_folder(folder_id))
+            return menu
+        if row is not None:
+            layer_id = row.data(Qt.ItemDataRole.UserRole)
+            # As in a file explorer: right-clicking outside the selection selects only that layer.
+            if layer_id not in self.checked_ids:
+                self.set_checked_layers([layer_id])
+            self.select_layer(layer_id)
+        count = len(self.checked_layer_ids())
+        folder_action = menu.addAction("Créer un dossier de calques…")
+        merge_action = menu.addAction("Fusionner les calques")
+        delete_action = menu.addAction("Supprimer")
+        template_action = menu.addAction("Créer un modèle…")
+        folder_action.setEnabled(count >= 1)
+        merge_action.setEnabled(count >= 2)
+        delete_action.setEnabled(count >= 1)
+        template_action.setEnabled(count >= 1)
+        folder_action.triggered.connect(self.create_folder_from_checked)
+        merge_action.triggered.connect(self.merge_checked_layers)
+        delete_action.triggered.connect(self.delete_checked_layers)
+        template_action.triggered.connect(self.create_template_from_checked)
+        if self.checked_ids:
+            menu.addSeparator()
+            menu.addAction("Tout décocher").triggered.connect(lambda: self.set_checked_layers([]))
+        return menu
+
+    def drop_in_layer_list(self, kind: str, item_id: str, target: QListWidgetItem | None, upper: bool) -> bool:
+        """Drop a dragged layer or folder on a row of the panel.
+
+        On a layer row: above or below it, in its folder. On a folder row: its
+        upper half places the item above the folder, its lower half inside it.
+        Below the last row: at the bottom of the stack.
+        """
+        doc = self.document
+        if target is None:
+            anchor, above, folder = (doc.layers[0].id if doc.layers else None), False, None
+        elif target.data(FOLDER_ROLE):
+            members = doc.folder_members(target.data(Qt.ItemDataRole.UserRole))
+            if not members:
+                return False
+            anchor, above = members[-1].id, True
+            folder = None if upper else target.data(Qt.ItemDataRole.UserRole)
+        else:
+            anchor_layer = doc.layer(target.data(Qt.ItemDataRole.UserRole))
+            if anchor_layer is None:
+                return False
+            anchor, above, folder = anchor_layer.id, upper, anchor_layer.folder
+        if kind == "folder":
+            if doc.folder(item_id) is None:
+                return False
+            return self._mutate_structure("Déplacer le dossier", lambda d: d.move_folder(item_id, anchor, above))
+        layer = doc.layer(item_id)
+        if layer is None:
+            return False
+        if layer.locked:
+            self.statusBar().showMessage("Déverrouillez le calque avant de le déplacer", 3000)
+            return False
+        return self._mutate_structure("Déplacer le calque",
+                                      lambda d: d.move_layer(item_id, anchor, above, folder), item_id)
+
+    def _mutate_structure(self, description: str, fn, select_after: str | None = None) -> bool:
+        """Run a stacking change only if it really changes the order or the folders (no empty history step)."""
+        def structure(doc):
+            return [(layer.id, layer.folder) for layer in doc.layers]
+
+        probe = self.document.clone()
+        if not fn(probe) or structure(probe) == structure(self.document):
+            return False
+        return self.mutate(description, fn, select_after)
 
     @staticmethod
     def _name_icon_buttons(root: QWidget) -> None:
@@ -1318,8 +1586,9 @@ class MainWindow(QMainWindow):
             self.select_layer(None)
 
     def on_layer_list_select(self, current, previous):
-        if not self.refreshing:
-            self.select_layer(current.data(Qt.ItemDataRole.UserRole) if current else None)
+        if self.refreshing or (current is not None and current.data(FOLDER_ROLE)):
+            return  # a folder row is not a layer: the current layer stays selected
+        self.select_layer(current.data(Qt.ItemDataRole.UserRole) if current else None)
 
     def set_layer_visibility(self, layer_id: str, visible: bool):
         if self.refreshing:
@@ -1401,6 +1670,8 @@ class MainWindow(QMainWindow):
         after = self.document.clone()
         try:
             fn(after)
+            # Safety net: whatever the change, folders stay contiguous and never empty.
+            after.normalize_folders()
         except Exception as exc:
             self._report_failure(description, exc)
             return False
@@ -2086,6 +2357,7 @@ class MainWindow(QMainWindow):
             new.x, new.y = float(left + offset[0]), float(top + offset[1])
             doc.layers.remove(new)
             doc.layers.insert(doc.layers.index(doc.layer(layer.id)) + 1, new)
+            new.folder = doc.layer(layer.id).folder  # stays next to its source, in its folder
             holder["id"] = new.id
 
         label = "Couper vers un nouveau calque" if cut else "Copier vers un nouveau calque"
@@ -2166,17 +2438,34 @@ class MainWindow(QMainWindow):
                 setattr(new, key, getattr(source, key))
             doc.layers.remove(new)
             doc.layers.insert(doc.layers.index(source) + 1, new)
+            new.folder = source.folder
             source.visible = False
             holder["id"] = new.id
 
         if self.mutate("Supprimer l'arrière-plan (nouveau calque)", add_layer, layer.id):
             self.select_layer(holder["id"])
 
-    def delete_selection_or_layer(self):
+    def delete_selection_or_layer(self) -> bool:
+        """Delete key: the selected pixels, else the checked layers, else the current layer.
+
+        A text field or spin box being edited keeps the key for itself.
+        """
+        if self._focus_edits_text():
+            return False
         if self.selection_mask is not None:
             self.clear_selection_content()
-        else:
-            self.delete_layer()
+            return True
+        if self.checked_layer_ids():
+            return self.delete_checked_layers()
+        self.delete_layer()
+        return True
+
+    @staticmethod
+    def _focus_edits_text() -> bool:
+        focused = QApplication.focusWidget()
+        if isinstance(focused, QComboBox):
+            return focused.isEditable()
+        return isinstance(focused, (QLineEdit, QPlainTextEdit, QAbstractSpinBox))
 
     def update_eraser_size_preset(self, _index=None):
         size = self.eraser_size_preset.currentData()
@@ -2642,6 +2931,7 @@ class MainWindow(QMainWindow):
         def apply_order(doc):
             by_id = {layer.id: layer for layer in doc.layers}
             doc.layers = [by_id[id_] for id_ in reversed(display_ids)]
+            doc.normalize_folders()
 
         self.mutate("Réordonner le calque par glisser-déposer", apply_order, layer_id)
 
