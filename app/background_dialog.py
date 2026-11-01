@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PIL import Image
-from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -355,16 +355,23 @@ class BackgroundRemovalDialog(QDialog):
 
     def _show_preview(self):
         width, height = PREVIEW_SIZE
-        canvas = QPixmap(width, height)
+        # Stored at the screen density (e.g. 1.5 at 150 % scaling) so the
+        # preview stays sharp; the painter keeps working in logical pixels.
+        ratio = max(1.0, self.preview_label.devicePixelRatioF())
+        canvas = QPixmap(round(width * ratio), round(height * ratio))
+        canvas.setDevicePixelRatio(ratio)
         canvas.fill(Qt.GlobalColor.transparent)
         painter = QPainter(canvas)
-        painter.fillRect(canvas.rect(), checker_brush())
+        painter.fillRect(QRectF(0, 0, width, height), checker_brush())
         mask = self._preview_mask_refined()
         shown = background.preview(self.preview_image, mask) if mask is not None else self.preview_image
         pixmap = QPixmap.fromImage(pil_to_qimage(shown.convert("RGBA"))).scaled(
-            width, height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            round(width * ratio), round(height * ratio),
+            Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
         )
-        painter.drawPixmap((width - pixmap.width()) // 2, (height - pixmap.height()) // 2, pixmap)
+        pixmap.setDevicePixelRatio(ratio)
+        size = pixmap.deviceIndependentSize()
+        painter.drawPixmap(QPointF((width - size.width()) / 2, (height - size.height()) / 2), pixmap)
         painter.end()
         self.preview_label.setPixmap(canvas)
         self._update_buttons()

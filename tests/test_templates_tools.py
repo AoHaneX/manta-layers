@@ -7,7 +7,7 @@ import pytest
 from PIL import Image, ImageChops, ImageDraw
 from PySide6.QtCore import QPoint, QPointF, QSettings, Qt
 from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QLabel, QListWidget, QMessageBox
 
 from app import templates
 from app.builtin_templates import BUILTIN_TEMPLATES, builtin_template
@@ -268,6 +268,27 @@ def test_fine_wheel_zooms_the_token_preview_at_low_values(window):
     dialog.zoom.setValue(40)  # moved by the slider: the wheel starts again from there
     wheel(dialog.preview, 120)
     assert dialog.zoom.value() == 44
+
+
+def test_previews_are_drawn_at_the_screen_density(window, monkeypatch):
+    # A 150 % screen for the previews, 200 % for the thumbnail list. QLabel.pixmap() gives
+    # back a converted copy, so the pixmaps are caught when they are set.
+    monkeypatch.setattr(QLabel, "devicePixelRatioF", lambda _self: 1.5)
+    monkeypatch.setattr(QListWidget, "devicePixelRatioF", lambda _self: 2.0)
+    shown = []
+    monkeypatch.setattr(QLabel, "setPixmap", lambda _self, pixmap: shown.append(pixmap))
+    token_dialog = TokenDialog(window)
+    token_dialog.set_source(Image.new("RGBA", (50, 80), (10, 200, 10, 255)), "Héros")
+    assert (shown[-1].width(), shown[-1].devicePixelRatio()) == (480, 1.5)
+    assert shown[-1].toImage().pixelColor(240, 240).name() == "#0ac80a"
+    sprite_dialog = SpriteSheetDialog(window)
+    sprite_dialog.cell_width.setValue(8)
+    sprite_dialog.cell_height.setValue(8)
+    sprite_dialog.set_sheet(sheet(), "planche")
+    assert (shown[-1].width(), shown[-1].devicePixelRatio()) == (630, 1.5)
+    assert sprite_dialog.cells.item(0).icon().availableSizes()[0].width() == 96  # 48 px at 200 %
+
+
 def test_token_dialog_exports_a_png_and_adds_a_layer(window, monkeypatch, tmp_path):
     window.install_document(Document(600, 600), None)
     dialog = TokenDialog(window)
