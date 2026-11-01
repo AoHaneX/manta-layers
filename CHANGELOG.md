@@ -47,6 +47,7 @@
 - Au démarrage, chaque copie de récupération est proposée (restaurer, supprimer ou plus tard) : les copies d'autres sessions ne sont plus supprimées sans avoir été montrées.
 - Les erreurs inattendues sont enregistrées dans `%LOCALAPPDATA%\MantaLayers\logs` et signalées, même sans console.
 - Quitter pendant un détourage par IA attend la fin du calcul au lieu de faire planter l'application.
+- Les sprites exportés depuis un calque dont le nom contient `:` ou d'autres caractères interdits (« Token : … ») sont écrits sous un nom valide, au lieu de finir dans un flux NTFS caché.
 
 ### Améliorations
 - Rendu des calques image mis en cache : une action ne recalcule plus que les calques modifiés.

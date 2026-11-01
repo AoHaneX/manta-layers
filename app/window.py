@@ -84,7 +84,7 @@ from .icons import alignment_icon, color_tool_icon, history_arrow_icon, sidebar_
 from .imaging import alpha_bounds
 from .layer_panel import FOLDER_ROLE, build_folder_row, build_layer_row, set_row_checked
 from .model import ASSET_FORMATS, MAX_DIMENSION, Document, Layer, new_id
-from .paths import user_data_directory
+from .paths import safe_file_stem, user_data_directory
 from .screen_picker import ScreenColorPicker
 from .selection import COMBINE_LABELS, COMBINE_MODES
 from .shape_item import shape_from_drag
@@ -3536,8 +3536,7 @@ class MainWindow(QMainWindow):
         if not layer or layer.kind != "image" or item is None:
             self.statusBar().showMessage("Sélectionnez un calque image à enregistrer", 3000)
             return
-        safe_name = "".join(character if character not in '<>:"/\\|?*' else "_"
-                            for character in layer.name).strip() or "Calque"
+        safe_name = safe_file_stem(layer.name, "Calque")
         path, filter_ = QFileDialog.getSaveFileName(
             self, "Enregistrer le calque sous", self.initial_path("export", f"{safe_name}.png"),
             "PNG (*.png);;JPEG (*.jpg);;WebP (*.webp)"

@@ -12,6 +12,7 @@ from app.builtin_templates import BUILTIN_TEMPLATES, builtin_template
 from app.graphics import qimage_to_pil, render_document
 from app.imaging import SpriteGrid, extract_sprites, grid_cells
 from app.model import Document, Layer
+from app.paths import safe_file_stem
 from app.sprite_dialog import SpriteSheetDialog, export_sprites
 from app.storage import open_project
 from app.template_library import TemplateLibraryDialog
@@ -280,3 +281,25 @@ def test_template_layer_fields_survive_extraction(qapp):
     elements = extract_elements(source, [shape.id], (30, 40, 230, 160))
     copy = elements.layers[0]
     assert (copy.x, copy.y, copy.shape_type, copy.fill_color) == (0, 0, "speech", "#FFFFFF")
+
+
+@pytest.mark.parametrize("name, expected", [
+    ("Token : héros", "Token _ héros"),
+    ("a/b\\c", "a_b_c"),
+    ("Boss?", "Boss_"),
+    ("CON", "_CON"),
+    ("lpt1.png", "_lpt1.png"),
+    ("  fin. ", "fin"),
+    ("...", "sprite"),
+    ("", "sprite"),
+])
+def test_file_names_built_from_layer_names_are_valid(name, expected):
+    assert safe_file_stem(name, "sprite") == expected
+
+
+def test_sprites_of_a_token_layer_are_written_as_visible_files(tmp_path):
+    sprites = [(0, 0, Image.new("RGBA", (4, 4), (255, 0, 0, 255))),
+               (0, 1, Image.new("RGBA", (4, 4), (0, 255, 0, 255)))]
+    written = export_sprites(sprites, tmp_path, "Token : héros")  # ":" used to write a hidden NTFS stream
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["Token _ héros_01_01.png", "Token _ héros_01_02.png"]
+    assert all(path.stat().st_size > 0 for path in written)

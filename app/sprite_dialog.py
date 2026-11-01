@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 from .graphics import checker_brush, pil_to_qimage
 from .imaging import SpriteGrid, alpha_bounds, grid_cells
 from .model import IMPORT_FORMATS, MAX_DIMENSION, MAX_PIXELS
+from .paths import safe_file_stem
 from .theme import COLORS
 
 if TYPE_CHECKING:
@@ -56,6 +57,8 @@ def unique_path(directory: Path, stem: str) -> Path:
 def export_sprites(sprites, directory: Path, prefix: str) -> list[Path]:
     """Write sprites (row, column, image) as PNGs named prefix_row_column, never overwriting a file."""
     directory.mkdir(parents=True, exist_ok=True)
+    # The prefix is a layer name, such as "Token : …": it must become a valid file name.
+    prefix = safe_file_stem(prefix, "sprite")
     written = []
     for row, column, image in sprites:
         path = unique_path(directory, f"{prefix}_{row + 1:02d}_{column + 1:02d}")
