@@ -8,6 +8,7 @@ from conftest import png_bytes
 
 from app import storage
 from app.model import COMPATIBLE_VERSION, PROJECT_VERSION, Document
+from app.recovery import recovery_text
 from app.storage import open_project, save_project
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -179,14 +180,14 @@ def test_autosave_only_when_there_are_unsaved_changes(window):
     window.mutate("Agrandir", lambda doc: setattr(doc, "width", 300))
     assert window.autosave_now()
     assert not window.autosave_now()  # nothing new since the last copy
-    project, meta = window._recovery_files(window._session_id)
+    project, meta = window.recovery.files(window.recovery.session_id)
     assert project.is_file() and json.loads(meta.read_text())["saved_at"] > 0
 
 
 def test_saving_or_closing_removes_the_recovery_copy(window, tmp_path, monkeypatch):
     window.mutate("x", lambda doc: setattr(doc, "width", 300))
     window.autosave_now()
-    project, _meta = window._recovery_files(window._session_id)
+    project, _meta = window.recovery.files(window.recovery.session_id)
     monkeypatch.setattr(window, "project_path", tmp_path / "projet.manta")
     assert window.save_document()
     assert not project.exists()
@@ -194,12 +195,12 @@ def test_saving_or_closing_removes_the_recovery_copy(window, tmp_path, monkeypat
 
 def wait_for_autosave(window, qapp, timeout=10):
     import time
-    task = window._autosave_task
+    task = window.recovery.task
     assert task is not None and task.wait(timeout * 1000)
     deadline = time.monotonic() + timeout
-    while window._autosave_task is not None and time.monotonic() < deadline:
+    while window.recovery.task is not None and time.monotonic() < deadline:
         qapp.processEvents()  # delivers the end-of-thread notification
-    assert window._autosave_task is None
+    assert window.recovery.task is None
 
 
 def test_timer_autosave_runs_in_the_background(window, qapp, monkeypatch):
@@ -212,11 +213,11 @@ def test_timer_autosave_runs_in_the_background(window, qapp, monkeypatch):
         threads.append(threading.current_thread())
         return real_save(*args, **kwargs)
 
-    monkeypatch.setattr("app.window.save_project", recording_save)
+    monkeypatch.setattr("app.recovery.save_project", recording_save)
     assert window.autosave_now(background=True)
     assert not window.autosave_now(background=True)  # one copy at a time
     wait_for_autosave(window, qapp)
-    project, meta = window._recovery_files(window._session_id)
+    project, meta = window.recovery.files(window.recovery.session_id)
     assert project.is_file() and meta.is_file()
     assert open_project(project).width == 300
     assert threads and threads[0] is not threading.main_thread()
@@ -229,9 +230,9 @@ def test_saving_during_a_background_autosave_leaves_no_copy(window, qapp, tmp_pa
     monkeypatch.setattr(window, "project_path", tmp_path / "projet.manta")
     assert window.save_document()  # waits for the running copy, then deletes it
     qapp.processEvents()
-    project, meta = window._recovery_files(window._session_id)
+    project, meta = window.recovery.files(window.recovery.session_id)
     assert not project.exists() and not meta.exists()
-    assert window._autosave_task is None
+    assert window.recovery.task is None
 
 
 def make_window(qapp, tmp_path, recovery):
@@ -292,7 +293,7 @@ def test_copies_of_running_sessions_are_left_alone(qapp, tmp_path, monkeypatch):
     second = make_window(qapp, tmp_path, recovery)
     qapp.processEvents()
     try:
-        assert second.recovery_candidates() == []
+        assert second.recovery.candidates() == []
     finally:
         for window in (first, second):
             window.undo_stack.setClean()
@@ -324,7 +325,7 @@ def test_copy_without_metadata_is_still_offered(qapp, tmp_path, monkeypatch):
     (recovery / "dead.json").unlink()  # crash between the two writes of the autosave
     offers = []
     answer_recovery(monkeypatch, lambda window, candidate, index, count: offers.append(
-        window._recovery_text(candidate, index, count)[0]) or "restore")
+        recovery_text(candidate, index, count)[0]) or "restore")
     window = make_window(qapp, tmp_path, recovery)
     qapp.processEvents()
     try:
@@ -427,7 +428,7 @@ def test_each_copy_can_be_deleted_or_kept(two_copies, monkeypatch):
     assert not window.offer_session_recovery()
     assert not (window.recovery_dir / f"{newer}.manta").exists()
     assert (window.recovery_dir / f"{older}.manta").exists()
-    assert [candidate["id"] for candidate in window.recovery_candidates()] == [older]  # its lock was released
+    assert [candidate["id"] for candidate in window.recovery.candidates()] == [older]  # its lock was released
 
 
 def test_the_recovery_question_offers_restore_delete_and_later(two_copies):
@@ -443,11 +444,11 @@ def test_the_recovery_question_offers_restore_delete_and_later(two_copies):
         next(button for button in box.buttons() if button.text() == "Plus tard").click()
 
     QTimer.singleShot(0, click_later)
-    candidate = window.recovery_candidates()[0]
+    candidate = window.recovery.candidates()[0]
     try:
         assert window._ask_recovery(candidate, 0, 2) == "later"
     finally:
-        for item in window.recovery_candidates() + [candidate]:
+        for item in window.recovery.candidates() + [candidate]:
             item["lock"].unlock()
     assert sorted(seen) == ["Plus tard", "Restaurer", "Supprimer"]
     assert candidate["id"] == newer
