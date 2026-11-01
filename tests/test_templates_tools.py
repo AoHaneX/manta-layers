@@ -10,7 +10,9 @@ from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
 from app import templates
 from app.builtin_templates import BUILTIN_TEMPLATES, builtin_template
 from app.graphics import qimage_to_pil, render_document
+from app.imaging import SpriteGrid, extract_sprites, grid_cells
 from app.model import Document, Layer
+from app.sprite_dialog import SpriteSheetDialog, export_sprites
 from app.storage import open_project
 from app.template_library import TemplateLibraryDialog
 from app.templates import extract_elements, insert_elements, list_templates, save_template
@@ -174,6 +176,61 @@ def test_token_dialog_exports_a_png_and_adds_a_layer(window, monkeypatch, tmp_pa
     assert window.initial_path("token") == str(target.parent)
     assert dialog.add_to_project()
     assert window.document.layers[-1].name == "Token : Héros"
+
+
+# --- Spritesheets ------------------------------------------------------------------------
+
+
+def sheet():
+    image = Image.new("RGBA", (34, 16), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((2, 2, 5, 5), fill=(255, 0, 0, 255))      # cell (0, 0): small sprite with margins
+    draw.rectangle((10, 0, 17, 7), fill=(0, 255, 0, 255))    # cell (0, 1): full cell
+    draw.rectangle((10, 8, 17, 15), fill=(0, 0, 255, 255))   # cell (1, 1); cell (1, 0) stays empty
+    return image
+
+
+def test_grid_cells_respect_spacing_offset_and_image_limits():
+    grid = SpriteGrid(8, 8, spacing_x=2)
+    cells = grid_cells((34, 16), grid)
+    assert [(row, column) for row, column, _box in cells] == [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
+    assert cells[1][2] == (10, 0, 18, 8)
+    assert grid_cells((34, 16), SpriteGrid(8, 8, columns=10)) == grid_cells((34, 16), SpriteGrid(8, 8, columns=10))
+    assert all(box[2] <= 34 for _r, _c, box in grid_cells((34, 16), SpriteGrid(8, 8, columns=10)))
+    assert grid_cells((4, 4), SpriteGrid(8, 8)) == []
+    with pytest.raises(ValueError):
+        grid_cells((10, 10), SpriteGrid(0, 8))
+
+
+def test_extraction_skips_empty_cells_trims_and_keeps_pixels():
+    sprites = extract_sprites(sheet(), SpriteGrid(8, 8, columns=2, spacing_x=2), trim=True)
+    assert [(row, column) for row, column, _image in sprites] == [(0, 0), (0, 1), (1, 1)]
+    assert sprites[0][2].size == (4, 4) and sprites[0][2].getpixel((0, 0)) == (255, 0, 0, 255)
+    assert len(extract_sprites(sheet(), SpriteGrid(8, 8, columns=2, spacing_x=2), skip_empty=False)) == 4
+
+
+def test_exported_sprite_names_are_unique(tmp_path):
+    sprites = extract_sprites(sheet(), SpriteGrid(8, 8, columns=2, spacing_x=2))
+    first = export_sprites(sprites, tmp_path, "perso")
+    second = export_sprites(sprites[:1], tmp_path, "perso")
+    assert [path.name for path in first] == ["perso_01_01.png", "perso_01_02.png", "perso_02_02.png"]
+    assert second[0].name == "perso_01_01-2.png"
+
+
+def test_sprite_dialog_selection_and_layers_in_a_folder(window):
+    window.install_document(Document(64, 64), None)
+    dialog = SpriteSheetDialog(window)
+    dialog.set_sheet(sheet(), "planche")
+    dialog.cell_width.setValue(8)
+    dialog.cell_height.setValue(8)
+    dialog.columns.setValue(2)
+    dialog.spacing_x.setValue(2)
+    dialog.refresh()
+    assert dialog.cells.count() == 3
+    dialog.cells.item(0).setCheckState(dialog.cells.item(0).checkState().__class__.Unchecked)
+    assert len(dialog.chosen_sprites()) == 2
+    assert dialog.add_as_layers()
+    assert len(window.document.layers) == 2 and window.document.folders[0].name == "planche"
 
 
 # --- Remembered folders ------------------------------------------------------------------
