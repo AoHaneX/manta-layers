@@ -178,6 +178,45 @@ def color_tool_icon(tool: str) -> QIcon:
             painter.drawRect(QRectF(3, 4, 14, 12))
         else:
             painter.drawEllipse(QRectF(3, 4, 14, 12))
+    elif tool == "lasso":
+        painter.setPen(QPen(color, 1.6, Qt.PenStyle.DashLine))
+        loop = QPainterPath(QPointF(6, 15))
+        loop.cubicTo(QPointF(0, 11), QPointF(2, 3), QPointF(10, 3))
+        loop.cubicTo(QPointF(18, 3), QPointF(19, 11), QPointF(11, 13))
+        loop.cubicTo(QPointF(8, 14), QPointF(7, 15), QPointF(6, 15))
+        painter.drawPath(loop)
+        painter.setPen(QPen(color, 1.6))
+        painter.drawLine(QPointF(6, 15), QPointF(5, 18.5))
+    elif tool == "polygon_lasso":
+        points = [QPointF(4, 6), QPointF(12, 3), QPointF(17, 10), QPointF(9, 17), QPointF(3, 13)]
+        painter.setPen(QPen(color, 1.6, Qt.PenStyle.DashLine))
+        for start, end in zip(points, points[1:] + points[:1]):
+            painter.drawLine(start, end)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        for point in points:
+            painter.drawEllipse(point, 1.7, 1.7)
+    elif tool in ("shape_rectangle", "shape_ellipse", "shape_polygon"):
+        if tool == "shape_rectangle":
+            painter.drawRect(QRectF(3, 5, 14, 10))
+        elif tool == "shape_ellipse":
+            painter.drawEllipse(QRectF(3, 4, 14, 12))
+        else:
+            hexagon = QPainterPath(QPointF(10, 2.5))
+            for x, y in ((16.5, 6.2), (16.5, 13.8), (10, 17.5), (3.5, 13.8), (3.5, 6.2)):
+                hexagon.lineTo(x, y)
+            hexagon.closeSubpath()
+            painter.drawPath(hexagon)
+    elif tool in ("shape_line", "shape_arrow"):
+        painter.drawLine(QPointF(3.5, 16.5), QPointF(16, 4))
+        if tool == "shape_arrow":
+            painter.drawLine(QPointF(16, 4), QPointF(9.5, 5))
+            painter.drawLine(QPointF(16, 4), QPointF(15, 10.5))
+    elif tool == "screen_picker":
+        painter.drawRoundedRect(QRectF(2, 3, 16, 11), 2, 2)
+        painter.drawLine(QPointF(7, 17), QPointF(13, 17))
+        painter.setPen(QPen(QColor(COLORS["copper"]), 1.8))
+        painter.drawLine(QPointF(7, 11), QPointF(13, 6))
     elif tool == "wand":
         painter.drawLine(4, 16, 13, 7)
         painter.setPen(QPen(color, 1.4))
