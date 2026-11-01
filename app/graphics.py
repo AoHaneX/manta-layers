@@ -29,6 +29,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
 from . import selection
+from .imaging import trim_transparent
 from .model import ASSET_FORMATS, MAX_PIXELS, Document, Layer
 from .textpath import custom_points, drag_handle, handle_points, normalize_controls, normalize_shape, sample_path
 from .theme import COLORS
@@ -535,7 +536,8 @@ def create_graphic(layer: Layer, document: Document) -> QGraphicsItem:
     item.setTransform(QTransform.fromScale(layer.sx, layer.sy))
     item.setRotation(layer.rotation)
     item.setOpacity(layer.opacity)
-    item.setVisible(layer.visible)
+    # A hidden folder hides its layers on the canvas and in every export.
+    item.setVisible(document.is_visible(layer))
     return item
 
 
@@ -633,8 +635,77 @@ def render_layers(document: Document, layer_ids=None, with_background: bool = Fa
     keep = None if layer_ids is None else set(layer_ids)
     layers = [layer for layer in document.layers if keep is None or layer.id in keep]
     partial = Document(document.width, document.height,
-                       document.background if with_background else None, layers, document.assets)
+                       document.background if with_background else None, layers, document.assets,
+                       document.folders)
     return qimage_to_pil(render_document(partial))
+
+
+def render_layers_region(document: Document, layer_ids) -> tuple[Image.Image, tuple[int, int]] | None:
+    """Visible pixels of some layers, cropped to their content, with the document position.
+
+    Unlike render_layers, parts outside the canvas are kept, so that merging
+    layers loses nothing. None when the layers show no pixel at all.
+    """
+    keep = set(layer_ids)
+    partial = Document(document.width, document.height, None,
+                       [layer for layer in document.layers if layer.id in keep], document.assets,
+                       document.folders)
+    scene = make_scene(partial, interactive=False)
+    bounds = QRectF()
+    for item in scene.items():
+        if item.isVisible():
+            bounds = bounds.united(item.sceneBoundingRect())
+    if bounds.isEmpty():
+        return None
+    area = bounds.toAlignedRect()
+    if area.width() * area.height() > MAX_PIXELS:
+        raise ValueError("le résultat dépasserait 67 mégapixels")
+    target = QImage(area.width(), area.height(), QImage.Format.Format_ARGB32)
+    target.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(target)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+    scene.render(painter, QRectF(0, 0, area.width(), area.height()), QRectF(area))
+    painter.end()
+    trimmed = trim_transparent(qimage_to_pil(target))
+    if trimmed is None:
+        return None
+    image, (left, top, _right, _bottom) = trimmed
+    return image, (area.left() + left, area.top() + top)
+
+
+def layers_bounds(document: Document, layer_ids) -> tuple[float, float, float, float] | None:
+    """Document-space box (left, top, right, bottom) of some layers, hidden or not."""
+    keep = set(layer_ids)
+    bounds = QRectF()
+    for layer in document.layers:
+        if layer.id in keep:
+            bounds = bounds.united(create_graphic(layer, document).sceneBoundingRect())
+    if bounds.isNull():
+        return None
+    return bounds.left(), bounds.top(), bounds.right(), bounds.bottom()
+
+
+def merge_changes_appearance(document: Document, layer_ids) -> bool:
+    """True when merging these layers in place of the topmost one would change the image.
+
+    The merged layer takes the place of the topmost source: an unselected
+    visible layer lying between the sources then passes below the sources that
+    were under it. The result differs only where such a layer overlaps them.
+    """
+    wanted = set(layer_ids)
+    indices = [index for index, layer in enumerate(document.layers) if layer.id in wanted]
+    if len(indices) < 2:
+        return False
+    for index in range(indices[0] + 1, indices[-1]):
+        layer = document.layers[index]
+        if layer.id in wanted or not document.is_visible(layer):
+            continue
+        below = [other.id for other in document.layers[indices[0]:index] if other.id in wanted]
+        overlap = ImageChops.multiply(render_layers(document, [layer.id]).getchannel("A"),
+                                      render_layers(document, below).getchannel("A"))
+        if overlap.getbbox() is not None:
+            return True
+    return False
 
 
 def selection_overlay(mask: Image.Image, show_mask: bool) -> QImage:
