@@ -215,7 +215,7 @@ class SpriteSheetDialog(QDialog):
         if layer is None or layer.kind != "image":
             QMessageBox.information(self, "Découper une spritesheet", "Sélectionnez un calque image.")
             return
-        with Image.open(BytesIO(document.assets[layer.asset]), formats=("PNG",)) as source:
+        with Image.open(BytesIO(document.assets[layer.image_asset()]), formats=("PNG",)) as source:
             self.set_sheet(source, layer.name)
 
     # --- Grid and cells ----------------------------------------------------------------------

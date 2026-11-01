@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 from PySide6.QtCore import QPointF, QRectF, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QPainter, QPixmap
+from PySide6.QtGui import QDesktopServices, QPainter, QPixmap, QStandardItemModel
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -222,8 +222,11 @@ class BackgroundRemovalDialog(QDialog):
         elif not models:
             self.method.addItem("IA locale — aucun modèle installé", None)
         for index in range(self.method.count()):
-            if self.method.itemData(index) is None:
-                self.method.model().item(index).setEnabled(False)
+            model = self.method.model()
+            if self.method.itemData(index) is None and isinstance(model, QStandardItemModel):
+                item = model.item(index)
+                if item is not None:
+                    item.setEnabled(False)
         if select is not None:
             self.method.setCurrentIndex(max(0, self.method.findData(str(select))))
         self.method.blockSignals(False)

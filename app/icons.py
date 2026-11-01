@@ -99,6 +99,7 @@ def alignment_icon(alignment: str) -> QIcon:
     painter.setPen(QPen(QColor(COLORS["muted"]), 1.8))
     widths = (13, 9, 13, 7)
     for index, width in enumerate(widths):
+        x: float
         if alignment == "left":
             x = 3
         elif alignment == "right":

@@ -10,7 +10,7 @@ from math import atan2, cos, degrees, floor, hypot, radians, sin
 from typing import TYPE_CHECKING
 
 from PIL import Image, ImageChops, ImageDraw
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRectF, Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import (
     QBitmap,
     QBrush,
@@ -234,6 +234,10 @@ class CurvedTextGraphicItem(QGraphicsItem):
         self.update()
 
 
+def _rgb(color: QColor) -> tuple[int, int, int]:
+    return color.red(), color.green(), color.blue()
+
+
 def _render_operations(replacements: dict[str, str], fills: list[dict], strokes: list[dict]) -> list[tuple]:
     """Non-destructive edits of an image layer, flattened in their replay order.
 
@@ -242,7 +246,7 @@ def _render_operations(replacements: dict[str, str], fills: list[dict], strokes:
     which lets renders resume from a cached prefix.
     """
     operations: list[tuple] = []
-    mapping = {tuple(QColor(old).getRgb()[:3]): tuple(QColor(new).getRgb()[:3])
+    mapping = {_rgb(QColor(old)): _rgb(QColor(new))
                for old, new in replacements.items()
                if QColor(old).isValid() and QColor(new).isValid()}
     for source_rgb, target_rgb in mapping.items():
@@ -257,7 +261,7 @@ def _render_operations(replacements: dict[str, str], fills: list[dict], strokes:
         operations.extend(("stroke", stroke) for stroke in strokes[applied_strokes:due])
         applied_strokes = due
         operations.append((
-            "fill", source.getRgb()[:3], target_color.getRgb()[:3],
+            "fill", _rgb(source), _rgb(target_color),
             max(0, min(255, int(fill.get("tolerance", 0)))),
             "global" if fill.get("mode") == "global" else "contiguous",
             (int(fill.get("x", -1)), int(fill.get("y", -1))),
@@ -419,6 +423,7 @@ def _eraser_dab(size: int, shape: str, pixel_art: bool, hardness: int, opacity: 
             draw.ellipse((0, 0, size - 1, size - 1), fill=maximum)
         return dab
     pixels = dab.load()
+    assert pixels is not None  # a new image is always loaded
     radius = size / 2
     inner = radius * hardness / 100
     center = (size - 1) / 2
@@ -530,9 +535,10 @@ def pil_to_qimage(image: Image.Image) -> QImage:
 
 def render_layer_with_mask(layer: Layer, document: Document) -> Image.Image:
     """Source pixels of an image layer with its edits and mask, not flipped."""
+    asset = layer.image_asset()
     image = render_layer_image(
-        document.assets[layer.asset], layer.color_replacements,
-        layer.color_fills, layer.eraser_strokes, cache_key=layer.asset,
+        document.assets[asset], layer.color_replacements,
+        layer.color_fills, layer.eraser_strokes, cache_key=asset,
     )
     if layer.mask:
         mask = selection.decode(document.assets[layer.mask])
@@ -558,7 +564,7 @@ def crop_image_layer(layer: Layer, document: Document,
         # only an even shift of their points keeps every dab on the same pixels.
         left, top = left - left % 2, top - top % 2
         box = (left, top, right, bottom)
-    with Image.open(BytesIO(document.assets[layer.asset]), formats=ASSET_FORMATS) as source:
+    with Image.open(BytesIO(document.assets[layer.image_asset()]), formats=ASSET_FORMATS) as source:
         width, height = source.size
         cropped = source.convert("RGBA").crop(box)
     trimmed = deepcopy(layer)
@@ -608,9 +614,11 @@ def layer_pixmap(layer: Layer, document: Document) -> QPixmap:
 
 
 def create_graphic(layer: Layer, document: Document) -> QGraphicsItem:
+    item: QGraphicsItem
     if layer.kind == "image":
-        item = QGraphicsPixmapItem(layer_pixmap(layer, document))
-        item.setTransformationMode(Qt.TransformationMode.FastTransformation)
+        pixmap_item = QGraphicsPixmapItem(layer_pixmap(layer, document))
+        pixmap_item.setTransformationMode(Qt.TransformationMode.FastTransformation)
+        item = pixmap_item
     elif layer.kind == "shape":
         item = ShapeGraphicItem(layer)
     else:
@@ -658,10 +666,10 @@ def qimage_png(image: QImage) -> bytes:
     data = QByteArray()
     buf = QBuffer(data)
     buf.open(QIODevice.OpenModeFlag.WriteOnly)
-    if not image.save(buf, "PNG"):
+    if not image.save(buf, "PNG"):  # type: ignore[call-overload]  # QIODevice overload missing from the stubs
         raise ValueError("Échec de l'encodage PNG")
     buf.close()
-    return bytes(data)
+    return data.data()
 
 
 # --- Bridges between Pillow masks and Qt -------------------------------------------
@@ -854,7 +862,7 @@ class CanvasView(QGraphicsView):
         self.old_layer = None
         self.drag_item = None
         self.handle_index = None
-        self.selection_drag = None
+        self.selection_drag: dict | None = None
         # Lasso outline being drawn (free or polygonal), in document coordinates.
         self.lasso_points: list[QPointF] | None = None
         self.lasso_hover: QPointF | None = None
@@ -867,7 +875,7 @@ class CanvasView(QGraphicsView):
         self.snap_targets: tuple[list[float], list[float]] = ([], [])
         self.active_guides: list[tuple[str, float]] = []
         # Pixels being moved with Ctrl+drag inside the selection.
-        self.lift = None
+        self.lift: dict | None = None
         self.selection_overlay_image: QImage | None = None
         self.selection_path: QPainterPath | None = None
         self.selection_box: tuple[int, int, int, int] | None = None
@@ -876,7 +884,7 @@ class CanvasView(QGraphicsView):
         self.corner_local = None
         self.angle_offset = 0
         self.fixed_center = None
-        self.eraser_item = None
+        self.eraser_item: QGraphicsPixmapItem | None = None
         self.eraser_points: list[QPointF] = []
         self.eraser_cursor_local: QPointF | None = None
         self.eraser_preview_image: QImage | None = None
@@ -887,11 +895,11 @@ class CanvasView(QGraphicsView):
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
 
-    def drawBackground(self, painter: QPainter, rect: QRectF) -> None:
+    def drawBackground(self, painter: QPainter, rect: QRectF | QRect) -> None:
         super().drawBackground(painter, rect)
         if not self.scene():
             return
-        area = QRectF(0, 0, self.main_window.document.width, self.main_window.document.height).intersected(rect)
+        area = QRectF(0, 0, self.main_window.document.width, self.main_window.document.height).intersected(QRectF(rect))
         if area.isEmpty():
             return
         background = self.main_window.document.background
@@ -935,7 +943,7 @@ class CanvasView(QGraphicsView):
         distance = ROTATION_HANDLE_DISTANCE / self.transform().m11()
         return top + direction * (distance / length)
 
-    def drawForeground(self, painter: QPainter, rect: QRectF) -> None:
+    def drawForeground(self, painter: QPainter, rect: QRectF | QRect) -> None:
         super().drawForeground(painter, rect)
         if not self.scene():
             return
@@ -1033,7 +1041,8 @@ class CanvasView(QGraphicsView):
             for other_id in window.checked_layer_ids():
                 layer = window.document.layer(other_id)
                 graphic = self.graphic_for(other_id)
-                if other_id != layer_id and graphic is not None and not layer.locked and graphic.isVisible():
+                if (other_id != layer_id and graphic is not None and layer is not None and not layer.locked
+                        and graphic.isVisible()):
                     moving.append(graphic)
         self.move_start = {graphic: QPointF(graphic.pos()) for graphic in moving}
         self.move_press = QPointF(press)
@@ -1161,7 +1170,9 @@ class CanvasView(QGraphicsView):
             painter.setOpacity(1.0)
 
     def _drag_rect(self) -> QRectF:
-        rect = QRectF(self.selection_drag["start"], self.selection_drag["end"]).normalized()
+        drag = self.selection_drag
+        assert drag is not None
+        rect = QRectF(drag["start"], drag["end"]).normalized()
         if self.main_window.selection_pixel_perfect.isChecked():
             rect = QRectF(round(rect.left()), round(rect.top()),
                           round(rect.right()) - round(rect.left()), round(rect.bottom()) - round(rect.top()))
@@ -1170,7 +1181,7 @@ class CanvasView(QGraphicsView):
     def _drag_shape_path(self) -> QPainterPath:
         path = QPainterPath()
         rect = self._drag_rect()
-        if self.selection_drag["tool"] == "ellipse":
+        if self.selection_drag is not None and self.selection_drag["tool"] == "ellipse":
             path.addEllipse(rect)
         else:
             path.addRect(rect)
@@ -1178,6 +1189,7 @@ class CanvasView(QGraphicsView):
 
     def _shape_preview_path(self) -> QPainterPath:
         drag = self.shape_drag
+        assert drag is not None
         layer = shape_from_drag(self.main_window.shape_tool or "rectangle",
                                 (drag["start"].x(), drag["start"].y()), (drag["end"].x(), drag["end"].y()),
                                 bool(drag["modifiers"] & Qt.KeyboardModifier.ShiftModifier), "#000000")
@@ -1188,7 +1200,7 @@ class CanvasView(QGraphicsView):
 
     def _lasso_path(self) -> QPainterPath:
         """Lasso being drawn: its points, the pointer for the polygonal lasso, closed back to the start."""
-        points = list(self.lasso_points)
+        points = list(self.lasso_points or [])
         if self.lasso_hover is not None and self.main_window.selection_tool == "polygon":
             points.append(self.lasso_hover)
         path = QPainterPath(points[0])
@@ -1655,6 +1667,7 @@ class CanvasView(QGraphicsView):
                 painter.drawEllipse(bounds)
             dirty = bounds if dirty is None else dirty.united(bounds)
         painter.end()
+        assert dirty is not None and self.eraser_source_image is not None  # steps >= 1, image set above
         area = dirty.toAlignedRect().adjusted(-1, -1, 1, 1).intersected(self.eraser_preview_image.rect())
         if not area.isEmpty():
             painter = QPainter(self.eraser_preview_image)

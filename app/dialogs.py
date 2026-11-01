@@ -201,7 +201,10 @@ class NewProjectDialog(QDialog):
 
     def document(self) -> Document:
         if self.tabs.currentIndex() == 1:
-            return instantiate_template(self.selected_template())
+            template = self.selected_template()
+            if template is None:
+                raise ValueError("Choisissez un modèle")
+            return instantiate_template(template)
         background = {
             "Transparent": None, "Blanc": "#FFFFFF", "Noir": "#000000"
         }[self.background_input.currentText()]

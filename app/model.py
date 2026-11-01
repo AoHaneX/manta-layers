@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields
 from io import BytesIO
 from math import isfinite
+from typing import cast
 from uuid import uuid4
 
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -197,8 +198,8 @@ class Layer:
                 continue
             valid_fills.append({
                 "mode": "global" if raw_fill.get("mode") == "global" else "contiguous",
-                "source": source.upper(),
-                "target": target.upper(),
+                "source": str(source).upper(),
+                "target": str(target).upper(),
                 "x": x,
                 "y": y,
                 "tolerance": tolerance,
@@ -241,6 +242,12 @@ class Layer:
             layer.folder = None
         layer.normalize_shape_fields()
         return layer
+
+    def image_asset(self) -> str:
+        """Asset id of an image layer (validated when a project is opened)."""
+        if self.asset is None:
+            raise ValueError(f"Le calque « {self.name} » n'a pas d'image")
+        return self.asset
 
     def normalize_shape_fields(self) -> None:
         """Clamp the shape properties to valid values (corrupted files, edits)."""
@@ -331,11 +338,12 @@ class Document:
         rgba.save(output, format="PNG")
         if output.tell() > MAX_ASSET_BYTES:
             raise ValueError("Image trop volumineuse une fois enregistrée dans le projet")
-        layer = Layer(name=name, kind="image", asset=new_id())
+        asset = new_id()
+        layer = Layer(name=name, kind="image", asset=asset)
         if center:
             layer.x = float((self.width - rgba.width) / 2)
             layer.y = float((self.height - rgba.height) / 2)
-        self.assets[layer.asset] = output.getvalue()
+        self.assets[asset] = output.getvalue()
         self.layers.append(layer)
         return layer
 
@@ -531,7 +539,8 @@ class Document:
         if not isinstance(raw_layers, list):
             raise ValueError("Liste de calques invalide")
         background = manifest.get("background")
-        doc = cls(width=manifest.get("width"), height=manifest.get("height"),
+        # Missing or invalid dimensions are refused by Document.__post_init__.
+        doc = cls(width=cast(int, manifest.get("width")), height=cast(int, manifest.get("height")),
                   background=background if is_hex_color(background) else None,
                   layers=[Layer.from_dict(item) for item in raw_layers], assets=assets)
         for layer in doc.layers:

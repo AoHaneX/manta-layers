@@ -197,7 +197,7 @@ def insert_elements(target: Document, elements: Document, offset: tuple[float, f
         layer.id = new_id()
         layer.x += offset[0]
         layer.y += offset[1]
-        layer.folder = folder_ids.get(source.folder)
+        layer.folder = folder_ids.get(source.folder) if source.folder else None
         for asset in (layer.asset, layer.mask):
             if asset and asset in elements.assets:
                 target.assets.setdefault(asset, elements.assets[asset])

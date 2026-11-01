@@ -202,7 +202,7 @@ class TokenDialog(QDialog):
     def use_selected_layer(self) -> None:
         layer = self.window_.document.layer(self.window_.selected_id)
         rendered = render_layers_region(self.window_.document, [layer.id]) if layer else None
-        if rendered is None:
+        if layer is None or rendered is None:
             QMessageBox.information(self, "Créateur de tokens", "Sélectionnez un calque visible.")
             return
         self.set_source(rendered[0], layer.name)
@@ -270,6 +270,8 @@ class TokenDialog(QDialog):
         self.add_button.setEnabled(has_source)
 
     def render_full(self) -> Image.Image:
+        if self.source is None:
+            raise ValueError("Choisissez d'abord une image")
         return render_token(self.source, self.settings())
 
     def export_png(self) -> Path | None:
