@@ -106,6 +106,8 @@ def dominant_border_colour(image: Image.Image) -> tuple[int, int, int, int]:
     rgba = image.convert("RGBA")
     width, height = rgba.size
     pixels = rgba.load()
+    if width == 0 or height == 0:
+        raise ValueError("Image vide : impossible de déterminer la couleur des bords")
     border = {(x, y) for x in range(width) for y in (0, height - 1)}
     border |= {(x, y) for y in range(height) for x in (0, width - 1)}
     counts = Counter((0, 0, 0, 0) if pixels[x, y][3] == 0 else pixels[x, y] for x, y in border)

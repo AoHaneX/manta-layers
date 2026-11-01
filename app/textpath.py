@@ -26,9 +26,16 @@ def normalize_shape(deformation, intensity: float) -> tuple[str, float]:
     """Map current and legacy deformation names to a shape and an intensity.
 
     Older projects stored either a single signed ``curve`` or one of several
-    directional modes with a positive intensity.
+    directional modes with a positive intensity. A missing, non-numeric or
+    non-finite intensity counts as 0 (no bending) instead of raising.
     """
-    intensity = max(-100.0, min(100.0, float(intensity)))
+    try:
+        intensity = float(intensity)
+    except (TypeError, ValueError, OverflowError):
+        intensity = 0.0
+    if not isfinite(intensity):
+        intensity = 0.0
+    intensity = max(-100.0, min(100.0, intensity))
     if not isinstance(deformation, str):
         deformation = "arc"
     if deformation == "curve":

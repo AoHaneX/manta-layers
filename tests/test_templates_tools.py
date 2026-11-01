@@ -20,7 +20,7 @@ from app.storage import open_project
 from app.template_library import TemplateLibraryDialog
 from app.templates import extract_elements, insert_elements, list_templates, save_template
 from app.token_dialog import TokenDialog
-from app.tokens import FRAMES, TokenSettings, _portrait, max_border, render_token, supersampling
+from app.tokens import FRAMES, TokenSettings, _portrait, _rgb, max_border, render_token, supersampling
 
 
 @pytest.fixture
@@ -235,6 +235,16 @@ def test_thick_frame_border_is_limited_to_an_eighth_of_the_size():
     assert max_border(512, "thick") == 64 and max_border(512, "circle") == 128
     with pytest.raises(ValueError, match="maximum 64 px"):
         render_token(Image.new("RGBA", (10, 10)), TokenSettings(size=512, frame="thick", border_width=128))
+
+
+@pytest.mark.parametrize("color", ["##D6A06A", "+1+2+3", "GGGGGG", "D6A06A", "#D6A06", "#D6A06A0", "", None])
+def test_border_colours_must_be_strict_hexadecimal(color):
+    with pytest.raises(ValueError, match="Couleur de bordure invalide"):
+        _rgb(color)
+
+
+def test_border_colour_accepts_both_cases():
+    assert _rgb("#d6a06A") == (214, 160, 106)
 
 
 def test_token_dialog_border_limit_follows_frame_and_size(window):
