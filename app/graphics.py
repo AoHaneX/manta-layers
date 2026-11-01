@@ -769,6 +769,12 @@ class CanvasView(QGraphicsView):
         self.drag_item = None
         self.handle_index = None
         self.selection_drag = None
+        # Lasso outline being drawn (free or polygonal), in document coordinates.
+        self.lasso_points: list[QPointF] | None = None
+        self.lasso_hover: QPointF | None = None
+        self.lasso_modifiers = Qt.KeyboardModifier.NoModifier
+        # Shape being drawn with a shape tool: {"start", "end", "modifiers"}.
+        self.shape_drag: dict | None = None
         # Pixels being moved with Ctrl+drag inside the selection.
         self.lift = None
         self.selection_overlay_image: QImage | None = None
@@ -956,6 +962,10 @@ class CanvasView(QGraphicsView):
             outlines.append(box)
         if self.selection_drag is not None:
             outlines.append(self._drag_shape_path())
+        if self.lasso_points:
+            outlines.append(self._lasso_path())
+        if self.shape_drag is not None:
+            outlines.append(self._shape_preview_path())
         painter.setBrush(Qt.BrushStyle.NoBrush)
         for path in outlines:
             for pen in self._selection_pens():
@@ -982,13 +992,54 @@ class CanvasView(QGraphicsView):
             path.addRect(rect)
         return path
 
+
+    def _lasso_path(self) -> QPainterPath:
+        """Lasso being drawn: its points, the pointer for the polygonal lasso, closed back to the start."""
+        points = list(self.lasso_points)
+        if self.lasso_hover is not None and self.main_window.selection_tool == "polygon":
+            points.append(self.lasso_hover)
+        path = QPainterPath(points[0])
+        for point in points[1:]:
+            path.lineTo(point)
+        if len(points) > 2:
+            path.closeSubpath()
+        return path
+
+    def finish_lasso(self) -> None:
+        points, modifiers = self.lasso_points, self.lasso_modifiers
+        self.lasso_points, self.lasso_hover = None, None
+        if points:
+            self.main_window.apply_selection_polygon([(point.x(), point.y()) for point in points], modifiers)
+        self.viewport().update()
+
+    def cancel_lasso(self) -> bool:
+        if self.lasso_points is None:
+            return False
+        self.lasso_points, self.lasso_hover = None, None
+        self.viewport().update()
+        return True
+
+    def _lasso_press(self, event, scene_position: QPointF, modifiers) -> None:
+        if self.main_window.selection_tool == "lasso" or self.lasso_points is None:
+            self.lasso_points, self.lasso_modifiers = [scene_position], modifiers
+            return
+        # Polygonal lasso: a click near the first point closes the outline.
+        first = self.mapFromScene(self.lasso_points[0])
+        if len(self.lasso_points) >= 3 and (first - event.position().toPoint()).manhattanLength() <= 10:
+            self.finish_lasso()
+            return
+        self.lasso_points.append(scene_position)
+
     def _selection_press(self, event) -> None:
         scene_position = self.mapToScene(event.position().toPoint())
         modifiers = event.modifiers()
-        if modifiers & Qt.KeyboardModifier.ControlModifier:
+        if modifiers & Qt.KeyboardModifier.ControlModifier and self.lasso_points is None:
             lift = self.main_window.lift_selection(scene_position)
             if lift is not None:
                 self.lift = {**lift, "start": scene_position, "delta": QPointF(0, 0)}
+            return
+        if self.main_window.selection_tool in ("lasso", "polygon"):
+            self._lasso_press(event, scene_position, modifiers)
             return
         if self.main_window.selection_tool == "wand":
             self.main_window.apply_magic_wand(scene_position, modifiers)
@@ -1106,6 +1157,11 @@ class CanvasView(QGraphicsView):
         self.viewport().update()
 
     def mouseDoubleClickEvent(self, event):
+        if self.lasso_points is not None and self.main_window.selection_tool == "polygon":
+            # The double click's first press already added its point.
+            self.finish_lasso()
+            event.accept()
+            return
         # Double-clicking a text edits its content directly on the canvas.
         if event.button() == Qt.MouseButton.LeftButton and not self.main_window.any_tool_active():
             item = self.itemAt(event.position().toPoint())
@@ -1121,6 +1177,20 @@ class CanvasView(QGraphicsView):
         # Copy, cut and paste are window actions whose shortcuts are handled before
         # this event. Delete is also an action; it stays here, with its Backspace
         # alias, for a canvas whose window is not shown (its shortcuts are inactive).
+        if event.key() == Qt.Key.Key_Escape and self.cancel_lasso():
+            event.accept()
+            return
+        if self.lasso_points is not None and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.finish_lasso()
+            event.accept()
+            return
+        if self.lasso_points is not None and event.key() == Qt.Key.Key_Backspace:
+            self.lasso_points.pop()  # polygonal lasso: remove the last point
+            if not self.lasso_points:
+                self.lasso_points = None
+            self.viewport().update()
+            event.accept()
+            return
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             # With an active selection, Delete erases its content instead of the layer.
             self.main_window.delete_selection_or_layer()
@@ -1178,6 +1248,23 @@ class CanvasView(QGraphicsView):
             self._pan_last = pos
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+            event.accept()
+            return
+        if self.shape_drag is not None:
+            self.shape_drag["end"] = self.mapToScene(event.position().toPoint())
+            self.shape_drag["modifiers"] = event.modifiers()
+            self.viewport().update()
+            event.accept()
+            return
+        if self.lasso_points is not None:
+            position = self.mapToScene(event.position().toPoint())
+            if self.main_window.selection_tool == "polygon":
+                self.lasso_hover = position
+            elif event.buttons() & Qt.MouseButton.LeftButton:
+                step = 1 / max(1e-6, self.transform().m11())  # one screen pixel
+                if (position - self.lasso_points[-1]).manhattanLength() >= step:
+                    self.lasso_points.append(position)
+            self.viewport().update()
             event.accept()
             return
         if self.selection_drag is not None or self.lift is not None:
@@ -1255,6 +1342,18 @@ class CanvasView(QGraphicsView):
             self.main_window.last_eraser_point = (last.x(), last.y())
             self.main_window.last_eraser_layer_id = layer_id
             self.viewport().update()
+            event.accept()
+            return
+        if event.button() == Qt.MouseButton.LeftButton and self.shape_drag is not None:
+            drag, self.shape_drag = self.shape_drag, None
+            self.main_window.create_shape(drag["start"], self.mapToScene(event.position().toPoint()),
+                                          event.modifiers())
+            self.viewport().update()
+            event.accept()
+            return
+        if (event.button() == Qt.MouseButton.LeftButton and self.lasso_points is not None
+                and self.main_window.selection_tool == "lasso"):
+            self.finish_lasso()
             event.accept()
             return
         if event.button() == Qt.MouseButton.LeftButton and self.selection_drag is not None:
@@ -1375,6 +1474,7 @@ class CanvasView(QGraphicsView):
 
     def cancel_selection_drag(self) -> None:
         self.selection_drag = None
+        self.lasso_points, self.lasso_hover = None, None
         self.lift = None
         self.viewport().update()
 

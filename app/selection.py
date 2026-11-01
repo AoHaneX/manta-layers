@@ -85,6 +85,30 @@ def ellipse(size: tuple[int, int], box, antialias: bool = False) -> Image.Image:
     return _shape(size, box, antialias, draw_ellipse=True)
 
 
+def polygon(size: tuple[int, int], points, antialias: bool = False) -> Image.Image:
+    """Closed polygon (free or polygonal lasso) through document-space points.
+
+    Coverage is computed with supersampling; the pixel-perfect variant keeps
+    the pixels covered by at least half, so a lasso drawn along pixel edges
+    selects exactly the pixels inside. Fewer than three distinct points select nothing.
+    """
+    mask = empty(size)
+    vertices = [(float(x), float(y)) for x, y in points]
+    if len(set(vertices)) < 3:
+        return mask
+    xs, ys = [x for x, _ in vertices], [y for _, y in vertices]
+    area = (max(0, int(min(xs)) - 1), max(0, int(min(ys)) - 1),
+            min(size[0], int(max(xs)) + 2), min(size[1], int(max(ys)) + 2))
+    if area[2] <= area[0] or area[3] <= area[1]:
+        return mask
+    scale = SUPERSAMPLING
+    big = Image.new("L", ((area[2] - area[0]) * scale, (area[3] - area[1]) * scale), 0)
+    ImageDraw.Draw(big).polygon([((x - area[0]) * scale - 0.5, (y - area[1]) * scale - 0.5)
+                                 for x, y in vertices], fill=255)
+    mask.paste(big.resize((area[2] - area[0], area[3] - area[1]), Image.Resampling.BOX), area[:2])
+    return mask if antialias else mask.point([0] * 128 + [255] * 128)
+
+
 def _within(channel: Image.Image, reference: int, tolerance: int) -> Image.Image:
     difference = ImageChops.difference(channel, Image.new("L", channel.size, reference))
     return difference.point([255 if value <= tolerance else 0 for value in range(256)])

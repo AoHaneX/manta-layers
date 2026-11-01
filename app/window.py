@@ -711,6 +711,10 @@ class MainWindow(QMainWindow):
             ("rect", "select_rect", "Rectangle", "Sélection rectangulaire (M)"),
             ("ellipse", "select_ellipse", "Ellipse", "Sélection elliptique"),
             ("wand", "wand", "Baguette magique", "Baguette magique (W) : pixels de couleur proche"),
+            ("lasso", "lasso", "Lasso", "Lasso libre (L) : dessiner le contour en maintenant le bouton"),
+            ("polygon", "polygon_lasso", "Lasso polygonal",
+             "Lasso polygonal : un clic par point ; double-clic, Entrée ou clic sur le premier point "
+             "pour fermer ; Retour arrière retire un point ; Échap annule"),
         ):
             button = self._tool_button(icon, text, tooltip)
             button.clicked.connect(
@@ -1074,7 +1078,7 @@ class MainWindow(QMainWindow):
         self.text_tool_shortcut.activated.connect(
             lambda: self.set_text_tool_active(not self.text_tool_active)
         )
-        for key, tool in (("M", "rect"), ("W", "wand")):
+        for key, tool in (("M", "rect"), ("W", "wand"), ("L", "lasso")):
             shortcut = QShortcut(QKeySequence(key), self.canvas)
             shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
             shortcut.activated.connect(
@@ -2209,6 +2213,20 @@ class MainWindow(QMainWindow):
         shape = self._finish_shape(draw(size, box, antialias))
         label = "Sélection elliptique" if tool == "ellipse" else "Sélection rectangulaire"
         self.set_selection(selection.combine(self.selection_mask, shape, mode), label)
+
+    def apply_selection_polygon(self, points, modifiers) -> bool:
+        """Selection from a closed lasso outline (document coordinates)."""
+        mode = self._combine_mode(modifiers)
+        size = (self.document.width, self.document.height)
+        antialias = not self.selection_pixel_perfect.isChecked()
+        shape = selection.polygon(size, points, antialias)
+        if selection.is_empty(shape):
+            if mode == "replace" and len(points) < 3:
+                self.deselect()  # a click without an outline clears, as with the other tools
+            self.statusBar().showMessage("Contour trop petit : aucune sélection", 2500)
+            return False
+        self.set_selection(selection.combine(self.selection_mask, self._finish_shape(shape), mode), "Lasso")
+        return True
 
     def apply_magic_wand(self, scene_position: QPointF, modifiers):
         x, y = int(scene_position.x() // 1), int(scene_position.y() // 1)
