@@ -64,6 +64,7 @@ from . import __version__, background, background_dialog, export, selection
 from .background_dialog import BackgroundRemovalDialog
 from .dialogs import NewProjectDialog, ResizeDocumentDialog
 from .graphics import (
+    UNREADABLE_ROLE,
     CanvasView,
     CurvedTextGraphicItem,
     crop_image_layer,
@@ -224,6 +225,8 @@ class MainWindow(QMainWindow):
         # Floating editor used to type a text directly on the canvas.
         self._inline: dict | None = None
         self._resyncing_history = False
+        # Assets found damaged when the document was opened (see _make_scene).
+        self._unreadable_assets: set[str] = set()
         self.selection_mask: Image.Image | None = None
         # Multiple selection of the layer panel (layer ids), see set_layer_checked.
         self.checked_ids: set[str] = set()
@@ -1198,7 +1201,7 @@ class MainWindow(QMainWindow):
         ``scene`` is the scene of ``doc`` when it was already built (see _push).
         """
         if scene is None:
-            scene = make_scene(doc, interactive=True)
+            scene = self._make_scene(doc)
         self._revision += 1
         # The scene is replaced: an editor typing into the old one is dropped,
         # and a drag in progress forgets the items about to be deleted.
@@ -1775,7 +1778,7 @@ class MainWindow(QMainWindow):
         # the saved state, which a change that cannot be shown must not do.
         try:
             document = command.after.clone()
-            command.prepared = (document, make_scene(document, interactive=True))
+            command.prepared = (document, self._make_scene(document))
         except Exception as exc:
             self._report_failure(description, exc)
             return False
@@ -3277,13 +3280,29 @@ class MainWindow(QMainWindow):
         self.update_title()
         self._warn_missing_fonts(document)
 
+    def _make_scene(self, document: Document, tolerate_all: bool = False):
+        """Canvas scene; images already damaged when the project was opened are shown hatched.
+
+        A change that makes another image unreadable is still refused.
+        """
+        known = self._unreadable_assets
+
+        def tolerated(layer: Layer) -> bool:
+            return tolerate_all or layer.asset in known or (layer.mask is not None and layer.mask in known)
+
+        return make_scene(document, interactive=True, tolerate_unreadable=tolerated)
+
     def _start_session(self, document: Document, project_path: Path | None, unsaved: bool = False) -> None:
         """Show another document from scratch: history, selection, view and recovery copy.
 
         Raises if the document cannot be shown; the current one then stays as it was.
         """
+        scene = self._make_scene(document, tolerate_all=True)
+        unreadable = {item.data(0) for item in scene.items() if item.data(UNREADABLE_ROLE)}
+        self._unreadable_assets = {asset for layer in document.layers if layer.id in unreadable
+                                   for asset in (layer.asset, layer.mask) if asset}
         self._collapsed_folders = {}
-        self.install_document(document, None)
+        self.install_document(document, None, scene=scene)
         self.project_path = project_path
         self.undo_stack.clear()
         if unsaved:
@@ -3295,6 +3314,18 @@ class MainWindow(QMainWindow):
         self.update_title()
         # The copy of the document left behind must not be offered after a crash.
         self.recovery.discard(self.recovery.session_id)
+        self._warn_unreadable_layers()
+
+    def _warn_unreadable_layers(self) -> None:
+        """Name the image layers shown hatched because their pixels cannot be decoded."""
+        unreadable = {item.data(0) for item in self.canvas_scene.items() if item.data(UNREADABLE_ROLE)}
+        names = [layer.name for layer in self.document.layers if layer.id in unreadable]
+        if names:
+            QMessageBox.warning(
+                self, "Images illisibles",
+                "Ces calques ont une image endommagée, affichée hachurée :\n\n" + "\n".join(names)
+                + "\n\nLe reste du projet est modifiable. Supprimez ou remplacez ces calques "
+                "avant d'exporter l'image.")
 
     def resize_document(self):
         dialog = ResizeDocumentDialog(self.document.width, self.document.height, self)
