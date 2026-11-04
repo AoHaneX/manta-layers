@@ -133,12 +133,12 @@ def test_arrow_key_bursts_merge_into_one_undo_step(window, monkeypatch):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
 
-    import app.window as window_module
+    import app.commands as commands_module
     layer = image_layer(window)
     window.select_layer(layer.id)
     start_x, count = layer.x, window.undo_stack.count()
     clock = iter([100.0, 100.2, 100.4, 102.0])
-    monkeypatch.setattr(window_module.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(commands_module.time, "monotonic", lambda: next(clock))
     window.canvas.setFocus()
     for key in (Qt.Key.Key_Right, Qt.Key.Key_Right, Qt.Key.Key_Right):
         QTest.keyClick(window.canvas, key)
