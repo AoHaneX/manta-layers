@@ -40,6 +40,8 @@ LAYER_KINDS = ("image", "text", "shape")
 # Speech and thought bubbles and banners are used by the bundled templates.
 SHAPE_TYPES = ("rectangle", "ellipse", "line", "arrow", "polygon", "speech", "thought", "banner")
 MIN_SHAPE_SIZE = 1.0
+# Points kept per eraser stroke read from a file (a mouse stroke has a few thousand).
+MAX_STROKE_POINTS = 100_000
 MAX_STROKE_WIDTH = 500.0
 
 
@@ -223,7 +225,7 @@ class Layer:
                 opacity = max(1, min(100, int(raw_stroke.get("opacity", 100))))
             except (TypeError, ValueError, OverflowError):
                 continue
-            points = [point for point in points if isfinite(point[0]) and isfinite(point[1])]
+            points = [point for point in points if isfinite(point[0]) and isfinite(point[1])][:MAX_STROKE_POINTS]
             if not points:
                 continue
             valid_strokes.append({
