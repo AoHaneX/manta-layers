@@ -3352,9 +3352,12 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return False
-        destination = Path(path)
+        chosen = Path(path)
+        destination = chosen
         if destination.suffix.lower() != ".manta":
             destination = destination.with_name(destination.name + ".manta")
+        if not self._confirm_completed_path(chosen, destination, "Sauvegarder le projet"):
+            return False
         # Le chemin du projet ne change qu'après un enregistrement réussi.
         if not self._write_project(destination):
             return False
@@ -3576,6 +3579,18 @@ class MainWindow(QMainWindow):
                      lambda: qimage_to_pil(item.pixmap().toImage()), "Calque enregistré",
                      "Enregistrement du calque impossible")
 
+    def _confirm_completed_path(self, chosen: Path, destination: Path, title: str) -> bool:
+        """Ask before replacing ``destination`` when an extension was added to the name chosen.
+
+        The file dialog only confirmed overwriting the name typed, not the completed one.
+        """
+        if destination == chosen or not destination.exists():
+            return True
+        answer = QMessageBox.question(
+            self, title, f"{destination.name} existe déjà. Le remplacer ?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        return answer == QMessageBox.StandardButton.Yes
+
     def _export(self, filename: str, title: str, render, done: str, failed: str) -> Path | None:
         """Ask where to save, then write the rendered image; the folder is remembered."""
         self._commit_pending_edits()
@@ -3586,13 +3601,8 @@ class MainWindow(QMainWindow):
         chosen = Path(path)
         self.remember_directory("export", chosen.parent)
         destination = export.with_image_suffix(chosen, chosen_filter)
-        # The file dialog only confirmed overwriting the name typed, not the completed one.
-        if destination != chosen and destination.exists():
-            answer = QMessageBox.question(
-                self, title, f"{destination.name} existe déjà. Le remplacer ?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
-            if answer != QMessageBox.StandardButton.Yes:
-                return None
+        if not self._confirm_completed_path(chosen, destination, title):
+            return None
         try:
             export.save_image(render(), destination)
         except Exception as exc:
