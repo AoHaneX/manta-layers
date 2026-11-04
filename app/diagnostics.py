@@ -9,6 +9,7 @@ from __future__ import annotations
 import faulthandler
 import logging
 import sys
+import threading
 import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -69,8 +70,11 @@ def report_exception(kind, value, tb, log_file: Path | None = None, show_dialog:
         from PySide6.QtWidgets import QApplication, QMessageBox
     except ImportError:
         return
-    if QApplication.instance() is None:
+    application = QApplication.instance()
+    if application is None:
         return
+    if threading.current_thread() is not threading.main_thread():
+        return  # widgets only live on the interface thread: the error is logged above
     _state["reporting"] = True  # a failure while the message is shown must not stack dialogs
     try:
         where = f"\n\nDétails enregistrés dans :\n{log_file}" if log_file else ""

@@ -8,6 +8,7 @@ unexpectedly and are offered to the user. Only QtCore is used (locks, thread).
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -15,6 +16,7 @@ from uuid import uuid4
 
 from PySide6.QtCore import QLockFile, QThread
 
+from .diagnostics import LOGGER_NAME
 from .model import Document
 from .storage import save_project
 
@@ -44,6 +46,12 @@ class RecoveryWriter(QThread):
             }), encoding="utf-8")
         except (OSError, ValueError) as exc:
             self.error = str(exc)
+            return
+        except Exception as exc:
+            # Never let an exception leave the thread: the error report would open a
+            # dialog outside the interface thread. The window reports it instead.
+            logging.getLogger(LOGGER_NAME).exception("Recovery copy failed")
+            self.error = f"erreur inattendue ({exc})"
             return
         self.succeeded = True
 
