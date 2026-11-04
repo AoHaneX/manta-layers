@@ -1108,7 +1108,7 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         copy_action = menu.addAction("Copier\tCtrl+C")
         cut_action = menu.addAction("Couper\tCtrl+X")
         paste_action = menu.addAction("Coller\tCtrl+V")
-        copy_action.setEnabled(is_image)
+        copy_action.setEnabled(is_image or self.selection_mask is not None)
         cut_action.setEnabled(editable_image)
         paste_action.setEnabled(not QApplication.clipboard().image().isNull())
         copy_action.triggered.connect(self.copy_layer)

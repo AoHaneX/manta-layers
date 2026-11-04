@@ -5,8 +5,8 @@ import pytest
 import shiboken6
 from conftest import png_bytes
 from PIL import Image
-from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, Qt
+from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox
 
 from app import selection
 from app.graphics import _eraser_dab, layers_bounds
@@ -187,3 +187,21 @@ def test_token_export_asks_before_replacing_the_completed_file(window, tmp_path,
     finally:
         dialog.deleteLater()
     assert asked and existing.read_bytes() == b"ancien"
+
+
+# --- P3-001 : "Copier" copies a selection on a text layer too --------------------------------
+
+def test_copy_is_offered_for_a_selection_on_a_text_layer(window, monkeypatch):
+    document = Document(100, 60)
+    text = document.add_text("Bonjour")
+    window.install_document(document, text.id)
+    window.set_selection(selection.full((100, 60)), "Tout")
+    shown = {}
+
+    class RecordingMenu(QMenu):
+        def exec(self, *_args):
+            shown.update({action.text().split("\t")[0]: action.isEnabled() for action in self.actions()})
+
+    monkeypatch.setattr("app.window.QMenu", RecordingMenu)
+    window.show_canvas_context_menu(QPoint(0, 0))
+    assert shown["Copier"]
