@@ -6,7 +6,7 @@ from copy import deepcopy
 from functools import lru_cache
 from hashlib import sha1
 from io import BytesIO
-from math import atan2, cos, degrees, floor, hypot, radians, sin
+from math import atan2, ceil, cos, degrees, floor, hypot, radians, sin
 from typing import TYPE_CHECKING
 
 from PIL import Image, ImageChops, ImageDraw
@@ -380,7 +380,32 @@ def _apply_color_fill(
     return result
 
 
-def _interpolated_points(points: list[list[float]], spacing: float):
+def _segment_span(x: float, y: float, dx: float, dy: float,
+                  bounds: tuple[float, float, float, float]) -> tuple[float, float] | None:
+    """Part [t0, t1] of the segment (x, y) + t·(dx, dy), 0 ≤ t ≤ 1, inside ``bounds`` (Liang–Barsky)."""
+    left, top, right, bottom = bounds
+    t0, t1 = 0.0, 1.0
+    for direction, distance in ((-dx, x - left), (dx, right - x), (-dy, y - top), (dy, bottom - y)):
+        if direction == 0:
+            if distance < 0:
+                return None
+            continue
+        t = distance / direction
+        if direction < 0:
+            t0 = max(t0, t)
+        else:
+            t1 = min(t1, t)
+    return (t0, t1) if t0 <= t1 else None
+
+
+def _interpolated_points(points: list[list[float]], spacing: float,
+                         bounds: tuple[float, float, float, float] | None = None):
+    """Dab positions along a stroke, every ``spacing`` pixels.
+
+    With ``bounds``, only the positions inside it are produced, without walking
+    the rest of the segments: a point far outside the image (a damaged or forged
+    project) costs nothing. The positions kept are exactly the same.
+    """
     if not points:
         return
     yield points[0][0], points[0][1]
@@ -388,7 +413,13 @@ def _interpolated_points(points: list[list[float]], spacing: float):
         dx, dy = end[0] - start[0], end[1] - start[1]
         distance = (dx * dx + dy * dy) ** 0.5
         steps = max(1, int(distance / max(0.25, spacing)) + 1)
-        for index in range(1, steps + 1):
+        first, last = 1, steps
+        if bounds is not None:
+            span = _segment_span(start[0], start[1], dx, dy, bounds)
+            if span is None:
+                continue
+            first, last = max(1, floor(span[0] * steps)), min(steps, ceil(span[1] * steps))
+        for index in range(first, last + 1):
             ratio = index / steps
             yield start[0] + dx * ratio, start[1] + dy * ratio
 
@@ -475,9 +506,11 @@ def stamp_eraser_stroke(coverage: Image.Image, stroke: dict,
     spacing = 0.5 if pixel_art else max(0.5, size * 0.2)
     width, height = coverage.size
     box: list[int] | None = None
+    # Dabs placed beyond this frame cannot reach the image.
+    frame = (-size - 1.0, -size - 1.0, width + size + 1.0, height + size + 1.0)
     # Les empreintes d'un même trait se combinent par maximum : l'opacité
     # choisie reste celle du trait, au lieu de s'additionner à chaque pas.
-    for x, y in _interpolated_points(points, spacing):
+    for x, y in _interpolated_points(points, spacing, frame):
         left, top = eraser_dab_origin(x, size, centered), eraser_dab_origin(y, size, centered)
         if left >= width or top >= height or left + size <= 0 or top + size <= 0:
             continue  # entirely outside the image
