@@ -726,6 +726,9 @@ def layer_pixmap(layer: Layer, document: Document) -> QPixmap:
     return pixmap
 
 
+# What rendering a layer whose image is damaged or too large raises: tools report
+# these to the user (UnidentifiedImageError is an OSError).
+RENDER_ERRORS = (ValueError, OSError, Image.DecompressionBombError)
 # Item data key set on the stand-in of an image layer whose pixels cannot be decoded.
 UNREADABLE_ROLE = 1
 
@@ -937,7 +940,9 @@ def layers_bounds(document: Document, layer_ids) -> tuple[float, float, float, f
     bounds = QRectF()
     for layer in document.layers:
         if layer.id in keep:
-            bounds = bounds.united(create_graphic(layer, document).sceneBoundingRect())
+            # Only the geometry matters: a damaged image counts with its declared size.
+            item = create_graphic(layer, document, lambda _layer: True)
+            bounds = bounds.united(item.sceneBoundingRect())
     if bounds.isNull():
         return None
     return bounds.left(), bounds.top(), bounds.right(), bounds.bottom()

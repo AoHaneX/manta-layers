@@ -9,7 +9,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 from PySide6.QtCore import QLineF, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .graphics import checker_brush, pil_to_qimage
+from .graphics import RENDER_ERRORS, checker_brush, pil_to_qimage
 from .imaging import SpriteGrid, extract_sprites, grid_shape, iter_cells
 from .model import IMPORT_FORMATS, MAX_DIMENSION, MAX_LAYERS, MAX_PIXELS
 from .paths import safe_file_stem
@@ -206,7 +206,7 @@ class SpriteSheetDialog(QDialog):
                     raise ValueError("Image trop grande (maximum 67 mégapixels)")
                 image.load()
                 self.set_sheet(image, Path(path).stem)
-        except (OSError, ValueError, UnidentifiedImageError) as exc:
+        except RENDER_ERRORS as exc:
             QMessageBox.warning(self, "Image illisible", str(exc))
 
     def use_selected_layer(self) -> None:
@@ -215,8 +215,11 @@ class SpriteSheetDialog(QDialog):
         if layer is None or layer.kind != "image":
             QMessageBox.information(self, "Découper une spritesheet", "Sélectionnez un calque image.")
             return
-        with Image.open(BytesIO(document.assets[layer.image_asset()]), formats=("PNG",)) as source:
-            self.set_sheet(source, layer.name)
+        try:
+            with Image.open(BytesIO(document.assets[layer.image_asset()]), formats=("PNG",)) as source:
+                self.set_sheet(source, layer.name)
+        except RENDER_ERRORS as exc:
+            QMessageBox.warning(self, "Image illisible", f"L'image du calque « {layer.name} » est illisible : {exc}")
 
     # --- Grid and cells ----------------------------------------------------------------------
 

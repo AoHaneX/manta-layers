@@ -19,6 +19,7 @@ from . import selection
 from .background_dialog import BackgroundRemovalDialog
 from .commands import SelectionCommand
 from .graphics import (
+    RENDER_ERRORS,
     crop_image_layer,
     document_mask_to_layer,
     pil_to_qimage,
@@ -133,13 +134,20 @@ class SelectionFlowsMixin(_WindowBase):
             self.statusBar().showMessage("Cliquez à l'intérieur du document", 3000)
             return
         if self.wand_all_layers.isChecked():
-            image = render_layers(self.document, None, with_background=True)
+            # Damaged images (shown hatched) are left out of the analysed picture.
+            readable = [layer.id for layer in self.document.layers if not self._is_unreadable(layer)]
+            image = self._render_or_report("Baguette magique", lambda: render_layers(
+                self.document, readable, with_background=True))
+            if len(readable) < len(self.document.layers):
+                self.statusBar().showMessage("Les calques à l'image endommagée sont ignorés", 4000)
         else:
             layer_id = self.tool_target_id()
             if layer_id is None:
                 self.statusBar().showMessage("Sélectionnez le calque à analyser", 3000)
                 return
-            image = render_layers(self.document, [layer_id])
+            image = self._render_or_report("Baguette magique", lambda: render_layers(self.document, [layer_id]))
+        if image is None:
+            return
         wand = selection.magic_wand(image, (x, y), self.wand_tolerance.value(),
                                     self.wand_contiguous.isChecked())
         mode = self._combine_mode(modifiers)
@@ -181,11 +189,18 @@ class SelectionFlowsMixin(_WindowBase):
             return None
         return layer
 
+    def _is_unreadable(self, layer) -> bool:
+        """True for a layer whose image was found damaged when the project was opened."""
+        known = self._unreadable_assets
+        return layer.asset in known or (layer.mask is not None and layer.mask in known)
+
     def selected_pixels(self, layer) -> tuple[Image.Image, tuple[int, int]] | None:
         """Visible pixels of a layer inside the selection, cropped, with their position."""
         if self.selection_mask is None:
             return None
-        rendered = render_layers(self.document, [layer.id])
+        rendered = self._render_or_report("Pixels sélectionnés", lambda: render_layers(self.document, [layer.id]))
+        if rendered is None:
+            return None
         cut = selection.apply_alpha(rendered, self.selection_mask)
         box = cut.getchannel("A").getbbox()
         if box is None:
@@ -326,8 +341,11 @@ class SelectionFlowsMixin(_WindowBase):
             self.statusBar().showMessage("Déverrouillez le calque pour le détourer", 3000)
             return
         # Source pixels with their non-destructive edits, but without the current mask.
-        image = render_layer_image(self.document.assets[layer.asset], layer.color_replacements,
-                                   layer.color_fills, layer.eraser_strokes, cache_key=layer.asset)
+        image = self._render_or_report("Supprimer l'arrière-plan", lambda: render_layer_image(
+            self.document.assets[layer.asset], layer.color_replacements,
+            layer.color_fills, layer.eraser_strokes, cache_key=layer.asset))
+        if image is None:
+            return
         dialog = BackgroundRemovalDialog(image, layer.name, bool(layer.mask), self.models_dir, self)
         try:
             accepted = dialog.exec() == QDialog.DialogCode.Accepted
@@ -377,7 +395,10 @@ class SelectionFlowsMixin(_WindowBase):
         if layer.locked:
             self.statusBar().showMessage("Déverrouillez le calque pour le rogner", 3000)
             return False
-        rendered = render_layer_with_mask(layer, self.document)
+        rendered = self._render_or_report("Rogner les marges transparentes",
+                                          lambda: render_layer_with_mask(layer, self.document))
+        if rendered is None:
+            return False
         box = alpha_bounds(rendered)
         if box is None:
             self.statusBar().showMessage("Le calque est entièrement transparent : rien à rogner", 3500)
@@ -387,7 +408,7 @@ class SelectionFlowsMixin(_WindowBase):
             return False
         try:
             trimmed, assets = crop_image_layer(layer, self.document, box)
-        except ValueError as exc:
+        except RENDER_ERRORS as exc:
             self._report_failure("Rogner les marges transparentes", exc)
             return False
 
@@ -399,7 +420,11 @@ class SelectionFlowsMixin(_WindowBase):
 
     def crop_document_to_content(self) -> bool:
         """Shrink the document to the visible pixels of its layers; the layers keep their look."""
-        box = alpha_bounds(render_layers(self.document))
+        rendered = self._render_or_report("Recadrer le document sur son contenu",
+                                          lambda: render_layers(self.document))
+        if rendered is None:
+            return False
+        box = alpha_bounds(rendered)
         if box is None:
             self.statusBar().showMessage("Le document ne contient aucun pixel visible", 3500)
             return False

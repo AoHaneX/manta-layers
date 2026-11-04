@@ -4,9 +4,11 @@ from zipfile import ZipFile
 import pytest
 import shiboken6
 from conftest import png_bytes
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
+from app import selection
+from app.graphics import layers_bounds
 from app.model import Document
 from app.storage import save_project
 
@@ -45,6 +47,7 @@ def test_the_previous_scene_is_deleted_only_once_events_are_processed(window):
 
 
 def test_a_click_that_commits_a_pending_curve_replaces_the_scene_safely(window):
+    from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
 
     document = Document(400, 300)
@@ -64,3 +67,64 @@ def test_a_click_that_commits_a_pending_curve_replaces_the_scene_safely(window):
     assert window.canvas_scene is not scene  # the curve was committed during the click
     assert window.document.layer(text.id).curve_intensity == 40
     assert window.selected_id == image.id
+
+
+# --- P2-001 : every tool reports a damaged image instead of raising -------------------------
+
+def test_trim_and_crop_report_a_damaged_image(damaged):
+    window, _intact, broken, reported = damaged
+    count = window.undo_stack.count()
+    assert not window.trim_layer_margins(broken.id)
+    assert not window.crop_document_to_content()
+    assert reported == ["Rogner les marges transparentes", "Recadrer le document sur son contenu"]
+    assert window.undo_stack.count() == count
+
+
+def test_selection_tools_report_a_damaged_image(damaged):
+    window, _intact, broken, reported = damaged
+    window.set_selection(selection.full((40, 30)), "Tout")
+    count = window.undo_stack.count()
+    assert not window.copy_selection()
+    assert not window.selection_to_new_layer(cut=True)
+    window.wand_all_layers.setChecked(False)
+    window.apply_magic_wand(QPointF(1, 1), Qt.KeyboardModifier.NoModifier)
+    assert window.undo_stack.count() == count
+    assert reported and set(reported) <= {"Pixels sélectionnés", "Baguette magique"}
+
+
+def test_the_all_layers_wand_ignores_damaged_images(damaged):
+    window, intact, _broken, reported = damaged
+    window.wand_all_layers.setChecked(True)
+    window.apply_magic_wand(QPointF(intact.x + 2, intact.y + 2), Qt.KeyboardModifier.NoModifier)
+    assert not reported
+    assert window.selection_mask is not None and window.selection_mask.getbbox() is not None
+
+
+def test_background_removal_and_merge_report_a_damaged_image(damaged):
+    window, intact, broken, reported = damaged
+    window.remove_background()
+    window.set_checked_layers([intact.id, broken.id])
+    assert not window.merge_checked_layers()
+    assert reported == ["Supprimer l'arrière-plan", "Fusionner les calques"]
+
+
+def test_bounds_of_a_damaged_layer_use_its_declared_size(damaged):
+    window, _intact, broken, _reported = damaged
+    assert layers_bounds(window.document, [broken.id]) is not None
+
+
+def test_dialogs_report_a_damaged_layer(damaged, monkeypatch):
+    from app.sprite_dialog import SpriteSheetDialog
+    from app.token_dialog import TokenDialog
+
+    window, _intact, _broken, _reported = damaged
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **_k: warnings.append(args[1]))
+    sprites, token = SpriteSheetDialog(window), TokenDialog(window)
+    try:
+        sprites.use_selected_layer()
+        token.use_selected_layer()
+    finally:
+        sprites.deleteLater()
+        token.deleteLater()
+    assert warnings == ["Image illisible", "Créateur de tokens"]
