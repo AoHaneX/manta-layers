@@ -38,7 +38,7 @@ from .graphics import forget_font_families, qimage_png, resolve_font_family
 from .icons import sidebar_arrow_icon
 from .layer_flows import LayerFlowsMixin
 from .layer_panel import FOLDER_ROLE, build_folder_row, build_layer_row
-from .model import Document
+from .model import MAX_LAYERS, Document
 from .paths import user_data_directory
 from .screen_picker import ScreenColorPicker
 from .selection_flows import SelectionFlowsMixin, clipboard_fingerprint
@@ -494,6 +494,10 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
             fn(after)
             if callable(select_after):
                 select_after = select_after()
+            if len(after.layers) > MAX_LAYERS and len(after.layers) > len(before.layers):
+                # Beyond it the project could no longer be saved nor copied for recovery.
+                raise ValueError(f"le projet compterait {len(after.layers)} calques, "
+                                 f"pour un maximum de {MAX_LAYERS}")
             # Safety net: whatever the change, folders stay contiguous and never empty,
             # and images or masks no layer uses any more are not carried along.
             after.normalize_folders()
@@ -1179,6 +1183,14 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
 
     def add_sprite_layers(self, sprites, sheet_name: str) -> bool:
         """Add extracted sprites as image layers grouped in a folder, laid out in their grid order."""
+        room = MAX_LAYERS - len(self.document.layers)
+        if len(sprites) > room:
+            QMessageBox.warning(
+                self, "Trop de sprites",
+                f"{len(sprites)} sprites ne tiennent pas dans le projet : il peut encore recevoir "
+                f"{max(0, room)} calque(s), pour un maximum de {MAX_LAYERS}.\n\n"
+                + "Agrandissez les cellules, décochez des sprites ou exportez-les en PNG.")
+            return False
         images = []
         for row, column, image in sprites:
             output = BytesIO()

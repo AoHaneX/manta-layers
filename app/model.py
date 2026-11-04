@@ -41,6 +41,9 @@ LAYER_KINDS = ("image", "text", "shape")
 # Speech and thought bubbles and banners are used by the bundled templates.
 SHAPE_TYPES = ("rectangle", "ellipse", "line", "arrow", "polygon", "speech", "thought", "banner")
 MIN_SHAPE_SIZE = 1.0
+# Most layers a project can hold. Every edit stays below it, so that any document
+# can be saved and reopened (a 512 × 512 spritesheet cut in 8 px cells gives 4096).
+MAX_LAYERS = 10_000
 # Points kept per eraser stroke read from a file (a mouse stroke has a few thousand).
 MAX_STROKE_POINTS = 100_000
 MAX_STROKE_WIDTH = 500.0

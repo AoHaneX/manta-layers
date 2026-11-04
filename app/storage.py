@@ -7,7 +7,7 @@ import zlib
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZIP_STORED, BadZipFile, ZipFile
 
-from .model import MAX_ASSET_BYTES, Document
+from .model import MAX_ASSET_BYTES, MAX_LAYERS, Document
 
 
 def save_project(
@@ -20,6 +20,11 @@ def save_project(
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp = destination.with_name(destination.name + ".tmp")
     used = document.used_assets()
+    # The limits of open_project are checked before writing: a project that could
+    # not be reopened is refused with its reason, and the previous file is kept.
+    if len(document.layers) > MAX_LAYERS:
+        raise ValueError(f"Le projet contient {len(document.layers)} calques : "
+                         f"un projet en compte au plus {MAX_LAYERS}")
     try:
         with open(tmp, "wb") as handle:
             with ZipFile(handle, "w", ZIP_DEFLATED) as z:
@@ -71,7 +76,7 @@ def open_project(path: str | Path) -> Document:
             layers = manifest.get("layers")
             if not isinstance(layers, list):
                 raise ValueError("Liste de calques invalide")
-            if len(layers) > 1000:
+            if len(layers) > MAX_LAYERS:
                 raise ValueError("Projet avec trop de calques")
             assets = {}
             for layer in layers:

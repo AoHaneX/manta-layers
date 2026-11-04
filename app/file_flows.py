@@ -372,11 +372,25 @@ class DocumentFlowsMixin(_WindowBase):
 
     def _setup_recovery(self):
         self.recovery = SessionRecovery(self.recovery_dir, self)
+        self.recovery.on_failure = self._recovery_failed
+        self._recovery_warned = False
         self.autosave_timer = QTimer(self)
         self.autosave_timer.setInterval(RECOVERY_INTERVAL_MS)
         self.autosave_timer.timeout.connect(lambda: self.autosave_now(background=True))
         self.autosave_timer.start()
         QTimer.singleShot(0, self.offer_session_recovery)
+
+    def _recovery_failed(self, reason: str) -> None:
+        """A recovery copy could not be written: warn once in the session, then in the status bar."""
+        self.statusBar().showMessage(f"Copie de récupération impossible : {reason}", 15000)
+        if self._recovery_warned:
+            return
+        self._recovery_warned = True
+        QMessageBox.warning(
+            self, "Copie de récupération impossible",
+            f"La copie de sécurité de votre travail n'a pas pu être écrite :\n{reason}\n\n"
+            "En cas de fermeture imprévue, les modifications non enregistrées seraient perdues. "
+            "Enregistrez le projet régulièrement.")
 
     def autosave_now(self, background: bool = False) -> bool:
         """Write the recovery copy if the document has unsaved changes; True when written (or started)."""
