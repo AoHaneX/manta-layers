@@ -5,7 +5,7 @@ import pytest
 from PIL import Image
 from PySide6.QtWidgets import QMessageBox
 
-from app import recovery
+from app import recovery, storage
 from app.model import MAX_LAYERS, Document, Layer
 from app.storage import open_project, save_project
 
@@ -52,6 +52,14 @@ def test_sprites_that_do_not_fit_are_refused_with_a_message(window, monkeypatch)
         assert not window.add_sprite_layers(sprites, "Planche")
     assert warnings and "3 sprites" in warnings[0]
     assert len(window.document.layers) == 3
+
+
+def test_an_oversized_manifest_is_refused_before_writing(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "MAX_MANIFEST_BYTES", 2000)
+    path = tmp_path / "projet.manta"
+    with pytest.raises(ValueError, match="Mo"):
+        save_project(_text_document(40), path)
+    assert not path.exists() and not (tmp_path / "projet.manta.tmp").exists()
 
 
 def test_a_copy_that_cannot_be_written_is_reported(window, monkeypatch):

@@ -25,13 +25,19 @@ def save_project(
     if len(document.layers) > MAX_LAYERS:
         raise ValueError(f"Le projet contient {len(document.layers)} calques : "
                          f"un projet en compte au plus {MAX_LAYERS}")
+    manifest = document.manifest()
+    if metadata:
+        manifest["template"] = metadata
+    manifest_data = json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8")
+    if len(manifest_data) > MAX_MANIFEST_BYTES:
+        raise ValueError(
+            f"Les réglages du projet (calques, traits de gomme, remplissages) occupent "
+            f"{len(manifest_data) / 1_048_576:.0f} Mo : un projet en enregistre au plus "
+            f"{MAX_MANIFEST_BYTES // 1_048_576} Mo. Fusionnez des calques ou rognez-en les retouches.")
     try:
         with open(tmp, "wb") as handle:
             with ZipFile(handle, "w", ZIP_DEFLATED) as z:
-                manifest = document.manifest()
-                if metadata:
-                    manifest["template"] = metadata
-                z.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False))
+                z.writestr("manifest.json", manifest_data)
                 # PNG data is already compressed: deflating it again only costs time
                 # (2.3 s instead of 0.05 s for 100 MB of images).
                 for asset_id in sorted(used):
@@ -51,7 +57,9 @@ def save_project(
         tmp.unlink(missing_ok=True)
 
 
-MAX_MANIFEST_BYTES = 16 * 1024 * 1024
+# Settings of every layer (strokes and fills included). Checked when writing
+# (save_project) and when reading (read_manifest).
+MAX_MANIFEST_BYTES = 64 * 1024 * 1024
 # Manta Layers only writes these. Other methods (LZMA, BZIP2) raise their own
 # exceptions on damaged data: they are refused instead of being decoded.
 READABLE_COMPRESSIONS = (ZIP_STORED, ZIP_DEFLATED)
