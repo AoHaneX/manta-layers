@@ -711,10 +711,44 @@ def layer_pixmap(layer: Layer, document: Document) -> QPixmap:
     return pixmap
 
 
-def create_graphic(layer: Layer, document: Document) -> QGraphicsItem:
+# Item data key set on the stand-in of an image layer whose pixels cannot be decoded.
+UNREADABLE_ROLE = 1
+
+
+def unreadable_layer_pixmap(layer: Layer, document: Document) -> QPixmap:
+    """Hatched stand-in for an image layer whose pixels cannot be decoded, at its declared size."""
+    width = height = 64
+    try:
+        with Image.open(BytesIO(document.assets[layer.image_asset()]), formats=ASSET_FORMATS) as source:
+            if 0 < source.width * source.height <= MAX_PIXELS:
+                width, height = source.size  # the header is often still readable
+    except Exception:
+        pass
+    pixmap = QPixmap(width, height)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    color = QColor(COLORS["danger"])
+    painter.fillRect(pixmap.rect(), QBrush(color, Qt.BrushStyle.BDiagPattern))
+    painter.setPen(QPen(color, 2))
+    painter.drawRect(pixmap.rect().adjusted(1, 1, -1, -1))
+    painter.end()
+    return pixmap
+
+
+def create_graphic(layer: Layer, document: Document, tolerate_unreadable=None) -> QGraphicsItem:
+    """Scene item of a layer. An unreadable image raises, unless ``tolerate_unreadable(layer)``
+    is true: it is then shown hatched (see unreadable_layer_pixmap)."""
     item: QGraphicsItem
     if layer.kind == "image":
-        pixmap_item = QGraphicsPixmapItem(layer_pixmap(layer, document))
+        unreadable = False
+        try:
+            pixmap = layer_pixmap(layer, document)
+        except ValueError:
+            if tolerate_unreadable is None or not tolerate_unreadable(layer):
+                raise
+            pixmap, unreadable = unreadable_layer_pixmap(layer, document), True
+        pixmap_item = QGraphicsPixmapItem(pixmap)
+        pixmap_item.setData(UNREADABLE_ROLE, unreadable)
         pixmap_item.setTransformationMode(Qt.TransformationMode.FastTransformation)
         item = pixmap_item
     elif layer.kind == "shape":
@@ -733,11 +767,16 @@ def create_graphic(layer: Layer, document: Document) -> QGraphicsItem:
     return item
 
 
-def make_scene(document: Document, interactive: bool) -> QGraphicsScene:
+def make_scene(document: Document, interactive: bool, tolerate_unreadable=None) -> QGraphicsScene:
+    """Scene of the document; ``tolerate_unreadable`` as in create_graphic.
+
+    The canvas tolerates the images that were already damaged in an opened
+    project, so that the rest stays editable; renders for output refuse them.
+    """
     scene = QGraphicsScene()
     scene.setSceneRect(0, 0, document.width, document.height)
     for z, layer in enumerate(document.layers):
-        item = create_graphic(layer, document)
+        item = create_graphic(layer, document, tolerate_unreadable)
         item.setZValue(z)
         if interactive:
             item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, not layer.locked)
