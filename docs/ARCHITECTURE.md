@@ -6,7 +6,7 @@ Note pour les développeurs. L'usage est décrit dans le [README](../README.md).
 
 - **Modèle séparé du rendu.** Les modules sans Qt (`model.py`, `textpath.py`, `selection.py`, `background.py`) contiennent les données et les calculs. Ils se testent sans interface. `graphics.py` et `window.py` les traduisent en objets Qt.
 - **Rien n'est rasterisé définitivement.** Les images sources ne sont jamais réécrites. Remplissages, traits de gomme, masques de calque et formes de texte restent des réglages, rejoués au rendu.
-- **Toute modification passe par `QUndoStack`.** `DocumentCommand` mémorise un instantané du document avant et après. `SelectionCommand` mémorise les masques de sélection compressés en PNG.
+- **Toute modification passe par `QUndoStack`.** `DocumentCommand` (`commands.py`) mémorise un instantané du document avant et après ; les calques, traits et remplissages inchangés sont partagés avec l'instantané précédent (`MainWindow._push`), si bien que l'historique grandit avec les changements et non avec la taille du document. Les instantanés ne sont jamais modifiés : le canvas affiche une copie. `SelectionCommand` mémorise les masques de sélection compressés en PNG.
 
 ## Modules
 
@@ -28,9 +28,15 @@ Note pour les développeurs. L'usage est décrit dans le [README](../README.md).
 | `shape_item.py`, `shape_panel.py` | Géométrie et rendu des formes vectorielles, leurs propriétés | oui |
 | `screen_picker.py` | Pipette sur tout le bureau (captures temporaires par écran) | oui |
 | `template_library.py`, `token_dialog.py`, `sprite_dialog.py` | Bibliothèque de modèles, créateur de tokens, découpe de spritesheets | oui |
-| `graphics.py` | Canvas, item de texte vectoriel, rendu et cache des calques, ponts Pillow ↔ Qt | oui |
+| `graphics.py` | Item de texte vectoriel, rendu et cache des calques, gomme, exports, ponts Pillow ↔ Qt | oui |
+| `canvas.py` | `CanvasView` : vue de la scène, outils souris et clavier, aperçus en direct | oui |
 | `background_dialog.py` | Aperçu du détourage, calcul en arrière-plan (`QThread`) | oui |
-| `window.py` | Fenêtre, outils, propriétés, historique, presse-papiers ; propose les copies de récupération | oui |
+| `window.py` | `MainWindow` : état, installation du document, propriétés, historique (`mutate`, `_push`), calques simples, fermeture | oui |
+| `commands.py` | `DocumentCommand`, `SelectionCommand` : étapes de l'historique | oui |
+| `file_flows.py` | Mixin : nouveau, ouvrir, enregistrer, exporter, dossiers mémorisés, copies de récupération | oui |
+| `layer_flows.py`, `text_flows.py` | Mixins : panneau des calques (cases, dossiers, fusion, glisser-déposer) ; texte (formes, couleurs, saisie sur le canvas) | oui |
+| `selection_flows.py`, `color_tools.py` | Mixins : sélections, presse-papiers, masques, détourage, recadrage ; gomme, pipette, pot, couleurs | oui |
+| `window_panels.py` | Mixin : construction des panneaux, onglets d'outils, propriétés et menus | oui |
 | `dialogs.py`, `widgets.py`, `icons.py`, `theme.py` | Boîtes de dialogue, petits widgets, pictogrammes, charte ReefKit | oui |
 
 ## Dossiers, sélection multiple et fusion
@@ -81,12 +87,16 @@ Un calque texte reste du texte : `text`, police, taille, couleur, et une traject
 - Les flèches du clavier déplacent le calque (Maj : 10 px) ; les pressions rapprochées sont fusionnées par `mergeWith`.
 - Le format de projet est en **version 3** si le projet contient des dossiers ou des formes, sinon en **version 2**. Les versions 1 (dont les anciens `.mcrab`) sont converties à l'ouverture ; une version plus récente est refusée avec un message clair. Les images sont rangées sans recompression (`ZIP_STORED`) ; seules les méthodes STORED et DEFLATE sont lues.
 - Après chaque modification, les images et masques qu'aucun calque n'utilise sont retirés du document (`Document.prune_assets`) ; les instantanés de l'historique gardent les leurs.
+- Une modification dont la scène ne peut pas être construite (image illisible, mémoire) est annoncée et n'entre pas dans l'historique : la scène est construite avant l'empilement, si bien que l'état enregistré et les étapes à rétablir sont conservés. Si une annulation échoue, la pile revient sur l'état affiché.
+- Une image déjà endommagée dans un projet ouvert est affichée hachurée, avec un avertissement : le reste du projet reste modifiable, mais l'export la refuse.
+- Les saisies en cours (nom, texte, valeurs numériques, texte tapé sur le canvas) sont validées avant la fermeture, l'enregistrement et l'export (`MainWindow._commit_pending_edits`).
+- Gomme : l'aperçu en direct utilise le même calcul que le rendu final (`stamp_eraser_stroke`), dans les pixels source, et ne recalcule que la zone touchée ; sur un calque retourné, les pixels couverts sont miroités (`eraser_source_position`).
 - Rendu des calques image : `PIXMAP_CACHE` garde les calques affichés ; `RENDER_CACHE` garde les rendus retouchés avant masque, indexés par l'asset et la suite des remplacements, traits et remplissages rejoués (un calque sans retouche n'y entre pas). Un nouveau trait ou remplissage repart du plus long préfixe déjà rendu : il ne coûte que lui-même, et son annulation est immédiate.
 - La sauvegarde écrit un fichier temporaire, le force sur le disque (`fsync`), le relit (`open_project`), puis remplace l'ancien fichier.
 - **Récupération de session :**
   - toutes les 60 s, si le document a des modifications non enregistrées, une copie est écrite dans `%LOCALAPPDATA%\MantaLayers\recovery`, protégée par un `QLockFile` ; elle est écrite par un thread (`RecoveryWriter`) à partir d'un instantané du document, sans bloquer l'interface ; un enregistrement ou une fermeture attend la fin d'une copie en cours avant de la supprimer ;
   - au démarrage, les copies dont le verrou est libre (session terminée de façon imprévue) sont proposées une à une, de la plus récente à la plus ancienne : restaurer, supprimer ou plus tard ; une copie n'est jamais supprimée sans avoir été montrée, et celles qui restent sont reproposées au démarrage suivant ;
-  - une fermeture normale ou un enregistrement les supprime.
+  - une fermeture normale, un enregistrement, l'ouverture d'un autre document ou le retour à l'état enregistré les suppriment.
 
 ## Tests
 

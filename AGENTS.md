@@ -3,7 +3,8 @@
 - Projet **Manta Layers**, éditeur d'images local, Python + PySide6 + Pillow, interface ReefKit.
 - Point d'entrée `main.py`. Sur Windows, lanceur `lancer_manta_layers.bat`.
 - Modèle sans dépendance Qt dans `app/model.py`. Sérialisation `.manta` dans `app/storage.py`.
-- Canvas, rendu des calques (avec cache) et export dans `app/graphics.py`. Fenêtre et actions dans `app/window.py` ; pictogrammes dans `app/icons.py`, widgets dans `app/widgets.py`, boîtes de dialogue dans `app/dialogs.py`.
+- Rendu des calques (avec cache) et export dans `app/graphics.py` ; canvas interactif dans `app/canvas.py`. Fenêtre dans `app/window.py`, découpée en mixins : `file_flows.py` (fichiers, récupération), `layer_flows.py`, `text_flows.py`, `selection_flows.py`, `color_tools.py`, `window_panels.py` (construction de l'interface) ; étapes d'historique dans `app/commands.py`. Pictogrammes dans `app/icons.py`, widgets dans `app/widgets.py`, boîtes de dialogue dans `app/dialogs.py`.
+- Les instantanés de l'historique ne sont jamais modifiés après leur création (ils partagent leurs calques inchangés) : modifier une copie (`mutate`), jamais `command.before` / `command.after`.
 - Couleurs uniquement via les jetons `COLORS` de `app/theme.py`. Données utilisateur (modèles, polices importées) sous `app/paths.user_data_directory()`, jamais dans le dossier de l'application.
 - Toute modification persistante du document doit passer par `QUndoCommand` / `QUndoStack` ; ne pas modifier le modèle directement depuis les widgets sans transaction.
 - Préserver **exactement** le dessin de la mascotte `assets/manta.png`. Ne pas le régénérer ni le déformer : icônes dérivées autorisées par redimensionnement nearest-neighbor.
