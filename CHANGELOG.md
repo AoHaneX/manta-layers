@@ -2,6 +2,15 @@
 
 ## Non publié
 
+### Corrections (outils)
+- Valider une courbure en attente en cliquant sur un autre calque ne détruit plus la scène pendant qu'elle traite ce clic.
+- Les outils appliqués à un calque dont l'image est endommagée (baguette, copie de la sélection, détourage, rognage, recadrage, fusion, tokens, spritesheets) affichent un message ciblé au lieu de l'erreur inattendue ; la baguette « tous les calques » ignore ces calques.
+- Passer une forme fermée en ligne ou en flèche lui donne un contour visible.
+- La gomme ronde de 1 ou 2 px efface ses pixels (les traits de ce type déjà enregistrés effacent désormais aussi).
+- L'export d'un token demande avant de remplacer le fichier dont l'extension a été complétée.
+- « Copier » est proposé dans le menu du canvas dès qu'une sélection existe, même sur un calque texte.
+- La découpe de spritesheets refuse l'ajout en calques avant d'extraire des sprites qui ne tiendraient pas dans le projet.
+
 ### Corrections (robustesse des données)
 - Un projet peut compter jusqu'à 10 000 calques, à l'enregistrement comme à la relecture : une planche découpée en plus de 1 000 sprites s'enregistre et se copie pour la récupération. Au-delà, l'ajout est refusé avec un message, et un projet trop volumineux est refusé avant l'écriture, avec sa raison.
 - Copier ou exporter un calque dont l'image est endommagée est refusé, au lieu de produire son hachurage de remplacement ; un calque copié garde ses couleurs exactes.
