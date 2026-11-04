@@ -10,7 +10,7 @@ from math import atan2, ceil, cos, degrees, floor, hypot, radians, sin
 from typing import TYPE_CHECKING, cast
 
 from PIL import Image, ImageChops, ImageDraw
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRect, QRectF, QSize, Qt, QTextBoundaryFinder
 from PySide6.QtGui import (
     QBitmap,
     QBrush,
@@ -71,6 +71,23 @@ def resolve_font_family(name: str) -> str:
     return _installed_families().get(name.casefold(), QFont().defaultFamily())
 
 
+def grapheme_clusters(text: str) -> list[str]:
+    """User-perceived characters of ``text``: a letter and its accents, a whole emoji.
+
+    Laying text out code point by code point would split "e" + U+0301 or an
+    emoji sequence into separately placed pieces.
+    """
+    finder = QTextBoundaryFinder(QTextBoundaryFinder.BoundaryType.Grapheme, text)
+    # Qt counts UTF-16 code units; Python strings count code points.
+    units = text.encode("utf-16-le")
+    clusters, start = [], 0
+    while (end := finder.toNextBoundary()) != -1:
+        if end > start:
+            clusters.append(units[start * 2:end * 2].decode("utf-16-le"))
+        start = end
+    return clusters
+
+
 class CurvedTextGraphicItem(QGraphicsItem):
     """Vector text laid out glyph by glyph along a path; it is never rasterised.
 
@@ -107,7 +124,8 @@ class CurvedTextGraphicItem(QGraphicsItem):
     def _rebuild_geometry(self):
         self.prepareGeometryChange()
         metrics = QFontMetricsF(self.font)
-        line_advances = [[metrics.horizontalAdvance(char) for char in line] for line in self.lines]
+        line_clusters = [grapheme_clusters(line) for line in self.lines]
+        line_advances = [[metrics.horizontalAdvance(char) for char in clusters] for clusters in line_clusters]
         positive_advances = [advance for advances in line_advances for advance in advances if advance > 0]
         minimum_advance = min(positive_advances, default=1.0)
         # Negative spacing may tighten letters but never moves the cursor
@@ -135,7 +153,7 @@ class CurvedTextGraphicItem(QGraphicsItem):
                               self.path_width, self.arc_amplitude, samples)
         self.placements = []
         content = None
-        for index, (line, advances, width) in enumerate(zip(self.lines, line_advances, widths)):
+        for index, (clusters, advances, width) in enumerate(zip(line_clusters, line_advances, widths)):
             baseline = self.baseline + index * line_height
             path = QPainterPath(QPointF(self.path_start_x + offsets[0][0], baseline + offsets[0][1]))
             for x, dy in offsets[1:]:
@@ -146,7 +164,7 @@ class CurvedTextGraphicItem(QGraphicsItem):
             spare = max(0.0, length - width)
             offset = 0.0 if self.alignment == "left" else spare if self.alignment == "right" else spare / 2
             cursor = offset
-            for char, advance in zip(line, advances):
+            for char, advance in zip(clusters, advances):
                 center = cursor + advance / 2
                 percent = path.percentAtLength(max(0.0, min(length, center)))
                 point = path.pointAtPercent(percent)
