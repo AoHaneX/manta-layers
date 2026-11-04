@@ -2,6 +2,13 @@
 
 ## Non publié
 
+### Corrections (robustesse des données)
+- Un projet peut compter jusqu'à 10 000 calques, à l'enregistrement comme à la relecture : une planche découpée en plus de 1 000 sprites s'enregistre et se copie pour la récupération. Au-delà, l'ajout est refusé avec un message, et un projet trop volumineux est refusé avant l'écriture, avec sa raison.
+- Copier ou exporter un calque dont l'image est endommagée est refusé, au lieu de produire son hachurage de remplacement ; un calque copié garde ses couleurs exactes.
+- Après une restauration, la copie de récupération est réécrite aussitôt : une seconde panne ne fait plus perdre le travail restauré.
+- Une copie de récupération impossible à écrire est signalée (une fois par session, puis dans la barre d'état) ; une erreur inattendue reste dans le thread de récupération et n'ouvre plus de boîte de dialogue hors de l'interface.
+- La taille des réglages du projet (64 Mo au plus) est vérifiée avant l'écriture.
+
 ### Corrections (audit V3)
 - Fermer la fenêtre, enregistrer ou exporter valide d'abord ce qui est en cours de saisie (nom, texte, valeurs, texte sur le canvas) : la dernière saisie n'est plus perdue.
 - La gomme efface exactement ce que montre son aperçu, y compris la gomme douce et sur un calque retourné ; l'aperçu ne recalcule plus que la zone touchée.

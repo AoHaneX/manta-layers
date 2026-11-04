@@ -96,7 +96,10 @@ Un calque texte reste du texte : `text`, police, taille, couleur, et une traject
 - **Récupération de session :**
   - toutes les 60 s, si le document a des modifications non enregistrées, une copie est écrite dans `%LOCALAPPDATA%\MantaLayers\recovery`, protégée par un `QLockFile` ; elle est écrite par un thread (`RecoveryWriter`) à partir d'un instantané du document, sans bloquer l'interface ; un enregistrement ou une fermeture attend la fin d'une copie en cours avant de la supprimer ;
   - au démarrage, les copies dont le verrou est libre (session terminée de façon imprévue) sont proposées une à une, de la plus récente à la plus ancienne : restaurer, supprimer ou plus tard ; une copie n'est jamais supprimée sans avoir été montrée, et celles qui restent sont reproposées au démarrage suivant ;
-  - une fermeture normale, un enregistrement, l'ouverture d'un autre document ou le retour à l'état enregistré les suppriment.
+  - une fermeture normale, un enregistrement, l'ouverture d'un autre document ou le retour à l'état enregistré les suppriment ;
+  - une copie restaurée est remplacée aussitôt par la copie de la session, avant d'être supprimée ;
+  - une copie impossible à écrire est signalée par `SessionRecovery.on_failure`, sur le thread de l'interface.
+- Limites d'un projet, identiques à l'écriture et à la relecture : 10 000 calques (`MAX_LAYERS`, aussi refusé à l'édition par `mutate`) et 64 Mo de manifeste (`MAX_MANIFEST_BYTES`), vérifiés par `save_project` avant d'écrire.
 
 ## Tests
 
