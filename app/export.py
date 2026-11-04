@@ -28,7 +28,8 @@ def save_image(image: Image.Image, path: Path) -> None:
     image_format = FORMATS.get(path.suffix.lower())
     if image_format is None:
         raise ValueError(f"Format d'image non pris en charge : {path.suffix or 'sans extension'}")
-    image = image.convert("RGBA")
+    if image.mode != "RGBA":
+        image = image.convert("RGBA")  # convert() always copies: only when needed
     if image_format == "JPEG":
         flat = Image.new("RGB", image.size, (255, 255, 255))
         flat.paste(image, mask=image.getchannel("A"))

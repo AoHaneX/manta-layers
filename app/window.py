@@ -1493,8 +1493,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _template_thumbnail(document: Document) -> bytes:
-        return qimage_png(render_document(document).scaled(
-            320, 180, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        return qimage_png(render_document(document, QSize(320, 180)))
 
     def show_layer_context_menu(self, row: QListWidgetItem | None, global_position):
         self.layer_context_menu(row).exec(global_position)

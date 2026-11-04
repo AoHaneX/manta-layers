@@ -10,7 +10,7 @@ from math import atan2, ceil, cos, degrees, floor, hypot, radians, sin
 from typing import TYPE_CHECKING, cast
 
 from PIL import Image, ImageChops, ImageDraw
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRect, QRectF, Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import (
     QBitmap,
     QBrush,
@@ -746,16 +746,24 @@ def make_scene(document: Document, interactive: bool) -> QGraphicsScene:
     return scene
 
 
-def render_document(document: Document) -> QImage:
-    """Rendu à la taille exacte du document, sans sélection ni poignées."""
-    image = QImage(document.width, document.height, QImage.Format.Format_ARGB32)
+def render_document(document: Document, fit: QSize | None = None) -> QImage:
+    """Rendu à la taille exacte du document, sans sélection ni poignées.
+
+    With ``fit``, the document is drawn directly at the largest size that fits
+    in it, keeping its proportions (thumbnails): no full-size image is made.
+    The image is RGBA8888, the layout Pillow reads without converting it.
+    """
+    width, height = document.width, document.height
+    if fit is not None:
+        scale = min(fit.width() / width, fit.height() / height)
+        width, height = max(1, round(width * scale)), max(1, round(height * scale))
+    image = QImage(width, height, QImage.Format.Format_RGBA8888)
     image.fill(QColor(document.background) if document.background else Qt.GlobalColor.transparent)
     scene = make_scene(document, interactive=False)
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-    scene.render(painter, QRectF(0, 0, document.width, document.height),
-                 QRectF(0, 0, document.width, document.height))
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, fit is not None)
+    scene.render(painter, QRectF(0, 0, width, height), QRectF(0, 0, document.width, document.height))
     painter.end()
     return image
 
@@ -767,7 +775,7 @@ def qimage_png(image: QImage) -> bytes:
     if not image.save(buf, "PNG"):  # type: ignore[call-overload]  # QIODevice overload missing from the stubs
         raise ValueError("Échec de l'encodage PNG")
     buf.close()
-    return data.data()
+    return bytes(data.data())
 
 
 # --- Bridges between Pillow masks and Qt -------------------------------------------
@@ -778,18 +786,21 @@ def mask_to_qimage(mask: Image.Image) -> QImage:
                   QImage.Format.Format_Alpha8).copy()
 
 
+def _qimage_as_pil(image: QImage, qt_format: QImage.Format, mode: str) -> Image.Image:
+    """One copy only: Pillow reads the Qt buffer in place, then keeps its own copy."""
+    if image.format() != qt_format:
+        image = image.convertToFormat(qt_format)
+    view = Image.frombuffer(mode, (image.width(), image.height()), image.constBits(),
+                            "raw", mode, image.bytesPerLine(), 1)
+    return view.copy()  # the view must not outlive the QImage
+
+
 def qimage_to_mask(image: QImage) -> Image.Image:
-    image = image.convertToFormat(QImage.Format.Format_Alpha8)
-    stride = image.bytesPerLine()
-    data = bytes(image.constBits())[:stride * image.height()]
-    return Image.frombytes("L", (image.width(), image.height()), data, "raw", "L", stride)
+    return _qimage_as_pil(image, QImage.Format.Format_Alpha8, "L")
 
 
 def qimage_to_pil(image: QImage) -> Image.Image:
-    image = image.convertToFormat(QImage.Format.Format_RGBA8888)
-    stride = image.bytesPerLine()
-    data = bytes(image.constBits())[:stride * image.height()]
-    return Image.frombytes("RGBA", (image.width(), image.height()), data, "raw", "RGBA", stride)
+    return _qimage_as_pil(image, QImage.Format.Format_RGBA8888, "RGBA")
 
 
 def layer_transform(layer: Layer) -> QTransform:

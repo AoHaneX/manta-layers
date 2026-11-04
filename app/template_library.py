@@ -35,8 +35,7 @@ ENTRY_ROLE = Qt.ItemDataRole.UserRole
 
 
 def builtin_thumbnail(document: Document) -> bytes:
-    return qimage_png(render_document(document).scaled(
-        320, 180, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+    return qimage_png(render_document(document, QSize(320, 180)))
 
 
 class TemplateLibraryDialog(QDialog):
