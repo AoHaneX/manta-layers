@@ -413,11 +413,14 @@ def test_huge_grids_only_draw_lines_and_ask_before_output(window, monkeypatch):
         questions.append(args)
         return QMessageBox.StandardButton.No
 
+    warnings = []
     monkeypatch.setattr(QMessageBox, "question", refuse)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: warnings.append(args))
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: pytest.fail("no folder asked"))
     layers = len(window.document.layers)
     assert dialog.export() == [] and not dialog.add_as_layers()
-    assert len(questions) == 2 and len(window.document.layers) == layers
+    # Exporting asks first; as layers, that many sprites cannot fit in a project: refused at once.
+    assert len(questions) == 1 and len(warnings) == 1 and len(window.document.layers) == layers
     dialog.cell_width.setValue(64)
     dialog.cell_height.setValue(64)
     dialog.refresh()

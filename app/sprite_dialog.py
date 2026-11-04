@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 
 from .graphics import checker_brush, pil_to_qimage
 from .imaging import SpriteGrid, extract_sprites, grid_shape, iter_cells
-from .model import IMPORT_FORMATS, MAX_DIMENSION, MAX_PIXELS
+from .model import IMPORT_FORMATS, MAX_DIMENSION, MAX_LAYERS, MAX_PIXELS
 from .paths import safe_file_stem
 from .theme import COLORS
 
@@ -366,6 +366,14 @@ class SpriteSheetDialog(QDialog):
         return written
 
     def add_as_layers(self) -> bool:
+        room = MAX_LAYERS - len(self.window_.document.layers)
+        if self.chosen_count() > room:
+            QMessageBox.warning(
+                self, "Trop de sprites",
+                f"Jusqu'à {self.chosen_count()} sprites pour {max(0, room)} calque(s) encore possibles "
+                f"(maximum {MAX_LAYERS} par projet).\n\n"
+                "Agrandissez les cellules, décochez des sprites ou exportez-les en PNG.")
+            return False
         if not self.confirm_large_output():
             return False
         sprites = self.chosen_sprites()
