@@ -260,8 +260,15 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
             self.selected_id = selected if doc.layer(selected) else None
             if self.selected_id:
                 self.last_selected_id = self.selected_id
+            previous = getattr(self, "canvas_scene", None)
             self.canvas_scene = scene
             self.canvas.setScene(self.canvas_scene)
+            if previous is not None:
+                # The previous scene may be the one handling the click that led here
+                # (a pending curve committed by a selection change): it is handed to
+                # the window and deleted once the event is over, never during it.
+                previous.setParent(self)
+                previous.deleteLater()
             self.canvas_scene.selectionChanged.connect(self.on_scene_select)
             self._rebuild_layer_list(doc)
             for item in self.canvas_scene.items():
