@@ -36,6 +36,7 @@ def window(qapp, tmp_path):
     win.show()
     qapp.processEvents()
     yield win
+    win._commit_pending_edits()  # closing would otherwise ask to save what a test left typed
     win.undo_stack.setClean()
     win.close()
     qapp.processEvents()

@@ -1854,6 +1854,42 @@ class MainWindow(QMainWindow):
         if self.curve_commit_timer.isActive():
             self.commit_property("curve_intensity")
 
+    def _pending_edit_commits(self) -> dict[QWidget, object]:
+        """Fields validated on focus loss, with the call that validates each one."""
+        commits: dict[QWidget, object] = {
+            self.name_input: lambda: self.commit_property("name"),
+            self.text_input: lambda: self.commit_property("text"),
+            self.font_size: lambda: self.commit_property("font_size"),
+            self.curve_value: lambda: self.commit_property("curve_intensity"),
+            self.character_spacing: lambda: self.commit_property("character_spacing"),
+        }
+        for key, spin in self.inputs.items():
+            commits[spin] = lambda key=key: self.commit_property(key)
+        for key, spin in (("shape_width", self.shape_rows.width), ("shape_height", self.shape_rows.height),
+                          ("stroke_width", self.shape_rows.stroke_width),
+                          ("corner_radius", self.shape_rows.radius), ("polygon_sides", self.shape_rows.sides)):
+            commits[spin] = lambda key=key: self.commit_shape_property(key)
+        return commits
+
+    def _commit_pending_edits(self) -> None:
+        """Validate what is still being typed: closing or saving must not lose it.
+
+        Text fields only commit when they lose the focus, which neither the
+        window's close button nor a keyboard shortcut moves.
+        """
+        if self._inline is not None:
+            self._inline["editor"].finish(True)
+        commits = self._pending_edit_commits()
+        # The focus may sit in a child of the field (the line edit of a spin box).
+        widget = self.focusWidget()
+        while widget is not None and widget not in commits:
+            widget = widget.parentWidget()
+        if widget is not None:
+            if isinstance(widget, QAbstractSpinBox):
+                widget.interpretText()  # keyboard tracking is off: the typed text is not the value yet
+            commits[widget]()
+        self._flush_pending_curve()
+
     def on_font_changed(self, font: QFont):
         if self.refreshing:
             return
@@ -3198,7 +3234,7 @@ class MainWindow(QMainWindow):
             self.canvas.fit_document()
 
     def maybe_save(self) -> bool:
-        self._flush_pending_curve()
+        self._commit_pending_edits()
         if not self.is_modified():
             return True
         box = QMessageBox(self)
@@ -3292,7 +3328,7 @@ class MainWindow(QMainWindow):
 
     def _write_template_back(self) -> bool:
         """Save the element template being edited, with a fresh thumbnail."""
-        self._flush_pending_curve()
+        self._commit_pending_edits()
         template = self.editing_template
         if template is None:
             return False
@@ -3451,7 +3487,7 @@ class MainWindow(QMainWindow):
         return self.project_path.stem if self.project_path else "MantaLayers"
 
     def _write_project(self, destination: Path) -> bool:
-        self._flush_pending_curve()
+        self._commit_pending_edits()
         try:
             save_project(self.document, destination)
         except Exception as exc:
@@ -3463,6 +3499,7 @@ class MainWindow(QMainWindow):
         return True
 
     def save_as_template(self):
+        self._commit_pending_edits()
         default_name = self.project_path.stem if self.project_path else "Nouveau modèle"
         name, accepted = QInputDialog.getText(
             self, "Enregistrer comme modèle", "Nom du modèle :", text=default_name
@@ -3502,6 +3539,7 @@ class MainWindow(QMainWindow):
 
     def _export(self, filename: str, title: str, render, done: str, failed: str) -> Path | None:
         """Ask where to save, then write the rendered image; the folder is remembered."""
+        self._commit_pending_edits()
         path, chosen_filter = QFileDialog.getSaveFileName(
             self, title, self.initial_path("export", filename), export.FILE_FILTERS)
         if not path:
