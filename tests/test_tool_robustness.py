@@ -8,7 +8,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from app import selection
-from app.graphics import layers_bounds
+from app.graphics import _eraser_dab, layers_bounds
 from app.model import Document, Layer
 from app.storage import save_project
 
@@ -145,3 +145,24 @@ def test_a_rectangle_turned_into_a_line_stays_visible(window, kind):
     layer = window.document.layer(rectangle.id)
     assert layer.stroke_width > 0 and layer.stroke_color
     assert window.canvas.graphic_for(rectangle.id).pen.style() != Qt.PenStyle.NoPen
+
+
+# --- P2-003 : small round eraser dabs erase their pixels -------------------------------------
+
+@pytest.mark.parametrize("size", [1, 2, 3])
+@pytest.mark.parametrize("pixel_art", [True, False])
+def test_round_eraser_dabs_cover_their_box(size, pixel_art):
+    assert _eraser_dab(size, "circle", pixel_art, 100, 100).getbbox() == (0, 0, size, size)
+
+
+def test_a_one_pixel_round_stroke_erases_one_pixel(window):
+    from PySide6.QtCore import QPointF
+
+    document = Document(20, 20)
+    layer = document.add_image_bytes(png_bytes(8, 8), "Calque", center=False)
+    window.install_document(document, layer.id)
+    window.eraser_size.setValue(1)
+    window.eraser_shape.setCurrentIndex(window.eraser_shape.findData("circle"))
+    window.commit_eraser_stroke(layer.id, [QPointF(3.5, 3.5)])
+    image = window.canvas.graphic_for(layer.id).pixmap().toImage()
+    assert image.pixelColor(3, 3).alpha() == 0 and image.pixelColor(4, 3).alpha() == 255

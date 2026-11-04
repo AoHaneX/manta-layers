@@ -475,7 +475,9 @@ def _eraser_dab(size: int, shape: str, pixel_art: bool, hardness: int, opacity: 
     dab = Image.new("L", (size, size), 0)
     if pixel_art or hardness >= 100:
         draw = ImageDraw.Draw(dab)
-        if shape == "square" and pixel_art:
+        # Pillow draws nothing for an ellipse narrower than three pixels: such a
+        # small round dab is its whole box (as small elliptic selections are).
+        if (shape == "square" and pixel_art) or size < 3:
             draw.rectangle((0, 0, size - 1, size - 1), fill=maximum)
         else:
             draw.ellipse((0, 0, size - 1, size - 1), fill=maximum)
