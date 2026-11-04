@@ -23,7 +23,6 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QPixmap,
-    QRadialGradient,
     QRegion,
     QTransform,
 )
@@ -405,6 +404,19 @@ def eraser_dab_origin(position: float, size: int, pixel_centered: bool = True) -
     return floor(position - offset) if pixel_centered else round(position - offset)
 
 
+def eraser_source_position(position: float, extent: int, size: int, flipped: bool) -> float:
+    """Source position of a dab placed at ``position`` on a layer shown mirrored.
+
+    Flooring is not symmetric: mirroring the position itself can move the dab
+    by one pixel. The covered pixels are mirrored instead, and the result is
+    the middle of the first source pixel span, where flooring is exact.
+    """
+    if not flipped:
+        return position
+    first = eraser_dab_origin(position, size)  # first displayed pixel
+    return extent - first - size / 2
+
+
 @lru_cache(maxsize=32)
 def _eraser_dab(size: int, shape: str, pixel_art: bool, hardness: int, opacity: int) -> Image.Image:
     """Crée une empreinte sans anticrénelage en pixel art, douce en mode classique.
@@ -441,6 +453,47 @@ def _eraser_dab(size: int, shape: str, pixel_art: bool, hardness: int, opacity: 
     return dab
 
 
+def stamp_eraser_stroke(coverage: Image.Image, stroke: dict,
+                        points: list[list[float]] | None = None) -> tuple[int, int, int, int] | None:
+    """Add the dabs of ``stroke`` (or of ``points`` drawn with its settings) to ``coverage``.
+
+    The single implementation of a stroke's shape, shared by the final render
+    and the live preview. Returns the box of the changed pixels, None if none.
+    """
+    points = stroke.get("points", []) if points is None else points
+    if not points:
+        return None
+    size = max(1, int(stroke.get("size", 1)))
+    pixel_art = bool(stroke.get("pixel_art", True))
+    shape = "square" if stroke.get("shape") == "square" else "circle"
+    dab = _eraser_dab(
+        size, shape, pixel_art,
+        max(0, min(100, int(stroke.get("hardness", 100)))),
+        max(1, min(100, int(stroke.get("opacity", 100)))),
+    )
+    centered = bool(stroke.get("pixel_centered", False))
+    spacing = 0.5 if pixel_art else max(0.5, size * 0.2)
+    width, height = coverage.size
+    box: list[int] | None = None
+    # Les empreintes d'un même trait se combinent par maximum : l'opacité
+    # choisie reste celle du trait, au lieu de s'additionner à chaque pas.
+    for x, y in _interpolated_points(points, spacing):
+        left, top = eraser_dab_origin(x, size, centered), eraser_dab_origin(y, size, centered)
+        if left >= width or top >= height or left + size <= 0 or top + size <= 0:
+            continue  # entirely outside the image
+        coverage.paste(ImageChops.lighter(coverage.crop((
+            left, top, left + size, top + size
+        )), dab), (left, top))
+        if box is None:
+            box = [left, top, left + size, top + size]
+        else:
+            box = [min(box[0], left), min(box[1], top), max(box[2], left + size), max(box[3], top + size)]
+    if box is None:
+        return None
+    clipped = (max(0, box[0]), max(0, box[1]), min(width, box[2]), min(height, box[3]))
+    return clipped if clipped[0] < clipped[2] and clipped[1] < clipped[3] else None
+
+
 def apply_eraser_strokes(image: Image.Image, strokes: list[dict]) -> Image.Image:
     """Applique des traits à l'alpha, sans toucher aux couleurs ni lisser le pixel art."""
     if not strokes:
@@ -448,29 +501,11 @@ def apply_eraser_strokes(image: Image.Image, strokes: list[dict]) -> Image.Image
     result = image.copy()
     alpha = result.getchannel("A")
     for stroke in strokes:
-        points = stroke.get("points", [])
-        if not points:
-            continue
-        size = max(1, int(stroke.get("size", 1)))
-        pixel_art = bool(stroke.get("pixel_art", True))
-        shape = "square" if stroke.get("shape") == "square" else "circle"
-        dab = _eraser_dab(
-            size, shape, pixel_art,
-            max(0, min(100, int(stroke.get("hardness", 100)))),
-            max(1, min(100, int(stroke.get("opacity", 100)))),
-        )
         coverage = Image.new("L", result.size, 0)
-        centered = bool(stroke.get("pixel_centered", False))
-        spacing = 0.5 if pixel_art else max(0.5, size * 0.2)
-        # Les empreintes d'un même trait se combinent par maximum : l'opacité
-        # choisie reste celle du trait, au lieu de s'additionner à chaque pas.
-        for x, y in _interpolated_points(points, spacing):
-            left, top = eraser_dab_origin(x, size, centered), eraser_dab_origin(y, size, centered)
-            coverage.paste(ImageChops.lighter(coverage.crop((
-                left, top, left + size, top + size
-            )), dab), (left, top))
-        inverse = ImageChops.invert(coverage)
-        alpha = ImageChops.multiply(alpha, inverse)
+        if stroke_box := stamp_eraser_stroke(coverage, stroke):
+            # Only the touched area changes: elsewhere the alpha is multiplied by 1.
+            region = ImageChops.multiply(alpha.crop(stroke_box), ImageChops.invert(coverage.crop(stroke_box)))
+            alpha.paste(region, stroke_box[:2])
     result.putalpha(alpha)
     return result
 
@@ -887,9 +922,12 @@ class CanvasView(QGraphicsView):
         self.eraser_item: QGraphicsPixmapItem | None = None
         self.eraser_points: list[QPointF] = []
         self.eraser_cursor_local: QPointF | None = None
-        self.eraser_preview_image: QImage | None = None
-        self.eraser_source_image: QImage | None = None
-        self.eraser_mask: QImage | None = None
+        # Live eraser preview, computed in source pixels exactly like the final render.
+        self.eraser_base: Image.Image | None = None  # layer pixels before the stroke, not flipped
+        self.eraser_coverage: Image.Image | None = None  # coverage of the current stroke
+        self.eraser_settings: dict | None = None  # stroke settings (size, shape…) without points
+        self.eraser_flips = (False, False)
+        self.eraser_pixmap: QPixmap | None = None  # displayed pixmap, updated area by area
         self.eraser_original_pixmap: QPixmap | None = None
         self.eraser_preview_last: QPointF | None = None
         self.setMouseTracking(True)
@@ -997,12 +1035,9 @@ class CanvasView(QGraphicsView):
             local = self.eraser_cursor_local
             if local is not None:
                 size = self.main_window.eraser_size.value()
-                offset = (size - 1) / 2
                 path = QPainterPath()
-                if self.main_window.eraser_pixel_art.isChecked():
-                    bounds = QRectF(eraser_dab_origin(local.x(), size), eraser_dab_origin(local.y(), size), size, size)
-                else:
-                    bounds = QRectF(local.x() - offset, local.y() - offset, size, size)
+                # Same placement as the saved dabs, soft or pixel art.
+                bounds = QRectF(eraser_dab_origin(local.x(), size), eraser_dab_origin(local.y(), size), size, size)
                 if self.main_window.eraser_shape.currentData() == "square" and self.main_window.eraser_pixel_art.isChecked():
                     path.addRect(bounds)
                 else:
@@ -1281,14 +1316,8 @@ class CanvasView(QGraphicsView):
         local = item.mapFromScene(self.mapToScene(event.position().toPoint()))
         if not item.boundingRect().contains(local):
             return
-        self.eraser_item = item
-        self.eraser_original_pixmap = item.pixmap()
-        source = item.pixmap().toImage().convertToFormat(
-            QImage.Format.Format_ARGB32_Premultiplied
-        )
-        self.eraser_source_image = source
-        self.eraser_preview_image = source.copy()
-        self.eraser_mask = None
+        if not self.begin_eraser_preview(item, layer):
+            return
         if (event.modifiers() & Qt.KeyboardModifier.ShiftModifier
                 and self.main_window.last_eraser_point
                 and self.main_window.last_eraser_layer_id == layer.id):
@@ -1623,68 +1652,72 @@ class CanvasView(QGraphicsView):
             self.viewport().update()
         super().leaveEvent(event)
 
-    def _apply_eraser_preview_segment(self, start: QPointF, end: QPointF) -> None:
-        """Met à jour uniquement l'aperçu affiché pendant le trait courant."""
-        if self.eraser_preview_image is None or self.eraser_item is None:
-            return
-        if self.eraser_mask is None or self.eraser_mask.size() != self.eraser_preview_image.size():
-            self.eraser_source_image = self.eraser_preview_image.copy()
-            self.eraser_mask = QImage(self.eraser_preview_image.size(),
-                                      QImage.Format.Format_ARGB32_Premultiplied)
-            self.eraser_mask.fill(Qt.GlobalColor.transparent)
-        pixel_art = self.main_window.eraser_pixel_art.isChecked()
-        size = self.main_window.eraser_size.value()
-        opacity = self.main_window.eraser_opacity.value() / 100
-        dx, dy = end.x() - start.x(), end.y() - start.y()
-        distance = (dx * dx + dy * dy) ** 0.5
-        spacing = 0.5 if pixel_art else max(0.5, size * 0.2)
-        steps = max(1, int(distance / spacing) + 1)
-        # Le masque mémorise la forme du trait à pleine intensité ; l'opacité est
-        # appliquée une seule fois, comme dans le rendu final du calque.
-        painter = QPainter(self.eraser_mask)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, not pixel_art)
-        painter.setPen(Qt.PenStyle.NoPen)
-        dirty = None
-        for index in range(steps + 1):
-            ratio = index / steps
-            x, y = start.x() + dx * ratio, start.y() + dy * ratio
-            if pixel_art:
-                bounds = QRectF(eraser_dab_origin(x, size), eraser_dab_origin(y, size), size, size)
-                painter.setBrush(QColor(0, 0, 0, 255))
-                if self.main_window.eraser_shape.currentData() == "square":
-                    painter.drawRect(bounds)
-                else:
-                    painter.drawEllipse(bounds)
-            else:
-                radius = size / 2
-                bounds = QRectF(x - radius, y - radius, size, size)
-                gradient = QRadialGradient(QPointF(x, y), radius)
-                hardness = self.main_window.eraser_hardness.value() / 100
-                gradient.setColorAt(0, QColor(0, 0, 0, 255))
-                gradient.setColorAt(hardness, QColor(0, 0, 0, 255))
-                gradient.setColorAt(1, QColor(0, 0, 0, 0))
-                painter.setBrush(QBrush(gradient))
-                painter.drawEllipse(bounds)
-            dirty = bounds if dirty is None else dirty.united(bounds)
+    def begin_eraser_preview(self, item: QGraphicsPixmapItem, layer: Layer) -> bool:
+        """Prepare the live preview of a stroke on ``item``; False if the layer cannot be read."""
+        try:
+            base = render_layer_with_mask(layer, self.main_window.document)
+        except Exception as exc:
+            self.main_window.statusBar().showMessage(f"Gomme impossible : {exc}", 4000)
+            return False
+        self.eraser_item = item
+        self.eraser_original_pixmap = item.pixmap()
+        self.eraser_base = base
+        self.eraser_coverage = Image.new("L", base.size, 0)
+        self.eraser_settings = self.main_window.eraser_stroke_settings()
+        self.eraser_flips = (layer.flip_horizontal, layer.flip_vertical)
+        # A private copy (the item's pixmap is shared with the pixmap cache), created
+        # transparent first: a pixmap made from an opaque image may have no alpha channel.
+        original = item.pixmap()
+        self.eraser_pixmap = QPixmap(original.size())
+        self.eraser_pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(self.eraser_pixmap)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        painter.drawPixmap(0, 0, original)
         painter.end()
-        assert dirty is not None and self.eraser_source_image is not None  # steps >= 1, image set above
-        area = dirty.toAlignedRect().adjusted(-1, -1, 1, 1).intersected(self.eraser_preview_image.rect())
-        if not area.isEmpty():
-            painter = QPainter(self.eraser_preview_image)
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-            painter.drawImage(area.topLeft(), self.eraser_source_image, area)
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationOut)
-            painter.setOpacity(opacity)
-            painter.drawImage(area.topLeft(), self.eraser_mask, area)
-            painter.end()
-        self.eraser_item.setPixmap(QPixmap.fromImage(self.eraser_preview_image))
+        return True
+
+    def eraser_source_point(self, point: QPointF) -> list[float]:
+        """Source coordinates of a point of the current stroke (see eraser_source_position)."""
+        assert self.eraser_base is not None and self.eraser_settings is not None
+        size = self.eraser_settings["size"]
+        return [eraser_source_position(point.x(), self.eraser_base.width, size, self.eraser_flips[0]),
+                eraser_source_position(point.y(), self.eraser_base.height, size, self.eraser_flips[1])]
+
+    def _apply_eraser_preview_segment(self, start: QPointF, end: QPointF) -> None:
+        """Show the segment as the final render will draw it, recomputing only the touched area."""
+        if (self.eraser_item is None or self.eraser_base is None or self.eraser_coverage is None
+                or self.eraser_settings is None or self.eraser_pixmap is None):
+            return
+        points = [self.eraser_source_point(start), self.eraser_source_point(end)]
+        box = stamp_eraser_stroke(self.eraser_coverage, self.eraser_settings, points)
+        if box is None:
+            return
+        region = self.eraser_base.crop(box)
+        region.putalpha(ImageChops.multiply(region.getchannel("A"),
+                                            ImageChops.invert(self.eraser_coverage.crop(box))))
+        left, top = box[0], box[1]
+        flip_horizontal, flip_vertical = self.eraser_flips
+        if flip_horizontal:
+            region = region.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+            left = self.eraser_base.width - box[2]
+        if flip_vertical:
+            region = region.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+            top = self.eraser_base.height - box[3]
+        # The item shares the pixmap: release it first, so painting does not copy the whole image.
+        self.eraser_item.setPixmap(QPixmap())
+        painter = QPainter(self.eraser_pixmap)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        painter.drawImage(left, top, pil_to_qimage(region))
+        painter.end()
+        self.eraser_item.setPixmap(self.eraser_pixmap)
 
     def _reset_eraser_preview(self) -> None:
         self.eraser_item = None
         self.eraser_points = []
-        self.eraser_preview_image = None
-        self.eraser_source_image = None
-        self.eraser_mask = None
+        self.eraser_base = None
+        self.eraser_coverage = None
+        self.eraser_settings = None
+        self.eraser_pixmap = None
         self.eraser_original_pixmap = None
         self.eraser_preview_last = None
 

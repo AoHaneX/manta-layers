@@ -67,6 +67,7 @@ from .graphics import (
     CurvedTextGraphicItem,
     crop_image_layer,
     document_mask_to_layer,
+    eraser_source_position,
     font_is_installed,
     forget_font_families,
     layers_bounds,
@@ -2748,21 +2749,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Taille de gomme : {value} px", 1800)
         self.canvas.viewport().update()
 
-    def commit_eraser_stroke(self, layer_id: str, points: list[QPointF]):
-        layer = self.document.layer(layer_id)
-        item = self.canvas.graphic_for(layer_id)
-        if not layer or layer.kind != "image" or layer.locked or not isinstance(item, QGraphicsPixmapItem):
-            self.statusBar().showMessage("Trait de gomme ignoré : calque non modifiable", 3000)
-            return
-        width, height = item.pixmap().width(), item.pixmap().height()
-        source_points = []
-        for point in points:
-            # Mirror of a position (not of a pixel index) in a flipped layer.
-            x = width - point.x() if layer.flip_horizontal else point.x()
-            y = height - point.y() if layer.flip_vertical else point.y()
-            source_points.append([x, y])
-        stroke = {
-            "points": source_points,
+    def eraser_stroke_settings(self) -> dict:
+        """Settings of a new eraser stroke, without its points (shared by the preview and the commit)."""
+        return {
             "size": self.eraser_size.value(),
             "shape": self.eraser_shape.currentData(),
             "pixel_art": self.eraser_pixel_art.isChecked(),
@@ -2770,6 +2759,20 @@ class MainWindow(QMainWindow):
             "opacity": self.eraser_opacity.value(),
             "pixel_centered": True,
         }
+
+    def commit_eraser_stroke(self, layer_id: str, points: list[QPointF]):
+        layer = self.document.layer(layer_id)
+        item = self.canvas.graphic_for(layer_id)
+        if not layer or layer.kind != "image" or layer.locked or not isinstance(item, QGraphicsPixmapItem):
+            self.statusBar().showMessage("Trait de gomme ignoré : calque non modifiable", 3000)
+            return
+        width, height = item.pixmap().width(), item.pixmap().height()
+        stroke = self.eraser_stroke_settings()
+        size = stroke["size"]
+        # On a flipped layer the covered pixels are mirrored, as in the live preview.
+        stroke["points"] = [[eraser_source_position(point.x(), width, size, layer.flip_horizontal),
+                             eraser_source_position(point.y(), height, size, layer.flip_vertical)]
+                            for point in points]
         self.mutate(
             "Trait de gomme",
             lambda doc: doc.layer(layer_id).eraser_strokes.append(stroke),

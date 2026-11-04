@@ -19,7 +19,7 @@ else:
     # Une erreur d'import dans l'application doit faire échouer la suite,
     # pas la faire passer pour « ignorée ».
     from PySide6.QtCore import QMimeData, QPointF, QSettings, QSize, Qt, QUrl
-    from PySide6.QtGui import QFont, QFontMetricsF, QImage
+    from PySide6.QtGui import QFont, QFontMetricsF
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QToolButton
 
@@ -147,31 +147,29 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertLess(abs(recovered.x() - expected.x()), 0.2)
         self.assertLess(abs(recovered.y() - expected.y()), 0.2)
 
+    def _opaque_layer(self, win, width=40, height=40, color=(255, 255, 255, 255)):
+        document = Document(width, height)
+        layer = document.add_image_bytes(png_bytes(width, height, color), "Opaque", center=False)
+        win.install_document(document, layer.id)
+        return layer, win.canvas.graphic_for(layer.id)
+
     def test_eraser_preview_updates_alpha_in_real_time(self):
         win = self.make_window()
-        layer = next(layer for layer in win.document.layers if layer.kind == "image")
-        win.select_layer(layer.id)
-        item = win.selected_image_item()
-        preview = QImage(12, 12, QImage.Format.Format_ARGB32)
-        preview.fill(0xFFFFFFFF)
-        win.canvas.eraser_item = item
-        win.canvas.eraser_preview_image = preview
+        layer, item = self._opaque_layer(win, 12, 12)
         win.eraser_size_preset.setCurrentIndex(2)  # 4 × 4 px
+        self.assertTrue(win.canvas.begin_eraser_preview(item, layer))
         win.canvas._apply_eraser_preview_segment(QPointF(6, 6), QPointF(6, 6))
-        self.assertEqual(win.canvas.eraser_preview_image.pixelColor(6, 6).alpha(), 0)
+        self.assertEqual(item.pixmap().toImage().pixelColor(6, 6).alpha(), 0)
         win.canvas.cancel_eraser_preview()
+        self.assertEqual(item.pixmap().toImage().pixelColor(6, 6).alpha(), 255)
 
     def test_eraser_preview_applies_opacity_once_per_stroke(self):
         win = self.make_window()
-        layer = next(layer for layer in win.document.layers if layer.kind == "image")
-        win.select_layer(layer.id)
-        preview = QImage(40, 40, QImage.Format.Format_ARGB32)
-        preview.fill(0xFF000000)
-        win.canvas.eraser_item = win.selected_image_item()
-        win.canvas.eraser_preview_image = preview
+        layer, item = self._opaque_layer(win, 40, 40, (0, 0, 0, 255))
         win.eraser_opacity.setValue(25)
+        self.assertTrue(win.canvas.begin_eraser_preview(item, layer))
         win.canvas._apply_eraser_preview_segment(QPointF(5, 20), QPointF(35, 20))
-        self.assertAlmostEqual(win.canvas.eraser_preview_image.pixelColor(20, 20).alpha(), 191, delta=2)
+        self.assertAlmostEqual(item.pixmap().toImage().pixelColor(20, 20).alpha(), 191, delta=2)
         win.canvas.cancel_eraser_preview()
 
     def test_tool_options_are_separated(self):
