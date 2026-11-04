@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
@@ -30,6 +31,7 @@ class RecoveryWriter(QThread):
         self.meta = meta
         self.project_path = project_path
         self.succeeded = False
+        self.error: str | None = None  # why the copy could not be written
 
     def run(self):
         if self.document is None:
@@ -40,7 +42,8 @@ class RecoveryWriter(QThread):
                 "project_path": self.project_path,
                 "saved_at": time.time(),
             }), encoding="utf-8")
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            self.error = str(exc)
             return
         self.succeeded = True
 
@@ -55,6 +58,8 @@ class SessionRecovery:
         self.lock: QLockFile | None = None
         self.autosaved_revision: int | None = None
         self.task: RecoveryWriter | None = None
+        # Called with the reason when a copy cannot be written (on the interface thread).
+        self.on_failure: Callable[[str], None] | None = None
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
             lock = QLockFile(str(self.directory / f"{self.session_id}.lock"))
@@ -117,6 +122,8 @@ class SessionRecovery:
     def _finish(self, task: RecoveryWriter) -> None:
         if task.succeeded:
             self.autosaved_revision = task.revision
+        elif task.error is not None and self.on_failure is not None:
+            self.on_failure(task.error)
         self._release(task)
 
     @staticmethod
