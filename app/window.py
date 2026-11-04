@@ -144,6 +144,9 @@ class DocumentCommand(QUndoCommand):
         # Commands sharing a merge key and close in time collapse into one step.
         self.merge_key = merge_key
         self.timestamp = time.monotonic()
+        # Document and scene built before the command is pushed (see MainWindow._push):
+        # the first redo shows them instead of building them again.
+        self.prepared: tuple[Document, object] | None = None
 
     def id(self):
         return 1 if self.merge_key is not None else -1
@@ -157,17 +160,21 @@ class DocumentCommand(QUndoCommand):
         self.timestamp = other.timestamp
         return True
 
-    def _apply(self, document: Document, selected: str | None):
+    def _apply(self, document: Document, selected: str | None, undoing: bool):
+        prepared, self.prepared = self.prepared, None
         try:
-            self.win.install_document(document.clone(), selected)
+            if prepared is not None:
+                self.win.install_document(prepared[0], selected, scene=prepared[1])
+            else:
+                self.win.install_document(document.clone(), selected)
         except Exception as exc:
-            self.win.command_failed(self, exc)
+            self.win.command_failed(self, exc, undoing)
 
     def undo(self):
-        self._apply(self.before, self.selected_before)
+        self._apply(self.before, self.selected_before, True)
 
     def redo(self):
-        self._apply(self.after, self.selected_after)
+        self._apply(self.after, self.selected_after, False)
 
 
 class SelectionCommand(QUndoCommand):
@@ -216,6 +223,7 @@ class MainWindow(QMainWindow):
         self.selection_tool_buttons: dict[str, QToolButton] = {}
         # Floating editor used to type a text directly on the canvas.
         self._inline: dict | None = None
+        self._resyncing_history = False
         self.selection_mask: Image.Image | None = None
         # Multiple selection of the layer panel (layer ids), see set_layer_checked.
         self.checked_ids: set[str] = set()
@@ -1184,9 +1192,13 @@ class MainWindow(QMainWindow):
         self.canvas.fit_document()
         self.update_title()
 
-    def install_document(self, doc: Document, selected: str | None):
-        """Affiche un document. Si son rendu échoue, l'état courant reste intact."""
-        scene = make_scene(doc, interactive=True)
+    def install_document(self, doc: Document, selected: str | None, scene=None):
+        """Affiche un document. Si son rendu échoue, l'état courant reste intact.
+
+        ``scene`` is the scene of ``doc`` when it was already built (see _push).
+        """
+        if scene is None:
+            scene = make_scene(doc, interactive=True)
         self._revision += 1
         # The scene is replaced: an editor typing into the old one is dropped,
         # and a drag in progress forgets the items about to be deleted.
@@ -1759,6 +1771,14 @@ class MainWindow(QMainWindow):
     def _push(self, command: DocumentCommand) -> bool:
         """Empile une commande ; si son application échoue, elle n'entre pas dans l'historique."""
         description = command.text()
+        # Build the new scene first: pushing clears the redo steps and may move
+        # the saved state, which a change that cannot be shown must not do.
+        try:
+            document = command.after.clone()
+            command.prepared = (document, make_scene(document, interactive=True))
+        except Exception as exc:
+            self._report_failure(description, exc)
+            return False
         self._pushing_command = command
         self._push_error = None
         try:
@@ -1771,13 +1791,27 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(description, 3000)
         return True
 
-    def command_failed(self, command: DocumentCommand, exc: Exception):
+    def command_failed(self, command: DocumentCommand, exc: Exception, undoing: bool = False):
         if command is self._pushing_command:
             self._push_error = exc
             # QUndoStack.push supprime une commande devenue obsolète au lieu de l'empiler.
             command.setObsolete(True)
-        else:
-            self._report_failure("Annuler / rétablir", exc)
+            return
+        self._report_failure("Annuler / rétablir", exc)
+        if not self._resyncing_history:
+            # The stack moved but the document did not: step back once the stack is idle,
+            # so that the history position matches the document shown again.
+            QTimer.singleShot(0, lambda: self._resync_history(undoing))
+
+    def _resync_history(self, undoing: bool) -> None:
+        self._resyncing_history = True
+        try:
+            if undoing:
+                self.undo_stack.redo()
+            else:
+                self.undo_stack.undo()
+        finally:
+            self._resyncing_history = False
 
     def _report_failure(self, description: str, exc: Exception):
         QMessageBox.warning(self, "Action impossible", f"{description} : {exc}")
