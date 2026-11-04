@@ -1221,22 +1221,28 @@ class MainWindow(QMainWindow):
     def _rebuild_layer_list(self, doc: Document):
         """Rows from top to bottom; a folder row precedes its (unless collapsed) layers."""
         scroll = self.layer_list.verticalScrollBar().value()
-        self.layer_list.clear()
-        self._layer_rows = {}
-        shown_folders = set()
-        for layer in reversed(doc.layers):
-            folder = doc.folder(layer.folder)
-            if folder is not None and folder.id not in shown_folders:
-                shown_folders.add(folder.id)
-                self._add_layer_list_row(folder.id, True, build_folder_row(
-                    self, folder, self._folder_check_state(doc, folder.id)))
-            if folder is not None and folder.collapsed:
-                continue
-            controls = build_layer_row(self, layer, layer.id in self.checked_ids)
-            self._layer_rows[layer.id] = controls
-            row = self._add_layer_list_row(layer.id, False, controls)
-            if layer.id == self.selected_id:
-                self.layer_list.setCurrentItem(row)
+        # Clearing the list makes it report "no current row": that is not the
+        # user deselecting the layer, so selection signals are ignored meanwhile.
+        refreshing, self.refreshing = self.refreshing, True
+        try:
+            self.layer_list.clear()
+            self._layer_rows = {}
+            shown_folders = set()
+            for layer in reversed(doc.layers):
+                folder = doc.folder(layer.folder)
+                if folder is not None and folder.id not in shown_folders:
+                    shown_folders.add(folder.id)
+                    self._add_layer_list_row(folder.id, True, build_folder_row(
+                        self, folder, self._folder_check_state(doc, folder.id)))
+                if folder is not None and folder.collapsed:
+                    continue
+                controls = build_layer_row(self, layer, layer.id in self.checked_ids)
+                self._layer_rows[layer.id] = controls
+                row = self._add_layer_list_row(layer.id, False, controls)
+                if layer.id == self.selected_id:
+                    self.layer_list.setCurrentItem(row)
+        finally:
+            self.refreshing = refreshing
         self.layer_list.verticalScrollBar().setValue(scroll)
 
     def _add_layer_list_row(self, item_id: str, is_folder: bool, controls: QWidget) -> QListWidgetItem:
