@@ -49,7 +49,7 @@ from .model import MAX_LAYERS, Document, Layer
 from .paths import user_data_directory
 from .screen_picker import ScreenColorPicker
 from .selection_flows import SelectionFlowsMixin, clipboard_fingerprint
-from .shape_item import shape_from_drag
+from .shape_item import OPEN_SHAPES, shape_from_drag
 from .sprite_dialog import SpriteSheetDialog
 from .storage import open_project
 from .template_library import TemplateLibraryDialog
@@ -914,6 +914,11 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         setattr(probe, key, value)
         if key == "stroke_color" and value and probe.stroke_width == 0:
             probe.stroke_width = 4.0  # a chosen outline colour must be visible
+        if key == "shape_type" and value in OPEN_SHAPES and (probe.stroke_width == 0 or not probe.stroke_color):
+            # A line or an arrow is only its outline (its fill is not drawn): give it one,
+            # in the shape's colour, as a line drawn with the tool has.
+            probe.stroke_width = probe.stroke_width or 6.0
+            probe.stroke_color = probe.stroke_color or probe.fill_color or "#000000"
         probe.normalize_shape_fields()
         if probe == layer:
             return False

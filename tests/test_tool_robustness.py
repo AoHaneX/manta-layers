@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from app import selection
 from app.graphics import layers_bounds
-from app.model import Document
+from app.model import Document, Layer
 from app.storage import save_project
 
 
@@ -128,3 +128,20 @@ def test_dialogs_report_a_damaged_layer(damaged, monkeypatch):
         sprites.deleteLater()
         token.deleteLater()
     assert warnings == ["Image illisible", "Créateur de tokens"]
+
+
+# --- P2-002 : a closed shape turned into a line or an arrow stays visible --------------------
+
+@pytest.mark.parametrize("kind", ["line", "arrow"])
+def test_a_rectangle_turned_into_a_line_stays_visible(window, kind):
+    from PySide6.QtCore import Qt
+
+    document = Document(200, 200)
+    rectangle = Layer(kind="shape", shape_type="rectangle", fill_color="#FF0000", stroke_color="#000000",
+                      stroke_width=0.0)
+    document.layers.append(rectangle)
+    window.install_document(document, rectangle.id)
+    assert window.set_shape_property("shape_type", kind)
+    layer = window.document.layer(rectangle.id)
+    assert layer.stroke_width > 0 and layer.stroke_color
+    assert window.canvas.graphic_for(rectangle.id).pen.style() != Qt.PenStyle.NoPen
