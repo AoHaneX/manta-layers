@@ -152,8 +152,12 @@ class ShapeGraphicItem(QGraphicsItem):
         self.pen.setCapStyle(Qt.PenCapStyle.RoundCap if self.kind in OPEN_SHAPES else Qt.PenCapStyle.FlatCap)
         outline = self.path.united(self.head) if not self.head.isEmpty() else QPainterPath(self.path)
         if stroke:
+            # Same joins and caps as the pen: the stroker's defaults are smaller than
+            # round joins on sharp corners, which would cut the outline off the bounds.
             stroker = QPainterPathStroker()
             stroker.setWidth(layer.stroke_width)
+            stroker.setJoinStyle(self.pen.joinStyle())
+            stroker.setCapStyle(self.pen.capStyle())
             outline = outline.united(stroker.createStroke(outline))
         # Open shapes keep their whole box, so that handles stay usable on a thin line.
         box = QRectF(0, 0, layer.shape_width, layer.shape_height)
