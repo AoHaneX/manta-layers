@@ -55,6 +55,7 @@ class GuiSmokeTests(unittest.TestCase):
 
     @staticmethod
     def close_window(win):
+        win._commit_pending_edits()  # closing would otherwise ask to save what a test left typed
         win.undo_stack.setClean()
         win.close()
 
