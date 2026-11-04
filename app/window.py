@@ -3227,24 +3227,40 @@ class MainWindow(QMainWindow):
             return
         dialog = NewProjectDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
+            dialog.deleteLater()
             return
         try:
             document = dialog.document()
-            self._collapsed_folders = {}
-            self.install_document(document, None)
+            template = dialog.selected_template() if dialog.tabs.currentIndex() == 1 else None
+            self._start_session(document, None)
         except Exception as exc:
             QMessageBox.critical(self, "Création impossible", str(exc))
             return
-        self.project_path = None
+        finally:
+            dialog.deleteLater()
         self.editing_template = None
-        template = dialog.selected_template() if dialog.tabs.currentIndex() == 1 else None
         self.template_origin = template.stem if template is not None else None
+        self.update_title()
+        self._warn_missing_fonts(document)
+
+    def _start_session(self, document: Document, project_path: Path | None, unsaved: bool = False) -> None:
+        """Show another document from scratch: history, selection, view and recovery copy.
+
+        Raises if the document cannot be shown; the current one then stays as it was.
+        """
+        self._collapsed_folders = {}
+        self.install_document(document, None)
+        self.project_path = project_path
         self.undo_stack.clear()
-        self.undo_stack.setClean()
+        if unsaved:
+            self.undo_stack.resetClean()  # restored work is unsaved
+        else:
+            self.undo_stack.setClean()
         self._reset_selection()
         self.canvas.fit_document()
         self.update_title()
-        self._warn_missing_fonts(document)
+        # The copy of the document left behind must not be offered after a crash.
+        self.recovery.discard(self.recovery.session_id)
 
     def resize_document(self):
         dialog = ResizeDocumentDialog(self.document.width, self.document.height, self)
@@ -3313,21 +3329,15 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        opened_path = Path(path)
         try:
             doc = open_project(path)
-            self._collapsed_folders = {}
-            self.install_document(doc, None)
+            self._start_session(doc, opened_path if opened_path.suffix.lower() == ".manta" else None)
         except Exception as exc:
             QMessageBox.critical(self, "Projet illisible", str(exc))
             return
-        opened_path = Path(path)
         self.editing_template = self.template_origin = None
         self.remember_directory("project", opened_path.parent)
-        self.project_path = opened_path if opened_path.suffix.lower() == ".manta" else None
-        self.undo_stack.clear()
-        self.undo_stack.setClean()
-        self._reset_selection()
-        self.canvas.fit_document()
         self.update_title()
         self.statusBar().showMessage(f"Projet chargé : {opened_path.name}", 5000)
         self._warn_missing_fonts(doc)
@@ -3488,18 +3498,12 @@ class MainWindow(QMainWindow):
         if not self.maybe_save():
             return False
         try:
-            self._collapsed_folders = {}
-            self.install_document(elements, None)
+            self._start_session(elements, None)
         except Exception as exc:
             QMessageBox.critical(self, "Modèle illisible", str(exc))
             return False
-        self.project_path = None
         self.editing_template = {"path": path, "name": name}
         self.template_origin = path.stem
-        self.undo_stack.clear()
-        self.undo_stack.setClean()
-        self._reset_selection()
-        self.canvas.fit_document()
         self.update_title()
         self.statusBar().showMessage("Modification du modèle · Sauvegarder le projet l'enregistre", 6000)
         return True
@@ -3722,6 +3726,9 @@ class MainWindow(QMainWindow):
     def autosave_now(self, background: bool = False) -> bool:
         """Write the recovery copy if the document has unsaved changes; True when written (or started)."""
         if not self.is_modified():
+            # Saved, or undone back to the saved state: a copy written before is stale.
+            if self.recovery.autosaved_revision is not None:
+                self.recovery.discard(self.recovery.session_id)
             return False
         return self.recovery.write(self.document, self._revision, self.project_path, background)
 
@@ -3770,21 +3777,16 @@ class MainWindow(QMainWindow):
         return "discard" if clicked is discard else "later"
 
     def _restore_recovery(self, candidate: dict) -> bool:
+        original = candidate["meta"].get("project_path")
+        original_path = Path(original) if isinstance(original, str) and original else None
         try:
             document = open_project(candidate["project"])
-            self._collapsed_folders = {}
-            self.install_document(document, None)
+            self._start_session(document, original_path if original_path is not None
+                                and original_path.suffix.lower() == ".manta" else None, unsaved=True)
         except Exception as exc:
             QMessageBox.warning(self, "Restauration impossible",
                                 f"{exc}\n\nLa copie reste disponible : {candidate['project']}")
             return False
-        original = candidate["meta"].get("project_path")
-        self.project_path = Path(original) if original and Path(original).suffix == ".manta" else None
-        self.undo_stack.clear()
-        self.undo_stack.resetClean()  # restored work is unsaved
-        self._reset_selection()
-        self.canvas.fit_document()
-        self.update_title()
         # The restored work now belongs to this session: its own copies take over.
         self.recovery.discard(candidate["id"])
         return True
