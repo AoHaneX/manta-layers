@@ -288,6 +288,8 @@ class TokenDialog(QDialog):
         destination = Path(path)
         if destination.suffix.lower() != ".png":
             destination = destination.with_name(destination.name + ".png")
+        if not self.window_._confirm_completed_path(Path(path), destination, "Exporter le token"):
+            return None
         try:
             self.render_full().save(destination, format="PNG", optimize=True)
         except (OSError, ValueError) as exc:

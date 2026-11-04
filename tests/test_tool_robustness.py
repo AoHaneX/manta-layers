@@ -4,6 +4,7 @@ from zipfile import ZipFile
 import pytest
 import shiboken6
 from conftest import png_bytes
+from PIL import Image
 from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
@@ -166,3 +167,23 @@ def test_a_one_pixel_round_stroke_erases_one_pixel(window):
     window.commit_eraser_stroke(layer.id, [QPointF(3.5, 3.5)])
     image = window.canvas.graphic_for(layer.id).pixmap().toImage()
     assert image.pixelColor(3, 3).alpha() == 0 and image.pixelColor(4, 3).alpha() == 255
+
+
+# --- P2-004 : exporting a token asks before replacing the completed file ---------------------
+
+def test_token_export_asks_before_replacing_the_completed_file(window, tmp_path, monkeypatch):
+    from app.token_dialog import TokenDialog
+
+    existing = tmp_path / "heros.png"
+    existing.write_bytes(b"ancien")
+    dialog = TokenDialog(window)
+    try:
+        dialog.set_source(Image.new("RGBA", (40, 40), (255, 0, 0, 255)), "heros")
+        monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_a, **_k: (str(tmp_path / "heros"), ""))
+        asked = []
+        monkeypatch.setattr(QMessageBox, "question",
+                            lambda *args, **_k: asked.append(args[2]) or QMessageBox.StandardButton.No)
+        assert dialog.export_png() is None
+    finally:
+        dialog.deleteLater()
+    assert asked and existing.read_bytes() == b"ancien"
