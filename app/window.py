@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from copy import deepcopy
 from io import BytesIO
+from math import floor
 from pathlib import Path
 from shutil import copy2
 
@@ -70,6 +71,7 @@ from .graphics import (
     eraser_source_position,
     font_is_installed,
     forget_font_families,
+    layer_source_pixel,
     layers_bounds,
     make_scene,
     merge_changes_appearance,
@@ -2800,16 +2802,27 @@ class MainWindow(QMainWindow):
         if not layer or layer.kind != "image" or not isinstance(item, QGraphicsPixmapItem):
             self.statusBar().showMessage("La pipette fonctionne sur les calques image", 3000)
             return False
-        local = item.mapFromScene(scene_position)
-        x, y = int(local.x()), int(local.y())
-        image = item.pixmap().toImage()
-        if not (0 <= x < image.width() and 0 <= y < image.height()):
+        found = self._layer_pixel(layer, item, scene_position)
+        if found is None:
             return False
-        color = image.pixelColor(x, y)
-        if color.alpha() == 0:
+        _x, _y, (red, green, blue, alpha) = found
+        if alpha == 0:
             self.statusBar().showMessage("Ce pixel est transparent", 3000)
             return False
-        return self.apply_picked_color(color.name().upper(), self.picker_target, self.picker_text_layer_id)
+        sampled = f"#{red:02X}{green:02X}{blue:02X}"
+        return self.apply_picked_color(sampled, self.picker_target, self.picker_text_layer_id)
+
+    def _layer_pixel(self, layer: Layer, item: QGraphicsPixmapItem, scene_position):
+        """Source position and exact colour of the layer pixel under a scene position, or None."""
+        local = item.mapFromScene(scene_position)
+        # floor, not int(): a click just left of or above the layer is outside it.
+        x, y = floor(local.x()), floor(local.y())
+        pixmap = item.pixmap()
+        try:
+            return layer_source_pixel(layer, self.document, x, y, (pixmap.width(), pixmap.height()))
+        except Exception as exc:
+            self.statusBar().showMessage(f"Calque illisible : {exc}", 4000)
+            return None
 
     def apply_picked_color(self, sampled: str, target: str, text_layer_id: str | None) -> bool:
         """Give a picked colour to its tool: the tools colour, or a text colour (undoable)."""
@@ -2871,25 +2884,21 @@ class MainWindow(QMainWindow):
         if layer.locked:
             self.statusBar().showMessage("Déverrouillez le calque pour le modifier", 3000)
             return False
-        local = item.mapFromScene(scene_position)
-        x, y = int(local.x()), int(local.y())
-        image = item.pixmap().toImage()
-        if not (0 <= x < image.width() and 0 <= y < image.height()):
+        found = self._layer_pixel(layer, item, scene_position)
+        if found is None:
             self.statusBar().showMessage("Cliquez sur le calque sélectionné", 3000)
             return False
-        color = image.pixelColor(x, y)
-        if color.alpha() == 0:
+        seed_x, seed_y, (red, green, blue, alpha) = found
+        if alpha == 0:
             self.statusBar().showMessage("Ce pixel est transparent", 3000)
             return False
         # La zone à remplacer est toujours celle de la couleur cliquée ; la couleur
         # courante de l'onglet Outils (pipette, HEX, palette) est la couleur cible.
-        source = color.name().upper()
+        source = f"#{red:02X}{green:02X}{blue:02X}"
         target = self.replacement_color.upper()
         if source == target:
             self.statusBar().showMessage("La couleur choisie est déjà appliquée", 3000)
             return False
-        seed_x = image.width() - 1 - x if layer.flip_horizontal else x
-        seed_y = image.height() - 1 - y if layer.flip_vertical else y
         fill = {
             "mode": self.paint_mode,
             "source": source,
