@@ -331,7 +331,7 @@ class DocumentFlowsMixin(_WindowBase):
             self.statusBar().showMessage("Sélectionnez un calque image à enregistrer", 3000)
             return
         self._export(f"{safe_file_stem(layer.name, 'Calque')}.png", "Enregistrer le calque sous",
-                     lambda: qimage_to_pil(item.pixmap().toImage()), "Calque enregistré",
+                     lambda: self.layer_pixels(layer), "Calque enregistré",
                      "Enregistrement du calque impossible")
 
     def _confirm_completed_path(self, chosen: Path, destination: Path, title: str) -> bool:

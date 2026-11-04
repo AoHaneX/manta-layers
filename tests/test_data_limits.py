@@ -1,9 +1,11 @@
 """Data robustness: layer and manifest limits, damaged layers, recovery copies."""
 from unittest import mock
+from zipfile import ZipFile
 
 import pytest
+from conftest import png_bytes
 from PIL import Image
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from app import recovery, storage
 from app.model import MAX_LAYERS, Document, Layer
@@ -60,6 +62,55 @@ def test_an_oversized_manifest_is_refused_before_writing(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="Mo"):
         save_project(_text_document(40), path)
     assert not path.exists() and not (tmp_path / "projet.manta.tmp").exists()
+
+
+def _damaged_project(window, tmp_path, monkeypatch):
+    document = Document(40, 30)
+    layer = document.add_image_bytes(png_bytes(6, 6), "Cassée", center=False)
+    path = tmp_path / "abime.manta"
+    save_project(document, path)
+    with ZipFile(path) as archive:
+        entries = {name: archive.read(name) for name in archive.namelist()}
+    entries[f"assets/{layer.asset}.png"] = entries[f"assets/{layer.asset}.png"][:40]
+    with ZipFile(path, "w") as archive:
+        for name, data in entries.items():
+            archive.writestr(name, data)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *_a, **_k: None)
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_a, **_k: (str(path), ""))
+    window.open_document()
+    window.select_layer(layer.id)
+    return layer
+
+
+def test_a_damaged_layer_is_not_copied(window, tmp_path, monkeypatch):
+    QApplication.clipboard().clear()
+    layer = _damaged_project(window, tmp_path, monkeypatch)
+    assert not window.copy_layer()
+    assert QApplication.clipboard().image().isNull()
+    assert not window.cut_layer()
+    assert window.document.layer(layer.id) is not None  # cutting failed: the layer stays
+
+
+def test_a_damaged_layer_is_not_exported(window, tmp_path, monkeypatch):
+    _damaged_project(window, tmp_path, monkeypatch)
+    errors = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda *args, **_k: errors.append(args[2]))
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_a, **_k: (str(tmp_path / "c.png"), ""))
+    window.export_selected_layer()
+    assert errors and "illisible" in errors[0]
+    assert not (tmp_path / "c.png").exists()
+
+
+def test_a_copied_layer_keeps_its_exact_pixels(window):
+    document = Document(20, 20)
+    layer = document.add_image_bytes(png_bytes(3, 2, (200, 100, 50, 10)), "Voile", center=False)
+    layer.flip_horizontal = True
+    window.install_document(document, layer.id)
+    assert window.copy_layer()
+    image = QApplication.clipboard().image()
+    color = image.pixelColor(0, 0)
+    assert (image.width(), image.height()) == (3, 2)
+    assert (color.red(), color.green(), color.blue(), color.alpha()) == (200, 100, 50, 10)
 
 
 def test_a_copy_that_cannot_be_written_is_reported(window, monkeypatch):
