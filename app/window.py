@@ -1209,7 +1209,10 @@ class MainWindow(QMainWindow):
                     break
             self.doc_info.setText(f"{doc.width} × {doc.height} px · {len(doc.layers)} calque(s)")
             if self.selection_mask is not None and self.selection_mask.size != (doc.width, doc.height):
-                self.selection_mask = selection.resize_canvas(self.selection_mask, (doc.width, doc.height))
+                # Size changes record the selection in their own undo step (resize_document):
+                # this only keeps the mask the size of the document in between.
+                resized = selection.resize_canvas(self.selection_mask, (doc.width, doc.height))
+                self.selection_mask = None if selection.is_empty(resized) else resized
                 self._refresh_selection_visual()
             self._refresh_properties()
             self.update_utility_buttons()
@@ -3229,18 +3232,36 @@ class MainWindow(QMainWindow):
 
     def resize_document(self):
         dialog = ResizeDocumentDialog(self.document.width, self.document.height, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        width, height = dialog.dimensions()
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            width, height = dialog.dimensions()
+        finally:
+            dialog.deleteLater()
+        self.set_document_size(width, height)
+
+    def set_document_size(self, width: int, height: int) -> bool:
+        """Change the working area; the selection is cut to it in the same undo step."""
         if (width, height) == (self.document.width, self.document.height):
-            return
+            return False
 
         def resize(doc):
             doc.width = width
             doc.height = height
 
-        if self.mutate(f"Redimensionner le document en {width} × {height} px", resize, self.selected_id):
+        label = f"Redimensionner le document en {width} × {height} px"
+        resized = (selection.resize_canvas(self.selection_mask, (width, height))
+                   if self.selection_mask is not None else None)
+        self.undo_stack.beginMacro(label)
+        try:
+            # Undoing restores the whole selection, not the part left by the smaller frame.
+            self.set_selection(resized, label)
+            done = self.mutate(label, resize, self.selected_id)
+        finally:
+            self.undo_stack.endMacro()
+        if done:
             self.canvas.fit_document()
+        return done
 
     def maybe_save(self) -> bool:
         self._commit_pending_edits()
