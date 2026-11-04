@@ -1,4 +1,5 @@
 """Data robustness: layer and manifest limits, damaged layers, recovery copies."""
+import json
 from unittest import mock
 from zipfile import ZipFile
 
@@ -111,6 +112,31 @@ def test_a_copied_layer_keeps_its_exact_pixels(window):
     color = image.pixelColor(0, 0)
     assert (image.width(), image.height()) == (3, 2)
     assert (color.red(), color.green(), color.blue(), color.alpha()) == (200, 100, 50, 10)
+
+
+def test_a_restored_copy_is_rewritten_at_once(qapp, tmp_path, monkeypatch):
+    from PySide6.QtCore import QSettings
+
+    from app.window import MainWindow
+
+    directory = tmp_path / "recovery"
+    directory.mkdir()
+    crashed = "c" * 32
+    save_project(_text_document(2), directory / f"{crashed}.manta")
+    (directory / f"{crashed}.json").write_text(json.dumps({"saved_at": 1.0}), encoding="utf-8")
+    monkeypatch.setattr(MainWindow, "_ask_recovery", lambda *_args: "restore")
+    window = MainWindow(settings=QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat),
+                        recovery_dir=directory)
+    try:
+        assert window.offer_session_recovery()
+        own_copy, _meta = window.recovery.files(window.recovery.session_id)
+        # Without waiting for the timer: a second crash now still finds the work.
+        assert own_copy.exists() and len(open_project(own_copy).layers) == 2
+        assert not (directory / f"{crashed}.manta").exists()
+    finally:
+        window._commit_pending_edits()
+        window.undo_stack.setClean()
+        window.close()
 
 
 def test_a_copy_that_cannot_be_written_is_reported(window, monkeypatch):

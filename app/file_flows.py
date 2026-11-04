@@ -456,6 +456,12 @@ class DocumentFlowsMixin(_WindowBase):
             QMessageBox.warning(self, "Restauration impossible",
                                 f"{exc}\n\nLa copie reste disponible : {candidate['project']}")
             return False
-        # The restored work now belongs to this session: its own copies take over.
-        self.recovery.discard(candidate["id"])
+        # The restored work now belongs to this session: its own copy is written at
+        # once, before the restored one is deleted. Waiting for the next timed copy
+        # would leave a minute during which a second crash loses the work.
+        if self.autosave_now(background=False):
+            self.recovery.discard(candidate["id"])
+        else:
+            self.statusBar().showMessage(
+                f"La copie restaurée est conservée : {candidate['project']}", 10000)
         return True
