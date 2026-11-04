@@ -34,11 +34,11 @@ from . import __version__, background, background_dialog, selection
 from .color_tools import ColorToolsMixin
 from .commands import DocumentCommand, SelectionCommand
 from .file_flows import DocumentFlowsMixin
-from .graphics import forget_font_families, qimage_png, resolve_font_family
+from .graphics import forget_font_families, pil_to_qimage, qimage_png, render_layer_with_mask, resolve_font_family
 from .icons import sidebar_arrow_icon
 from .layer_flows import LayerFlowsMixin
 from .layer_panel import FOLDER_ROLE, build_folder_row, build_layer_row
-from .model import MAX_LAYERS, Document
+from .model import MAX_LAYERS, Document, Layer
 from .paths import user_data_directory
 from .screen_picker import ScreenColorPicker
 from .selection_flows import SelectionFlowsMixin, clipboard_fingerprint
@@ -975,9 +975,30 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         if not layer or layer.kind != "image" or item is None:
             self.statusBar().showMessage("Sélectionnez un calque image à copier", 3000)
             return False
-        QApplication.clipboard().setImage(item.pixmap().toImage())
+        try:
+            pixels = self.layer_pixels(layer)
+        except ValueError as exc:
+            self.statusBar().showMessage(f"Copie impossible : {exc}", 5000)
+            return False
+        QApplication.clipboard().setImage(pil_to_qimage(pixels))
         self.statusBar().showMessage(f"Calque copié : {layer.name}", 3000)
         return True
+
+    def layer_pixels(self, layer: Layer) -> Image.Image:
+        """Exact pixels of an image layer as shown (edits, mask and flips), for copies and exports.
+
+        The displayed pixmap is not used: it is premultiplied, and a damaged image
+        is shown as a hatched stand-in that must never be copied or exported.
+        """
+        try:
+            image = render_layer_with_mask(layer, self.document)
+        except Exception as exc:
+            raise ValueError(f"image illisible pour le calque « {layer.name} » ({exc})") from exc
+        if layer.flip_horizontal:
+            image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        if layer.flip_vertical:
+            image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        return image
 
     def cut_layer(self) -> bool:
         focused = QApplication.focusWidget()
