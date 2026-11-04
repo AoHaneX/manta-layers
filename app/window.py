@@ -1443,7 +1443,7 @@ class MainWindow(QMainWindow):
             doc.normalize_folders()
             holder["id"] = new.id
 
-        if not self.mutate("Fusionner les calques", apply):
+        if not self.mutate("Fusionner les calques", apply, lambda: holder["id"]):
             return False
         self.checked_ids = {holder["id"]}
         self.select_layer(holder["id"])
@@ -1732,11 +1732,18 @@ class MainWindow(QMainWindow):
         self.paint_global_btn.setEnabled(can_paint)
         self._schedule_right_panel_layout()
 
-    def mutate(self, description: str, fn, select_after: str | None = None) -> bool:
+    def mutate(self, description: str, fn, select_after=None) -> bool:
+        """Apply ``fn`` to a copy of the document as one undoable step.
+
+        ``select_after`` is the layer selected once the step is done (and redone),
+        or a function returning it, called after ``fn`` for layers ``fn`` creates.
+        """
         before = self.document.clone()
         after = self.document.clone()
         try:
             fn(after)
+            if callable(select_after):
+                select_after = select_after()
             # Safety net: whatever the change, folders stay contiguous and never empty,
             # and images or masks no layer uses any more are not carried along.
             after.normalize_folders()
@@ -2067,7 +2074,7 @@ class MainWindow(QMainWindow):
             def add(doc):
                 doc.layers.append(deepcopy(new_layer))
 
-            if self.mutate("Ajouter un texte", add):
+            if self.mutate("Ajouter un texte", add, new_layer.id):
                 self.select_layer(new_layer.id)
             return
         layer = self.document.layer(session["layer_id"])
@@ -2562,7 +2569,7 @@ class MainWindow(QMainWindow):
             holder["id"] = new.id
 
         label = "Couper vers un nouveau calque" if cut else "Copier vers un nouveau calque"
-        if not self.mutate(label, apply, layer.id):
+        if not self.mutate(label, apply, lambda: holder["id"]):
             return False
         self.select_layer(holder["id"])
         return True
@@ -2646,7 +2653,7 @@ class MainWindow(QMainWindow):
             source.visible = False
             holder["id"] = new.id
 
-        if self.mutate("Supprimer l'arrière-plan (nouveau calque)", add_layer, layer.id):
+        if self.mutate("Supprimer l'arrière-plan (nouveau calque)", add_layer, lambda: holder["id"]):
             self.select_layer(holder["id"])
 
     def trim_layer_margins(self, layer_id: str | None = None) -> bool:
@@ -3066,7 +3073,7 @@ class MainWindow(QMainWindow):
                 layer.x, layer.y = float(origin[0]), float(origin[1])
             holder["id"] = layer.id
 
-        if not self.mutate("Coller une image", add):
+        if not self.mutate("Coller une image", add, lambda: holder["id"]):
             return False
         self.select_layer(holder["id"])
         self.tabs.setCurrentIndex(0)
@@ -3166,7 +3173,7 @@ class MainWindow(QMainWindow):
 
             # Un fichier illisible ou trop grand est signalé par mutate et
             # n'ajoute aucune étape à l'historique.
-            if self.mutate(f"Importer {path.stem}", add):
+            if self.mutate(f"Importer {path.stem}", add, lambda holder=holder: holder["id"]):
                 self.select_layer(holder["id"])
 
     def add_text(self):
@@ -3178,7 +3185,7 @@ class MainWindow(QMainWindow):
             layer = doc.add_text(content)
             layer.font_family = resolve_font_family(self.last_font_family)
             holder['id'] = layer.id
-        if self.mutate("Ajouter un texte", add):
+        if self.mutate("Ajouter un texte", add, lambda: holder["id"]):
             self.select_layer(holder['id'])
             self.tabs.setCurrentIndex(0)
 
@@ -3194,7 +3201,8 @@ class MainWindow(QMainWindow):
         layer = self.document.layer(self.selected_id)
         if layer and not layer.locked:
             result = {}
-            if self.mutate("Dupliquer le calque", lambda doc: result.update(id=doc.duplicate_layer(layer.id).id)):
+            if self.mutate("Dupliquer le calque", lambda doc: result.update(id=doc.duplicate_layer(layer.id).id),
+                           lambda: result["id"]):
                 self.select_layer(result['id'])
         elif layer:
             self.statusBar().showMessage("Déverrouillez le calque avant de le dupliquer", 3000)
@@ -3382,7 +3390,7 @@ class MainWindow(QMainWindow):
         def add(doc):
             holder["id"] = doc.add_image_bytes(data, name).id
 
-        if not self.mutate(f"Ajouter : {name}", add):
+        if not self.mutate(f"Ajouter : {name}", add, lambda: holder["id"]):
             return False
         self.select_layer(holder["id"])
         return True
@@ -3455,7 +3463,8 @@ class MainWindow(QMainWindow):
         def apply(doc):
             holder["ids"] = insert_elements(doc, elements, offset)
 
-        if not self.mutate(f"Insérer le modèle « {name} »", apply):
+        if not self.mutate(f"Insérer le modèle « {name} »", apply,
+                           lambda: holder["ids"][-1] if holder["ids"] else None):
             return False
         self.set_checked_layers(holder["ids"])
         if holder["ids"]:
