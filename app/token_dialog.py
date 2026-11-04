@@ -5,7 +5,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .graphics import checker_brush, pil_to_qimage, render_layers_region
+from .graphics import RENDER_ERRORS, checker_brush, pil_to_qimage, render_layers_region
 from .model import IMPORT_FORMATS, MAX_PIXELS
 from .theme import COLORS
 from .tokens import FRAMES, MAX_SIZE, MIN_SIZE, TokenSettings, max_border, render_token
@@ -196,12 +196,16 @@ class TokenDialog(QDialog):
                     raise ValueError("Image trop grande (maximum 67 mégapixels)")
                 image.load()
                 self.set_source(image, Path(path).stem)
-        except (OSError, ValueError, UnidentifiedImageError) as exc:
+        except RENDER_ERRORS as exc:
             QMessageBox.warning(self, "Image illisible", str(exc))
 
     def use_selected_layer(self) -> None:
         layer = self.window_.document.layer(self.window_.selected_id)
-        rendered = render_layers_region(self.window_.document, [layer.id]) if layer else None
+        try:
+            rendered = render_layers_region(self.window_.document, [layer.id]) if layer else None
+        except RENDER_ERRORS as exc:
+            QMessageBox.warning(self, "Créateur de tokens", f"Ce calque ne peut pas servir de portrait : {exc}")
+            return
         if layer is None or rendered is None:
             QMessageBox.information(self, "Créateur de tokens", "Sélectionnez un calque visible.")
             return

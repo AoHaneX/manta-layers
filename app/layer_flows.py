@@ -11,7 +11,14 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QApplication, QCheckBox, QInputDialog, QListWidgetItem, QMenu, QMessageBox
 
-from .graphics import layers_bounds, merge_changes_appearance, qimage_png, render_document, render_layers_region
+from .graphics import (
+    RENDER_ERRORS,
+    layers_bounds,
+    merge_changes_appearance,
+    qimage_png,
+    render_document,
+    render_layers_region,
+)
 from .layer_panel import FOLDER_ROLE, set_row_checked
 from .model import Document, Layer
 from .templates import extract_elements, list_templates, save_template
@@ -175,7 +182,11 @@ class LayerFlowsMixin(_WindowBase):
         if any(layer.locked for layer in sources):
             self.statusBar().showMessage("Déverrouillez les calques avant de les fusionner", 3500)
             return False
-        if merge_changes_appearance(self.document, [layer.id for layer in sources]):
+        changes = self._render_or_report(
+            "Fusionner les calques", lambda: merge_changes_appearance(self.document, [layer.id for layer in sources]))
+        if changes is None:
+            return False
+        if changes:
             answer = QMessageBox.question(
                 self, "Fusionner les calques",
                 "Des calques non cochés se trouvent entre les calques à fusionner et les recouvrent. "
@@ -187,7 +198,7 @@ class LayerFlowsMixin(_WindowBase):
                 return False
         try:
             merged = render_layers_region(self.document, [layer.id for layer in sources])
-        except ValueError as exc:
+        except RENDER_ERRORS as exc:
             self._report_failure("Fusionner les calques", exc)
             return False
         if merged is None:

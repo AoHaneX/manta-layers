@@ -34,7 +34,14 @@ from . import __version__, background, background_dialog, selection
 from .color_tools import ColorToolsMixin
 from .commands import DocumentCommand, SelectionCommand
 from .file_flows import DocumentFlowsMixin
-from .graphics import forget_font_families, pil_to_qimage, qimage_png, render_layer_with_mask, resolve_font_family
+from .graphics import (
+    RENDER_ERRORS,
+    forget_font_families,
+    pil_to_qimage,
+    qimage_png,
+    render_layer_with_mask,
+    resolve_font_family,
+)
 from .icons import sidebar_arrow_icon
 from .layer_flows import LayerFlowsMixin
 from .layer_panel import FOLDER_ROLE, build_folder_row, build_layer_row
@@ -991,6 +998,14 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         self.statusBar().showMessage(f"Calque copié : {layer.name}", 3000)
         return True
 
+    def _render_or_report(self, action: str, render):
+        """Result of a render a tool needs, or None after telling why it failed (damaged image)."""
+        try:
+            return render()
+        except RENDER_ERRORS as exc:
+            self._report_failure(action, exc)
+            return None
+
     def layer_pixels(self, layer: Layer) -> Image.Image:
         """Exact pixels of an image layer as shown (edits, mask and flips), for copies and exports.
 
@@ -999,7 +1014,7 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         """
         try:
             image = render_layer_with_mask(layer, self.document)
-        except Exception as exc:
+        except RENDER_ERRORS as exc:
             raise ValueError(f"image illisible pour le calque « {layer.name} » ({exc})") from exc
         if layer.flip_horizontal:
             image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
