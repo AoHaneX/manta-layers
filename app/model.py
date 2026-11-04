@@ -23,7 +23,8 @@ MAX_DIMENSION = 16384
 # Au-delà, le décodage et l'affichage d'un calque deviennent trop coûteux en mémoire
 # (une image RGBA de 8192 × 8192 occupe déjà 256 Mo une fois décodée).
 MAX_PIXELS = 8192 * 8192
-# Largest document that can be exported (rendered at once in memory, about 480 MB).
+# Largest document that can be exported: rendered at once, then copied once for
+# Pillow (about 2 × 480 MB).
 # New and resized documents stay below it; older projects above it still open.
 MAX_DOCUMENT_PIXELS = 120_000_000
 # Worst case of a MAX_PIXELS RGBA image stored as PNG (incompressible noise),
