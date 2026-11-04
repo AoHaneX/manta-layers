@@ -7,7 +7,7 @@ from functools import lru_cache
 from hashlib import sha1
 from io import BytesIO
 from math import atan2, ceil, cos, degrees, floor, hypot, radians, sin
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from PIL import Image, ImageChops, ImageDraw
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRect, QRectF, Qt
@@ -659,6 +659,36 @@ def crop_image_layer(layer: Layer, document: Document,
     if render_layer_with_mask(trimmed, probe).tobytes() != expected.tobytes():
         raise ValueError("les retouches de ce calque ne peuvent pas être rejouées à l'identique après rognage")
     return trimmed, assets
+
+
+# Last source image read by the colour tools: clicking again on the same layer
+# does not decode it again. One entry only, released with the next layer.
+_LAST_SOURCE: dict[str, Image.Image] = {}
+
+
+def layer_source_pixel(layer: Layer, document: Document, x: int, y: int,
+                       shown_size: tuple[int, int]) -> tuple[int, int, tuple[int, int, int, int]] | None:
+    """Exact colour under the displayed pixel (x, y) of an image layer, with its source position.
+
+    The displayed pixmap is premultiplied: it changes the colour of
+    semi-transparent pixels, so tools read the source pixels instead (with the
+    layer's edits and mask), mirrored like the display. None outside the layer.
+    """
+    width, height = shown_size
+    if not (0 <= x < width and 0 <= y < height):
+        return None
+    source_x = width - 1 - x if layer.flip_horizontal else x
+    source_y = height - 1 - y if layer.flip_vertical else y
+    key = _render_key(layer)
+    image = _LAST_SOURCE.get(key)
+    if image is None:
+        image = render_layer_with_mask(layer, document).convert("RGBA")
+        _LAST_SOURCE.clear()
+        _LAST_SOURCE[key] = image
+    if not (source_x < image.width and source_y < image.height):
+        return None
+    pixel = cast(tuple[int, int, int, int], image.getpixel((source_x, source_y)))
+    return source_x, source_y, pixel
 
 
 def layer_pixmap(layer: Layer, document: Document) -> QPixmap:
