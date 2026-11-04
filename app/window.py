@@ -1764,7 +1764,7 @@ class MainWindow(QMainWindow):
         ``select_after`` is the layer selected once the step is done (and redone),
         or a function returning it, called after ``fn`` for layers ``fn`` creates.
         """
-        before = self.document.clone()
+        before = self._current_snapshot()
         after = self.document.clone()
         try:
             fn(after)
@@ -1781,9 +1781,61 @@ class MainWindow(QMainWindow):
                                           self.selected_id,
                                           select_after if select_after is not None else self.selected_id))
 
+    # --- History storage ------------------------------------------------------------
+    # Each step keeps the document before and after it. Snapshots are never
+    # modified once stored (the canvas shows a copy), so the layers a step does
+    # not change are shared with the previous snapshot instead of being copied:
+    # the history grows with the changes, not with the size of the document.
+
+    def _last_applied_document(self) -> Document | None:
+        """Snapshot of the document left by the last applied step, if it can be found."""
+        for index in range(self.undo_stack.index() - 1, -1, -1):
+            command = self.undo_stack.command(index)
+            if isinstance(command, DocumentCommand):
+                return command.after
+            children = [command.child(child) for child in range(command.childCount())]
+            documents = [child for child in children if isinstance(child, DocumentCommand)]
+            if documents:
+                return documents[-1].after
+            if not isinstance(command, SelectionCommand) and children == []:
+                return None  # an unknown kind of step: no shortcut
+        return None
+
+    def _current_snapshot(self) -> Document:
+        """The document shown, as a snapshot: the stored one when it is identical, else a copy."""
+        previous = self._last_applied_document()
+        if previous is not None and previous == self.document:
+            return previous
+        return self.document.clone()
+
+    @staticmethod
+    def _share_layers(snapshot: Document, reference: Document) -> None:
+        """Replace the layers of ``snapshot`` identical to those of ``reference`` by the same objects."""
+        known = {layer.id: layer for layer in reference.layers}
+        shared = []
+        for layer in snapshot.layers:
+            previous = known.get(layer.id)
+            if previous is None:
+                shared.append(layer)
+            elif previous == layer:
+                shared.append(previous)
+            else:
+                # A changed layer still shares its earlier strokes and fills: a new
+                # eraser stroke must not copy all the previous ones into the step.
+                for name in ("eraser_strokes", "color_fills"):
+                    old, new = getattr(previous, name), getattr(layer, name)
+                    setattr(layer, name, [old[index] if index < len(old) and old[index] == item else item
+                                          for index, item in enumerate(new)])
+                shared.append(layer)
+        snapshot.layers = shared
+
     def _push(self, command: DocumentCommand) -> bool:
         """Empile une commande ; si son application échoue, elle n'entre pas dans l'historique."""
         description = command.text()
+        previous = self._last_applied_document()
+        if previous is not None and command.before is not previous:
+            self._share_layers(command.before, previous)
+        self._share_layers(command.after, command.before)
         # Build the new scene first: pushing clears the redo steps and may move
         # the saved state, which a change that cannot be shown must not do.
         try:
@@ -3772,8 +3824,8 @@ class MainWindow(QMainWindow):
         layer = self.document.layer(self.selected_id)
         if layer is None or layer.locked:
             return False
-        before = self.document.clone()
-        after = before.clone()
+        before = self._current_snapshot()
+        after = self.document.clone()
         target = after.layer(layer.id)
         if target is None:
             return False
