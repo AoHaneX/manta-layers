@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest>=8,<10
+# Coverage: python -m pytest --cov=app --cov-report=term-missing
+pytest-cov>=5,<8

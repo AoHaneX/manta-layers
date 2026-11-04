@@ -230,6 +230,7 @@ Une fois les dépendances installées, ouvre un terminal dans ce dossier et exé
 ```
 
 Contrôles statiques (facultatifs, configurés dans `pyproject.toml`) : `ruff check app tests` et `mypy app`.
+Couverture des tests : `.venv\Scripts\python.exe -m pytest --cov=app --cov-report=term-missing` (`pytest-cov` fait partie de `requirements-dev.txt`).
 
 Les tests utilisent des images synthétiques : ils ne demandent ni réseau ni modèle d'IA.
 
