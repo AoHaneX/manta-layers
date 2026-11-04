@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from copy import deepcopy
+from hashlib import sha1
 from io import BytesIO
 from math import floor
 from pathlib import Path
@@ -106,6 +107,15 @@ from .token_dialog import TokenDialog
 from .widgets import CommitPlainTextEdit, InlineTextEditor, LayerListWidget, SidebarBackground
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def clipboard_fingerprint(image: QImage) -> str:
+    """Identity of an image's pixels, whatever the format the clipboard returns it in."""
+    pixels = image.convertToFormat(QImage.Format.Format_RGBA8888)
+    digest = sha1(f"{pixels.width()}x{pixels.height()}".encode(), usedforsecurity=False)
+    digest.update(pixels.constBits())
+    return digest.hexdigest()
+
 ASSETS = ROOT / "assets"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 FONT_SUFFIXES = {".ttf", ".otf", ".ttc"}
@@ -234,8 +244,9 @@ class MainWindow(QMainWindow):
         self._collapsed_folders: dict[str, bool] = {}
         self._layer_rows: dict[str, QWidget] = {}
         self.models_dir = background.models_directory()
-        self._clipboard_origin: tuple[tuple[int, int], tuple[int, int]] | None = None
-        self._setting_clipboard = False
+        # Position of the pixels this window copied, with the fingerprint of the
+        # clipboard image they became: only that image is pasted back in place.
+        self._clipboard_origin: tuple[tuple[int, int], str] | None = None
         self.last_eraser_point: tuple[float, float] | None = None
         self.last_eraser_layer_id: str | None = None
         self.replacement_color = COLORS["primary"]
@@ -1146,7 +1157,6 @@ class MainWindow(QMainWindow):
         self._action(s, "Supprimer le masque du calque", self.remove_layer_mask)
         self.selection_actions = (deselect, copy_layer, cut_layer, clear, hide, reveal)
         self._update_selection_actions()
-        QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
         insertion = self.menuBar().addMenu("Insertion")
         self._action(insertion, "Image…", self.add_images)
         self._action(insertion, "Texte…", self.add_text)
@@ -2568,11 +2578,12 @@ class MainWindow(QMainWindow):
         if pixels is None:
             return False
         image, origin = pixels
-        self._setting_clipboard = True
-        QApplication.clipboard().setImage(pil_to_qimage(image))
-        self._setting_clipboard = False
-        # Pasting our own copy puts it back where it came from.
-        self._clipboard_origin = (origin, image.size)
+        copied = pil_to_qimage(image)
+        QApplication.clipboard().setImage(copied)
+        # Pasting our own copy puts it back where it came from. The clipboard is
+        # recognised by its content, not by its change notifications, which Windows
+        # sends later, once the copy is over.
+        self._clipboard_origin = (origin, clipboard_fingerprint(copied))
         self.statusBar().showMessage("Sélection copiée", 3000)
         return True
 
@@ -2581,10 +2592,6 @@ class MainWindow(QMainWindow):
             return False
         self.clear_selection_content()
         return True
-
-    def _on_clipboard_changed(self):
-        if not self._setting_clipboard:
-            self._clipboard_origin = None
 
     def selection_to_new_layer(self, cut: bool = False, offset: tuple[int, int] = (0, 0)) -> bool:
         layer = self._selection_layer(editable=cut)
@@ -3109,7 +3116,7 @@ class MainWindow(QMainWindow):
         data = qimage_png(image)
         holder = {}
         origin = None
-        if self._clipboard_origin and self._clipboard_origin[1] == (image.width(), image.height()):
+        if self._clipboard_origin and self._clipboard_origin[1] == clipboard_fingerprint(image):
             origin = self._clipboard_origin[0]
 
         def add(doc):
