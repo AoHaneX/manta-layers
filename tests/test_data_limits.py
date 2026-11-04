@@ -1,5 +1,6 @@
 """Data robustness: layer and manifest limits, damaged layers, recovery copies."""
 import json
+import threading
 from unittest import mock
 from zipfile import ZipFile
 
@@ -8,7 +9,7 @@ from conftest import png_bytes
 from PIL import Image
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from app import recovery, storage
+from app import diagnostics, recovery, storage
 from app.model import MAX_LAYERS, Document, Layer
 from app.storage import open_project, save_project
 
@@ -18,6 +19,8 @@ def _text_document(count):
     document.layers = [Layer(id=f"t{index}", kind="text", text="a") for index in range(count)]
     return document
 
+
+# --- Layer limit: whatever can be edited can be saved and reopened ---------------------------
 
 def test_more_than_a_thousand_layers_save_and_reopen(tmp_path):
     path = tmp_path / "planche.manta"
@@ -57,6 +60,8 @@ def test_sprites_that_do_not_fit_are_refused_with_a_message(window, monkeypatch)
     assert len(window.document.layers) == 3
 
 
+# --- Manifest size: checked when writing -------------------------------------------------------
+
 def test_an_oversized_manifest_is_refused_before_writing(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "MAX_MANIFEST_BYTES", 2000)
     path = tmp_path / "projet.manta"
@@ -64,6 +69,8 @@ def test_an_oversized_manifest_is_refused_before_writing(tmp_path, monkeypatch):
         save_project(_text_document(40), path)
     assert not path.exists() and not (tmp_path / "projet.manta.tmp").exists()
 
+
+# --- Damaged layers are never copied or exported as their hatched stand-in -------------------
 
 def _damaged_project(window, tmp_path, monkeypatch):
     document = Document(40, 30)
@@ -114,6 +121,8 @@ def test_a_copied_layer_keeps_its_exact_pixels(window):
     assert (color.red(), color.green(), color.blue(), color.alpha()) == (200, 100, 50, 10)
 
 
+# --- Recovery copies ---------------------------------------------------------------------------
+
 def test_a_restored_copy_is_rewritten_at_once(qapp, tmp_path, monkeypatch):
     from PySide6.QtCore import QSettings
 
@@ -148,3 +157,28 @@ def test_a_copy_that_cannot_be_written_is_reported(window, monkeypatch):
     assert not window.autosave_now()
     assert len(warnings) == 1 and "disque plein" in warnings[0]  # one dialog, then the status bar
     assert "disque plein" in window.statusBar().currentMessage()
+
+
+def test_an_unexpected_error_stays_inside_the_recovery_thread(tmp_path, qapp, monkeypatch):
+    monkeypatch.setattr(recovery, "save_project", mock.Mock(side_effect=RuntimeError("panne")))
+    writer = recovery.RecoveryWriter(Document(4, 4), 1, tmp_path / "c.manta", tmp_path / "c.json", None)
+    writer.start()
+    assert writer.wait(5000)
+    assert not writer.succeeded and "panne" in writer.error
+
+
+def test_the_error_report_opens_no_dialog_outside_the_interface_thread(qapp, monkeypatch):
+    shown = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **_k: shown.append(args))
+    monkeypatch.setattr("sys.stderr", None)
+
+    def fail():
+        try:
+            raise RuntimeError("dans un thread")
+        except RuntimeError as exc:
+            diagnostics.report_exception(type(exc), exc, exc.__traceback__)
+
+    thread = threading.Thread(target=fail)
+    thread.start()
+    thread.join()
+    assert shown == []
