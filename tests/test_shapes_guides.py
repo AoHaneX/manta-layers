@@ -6,7 +6,7 @@ from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 
 from app.graphics import layer_transform, qimage_to_pil, render_document
-from app.model import Document, Layer
+from app.model import SHAPE_TYPES, Document, Layer
 from app.shape_item import shape_from_drag
 from app.storage import open_project, save_project
 
@@ -213,3 +213,18 @@ def test_undo_during_an_eraser_stroke_drops_the_stroke(one_image):
     _press_undo_move_release(window, layer_id)
     assert window.canvas.eraser_item is None
     assert window.document.layer(layer_id).eraser_strokes == []
+
+
+@pytest.mark.parametrize("shape_type", SHAPE_TYPES)
+def test_thick_outlines_stay_inside_the_layer_bounds(qapp, shape_type):
+    """Merging crops to the bounds: they must hold the whole outline, sharp corners included."""
+    from app.graphics import render_layers, render_layers_region
+
+    document = Document(800, 800)
+    layer = Layer(kind="shape", shape_type=shape_type, polygon_sides=3, shape_width=200, shape_height=180,
+                  x=300, y=300, fill_color="#FF0000", stroke_color="#000000", stroke_width=40)
+    document.layers.append(layer)
+    ink = render_layers(document, [layer.id]).getchannel("A").getbbox()
+    image, (left, top) = render_layers_region(document, [layer.id])
+    assert left <= ink[0] and top <= ink[1]
+    assert left + image.width >= ink[2] and top + image.height >= ink[3]
