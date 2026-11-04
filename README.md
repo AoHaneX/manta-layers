@@ -151,7 +151,7 @@ MantaLayers/
 ├── lancer_manta_layers.bat     # lanceur Windows (installe au premier démarrage)
 ├── installer_dependances.bat   # installation explicite
 ├── requirements.txt            # PySide6 (modules essentiels) et Pillow
-├── requirements-dev.txt        # + pytest
+├── requirements-dev.txt        # + pytest, pytest-cov
 ├── requirements-ai.txt         # facultatif : onnxruntime et numpy pour le détourage IA
 ├── pyproject.toml              # réglages de pytest, ruff et mypy
 ├── LICENSE                     # MIT pour le code, illustrations réservées
@@ -178,7 +178,8 @@ MantaLayers/
 │   ├── recovery.py             # copies de récupération de la session
 │   ├── export.py               # écriture de l'image finale (PNG, JPEG, WebP)
 │   ├── diagnostics.py          # journal des erreurs (logs/manta.log)
-│   ├── graphics.py             # canvas Qt, transformation et rendu
+│   ├── graphics.py             # rendu des calques, texte vectoriel, gomme, exports
+│   ├── canvas.py               # canvas Qt : outils souris et clavier
 │   ├── theme.py                # tokens et feuille de style ReefKit centralisés
 │   ├── icons.py                # pictogrammes vectoriels
 │   ├── widgets.py              # widgets de la liste des calques et du panneau
@@ -192,7 +193,14 @@ MantaLayers/
 │   ├── template_library.py     # bibliothèque de modèles d'éléments
 │   ├── tokens.py, token_dialog.py   # créateur de tokens
 │   ├── sprite_dialog.py        # découpe de spritesheets
-│   └── window.py               # fenêtre, actions, historique, contrôles
+│   ├── window.py               # fenêtre principale, propriétés, historique
+│   ├── commands.py             # étapes de l'historique (annuler/rétablir)
+│   ├── window_panels.py        # construction des panneaux et des menus
+│   ├── file_flows.py           # nouveau, ouvrir, enregistrer, exporter, récupération
+│   ├── layer_flows.py          # panneau des calques, dossiers, fusion
+│   ├── text_flows.py           # texte : formes, couleurs, saisie sur le canvas
+│   ├── selection_flows.py      # sélections, presse-papiers, masques, recadrage
+│   └── color_tools.py          # gomme, pipette, pot de peinture, couleurs
 ├── exemples/
 │   └── Manta_Demo.manta        # projet modifiable avec la mascotte
 └── tests/
@@ -205,10 +213,12 @@ MantaLayers/
     ├── test_folders.py, test_layer_panel.py                    # dossiers, sélection multiple, fusion
     ├── test_lasso_trim.py, test_shapes_guides.py               # lassos, rognage, formes, guides
     ├── test_screen_picker.py, test_templates_tools.py          # pipette écran, modèles, tokens, sprites
+    ├── test_pending_edits.py, test_preview_parity.py           # saisies en cours, aperçu de la gomme
+    ├── test_audit_fixes.py, test_export.py                     # corrections de l'audit V3, export
     └── test_gui_smoke.py                                       # intégration Qt
 ```
 
-**Choix architecturaux :** modèle `Document`/`Layer` isolé de Qt ; affichage `QGraphicsScene` ; chaque modification validée crée un `QUndoCommand` dans `QUndoStack` ; historique de snapshots du modèle (plus facile à comprendre pour cette première version, à remplacer par des commandes ciblées lorsque le volume devient important) ; rendu des calques image mis en cache, si bien qu'une action ne recalcule que les calques modifiés, et rendu incrémental : un nouveau trait ou remplissage repart du rendu précédent ; une action dont le rendu échoue est annoncée et n'entre pas dans l'historique ; export via scène temporaire sans handles ni rectangles de sélection ; fichiers projet en ZIP avec manifeste JSON et les images PNG sources.
+**Choix architecturaux :** modèle `Document`/`Layer` isolé de Qt ; affichage `QGraphicsScene` ; chaque modification validée crée un `QUndoCommand` dans `QUndoStack` ; historique de snapshots du modèle dont les calques inchangés sont partagés d'une étape à l'autre ; rendu des calques image mis en cache, si bien qu'une action ne recalcule que les calques modifiés, et rendu incrémental : un nouveau trait ou remplissage repart du rendu précédent ; une action dont le rendu échoue est annoncée et n'entre pas dans l'historique ; export via scène temporaire sans handles ni rectangles de sélection ; fichiers projet en ZIP avec manifeste JSON et les images PNG sources.
 
 Les modèles et les polices importées sont rangés dans le dossier de données de l'utilisateur (`%LOCALAPPDATA%\MantaLayers` sous Windows), jamais dans le dossier de l'application.
 
@@ -251,7 +261,7 @@ Avant toute modification majeure : création d'un projet vide, import de 3 image
 - Le détourage supprime le fond entier ; il ne segmente pas un objet choisi au clic. L'IA dépend de dépendances facultatives et d'un modèle présent sur le disque.
 - Les changements de sélection comptent dans l'historique (ils s'annulent comme les autres actions), mais une simple sélection ne marque pas le document comme modifié.
 - L'historique est limité à 100 commandes et **n'est pas sérialisé** dans `.manta`.
-- Les commandes mémorisent des snapshots du modèle ; c'est simple pour démarrer, mais à optimiser avant les très gros documents.
+- Les commandes mémorisent des snapshots du modèle ; les calques, traits et remplissages inchangés y sont partagés.
 - Le redimensionnement du document change la zone de travail sans déplacer les calques ; le document peut être recadré sur son contenu, mais pas encore librement. Pas de filtres, de calques de réglage ni de PSD.
 - Un document est limité à 120 millions de pixels pour rester exportable : les fenêtres Nouveau projet et Dimensions refusent davantage (un ancien projet plus grand s'ouvre toujours, sans pouvoir être exporté).
 - Images limitées à 67 mégapixels par calque ; le premier affichage d'une très grande image reste lent (pas de cache de tuiles).

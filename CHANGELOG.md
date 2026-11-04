@@ -2,6 +2,23 @@
 
 ## Non publié
 
+### Corrections (audit V3)
+- Fermer la fenêtre, enregistrer ou exporter valide d'abord ce qui est en cours de saisie (nom, texte, valeurs, texte sur le canvas) : la dernière saisie n'est plus perdue.
+- La gomme efface exactement ce que montre son aperçu, y compris la gomme douce et sur un calque retourné ; l'aperçu ne recalcule plus que la zone touchée.
+- La fusion ne coupe plus le contour épais des formes à angles aigus.
+- Replier un dossier ne désélectionne plus le calque courant ; rétablir une création resélectionne le calque créé.
+- Une action impossible à afficher ne vide plus l'historique de rétablissement et ne laisse plus le document « modifié ».
+- Annuler un redimensionnement du document restaure toute la sélection.
+- « Enregistrer sous » demande avant de remplacer le fichier dont l'extension a été complétée.
+- La copie de récupération d'un document abandonné est supprimée ; un projet forgé aux traits de gomme démesurés ne gèle plus l'application.
+- Un projet dont une image est endommagée s'ouvre : l'image est hachurée et signalée, le reste reste modifiable.
+- Le collage d'une copie revient à son emplacement d'origine même quand Windows notifie le presse-papiers en retard.
+- Le texte est placé par caractère perçu : accents décomposés, emoji et drapeaux ne sont plus coupés.
+- La pipette et le pot lisent la couleur exacte des pixels semi-transparents.
+- Historique : les calques, traits et remplissages inchangés sont partagés entre étapes : la mémoire de l'historique ne grandit plus avec le carré du nombre de traits de gomme.
+- Export et vignettes : moins de copies en mémoire, vignettes rendues directement à leur taille.
+- `window.py` découpé en modules (fichiers, calques, texte, sélections, couleurs, panneaux), canvas déplacé dans `canvas.py`.
+
 ### Nouvelles fonctionnalités
 - Sélection multiple de calques par cases à cocher (ou Ctrl+clic) et menu contextuel : créer un dossier, fusionner, supprimer, créer un modèle ; Suppr supprime les calques cochés ; glisser un calque coché déplace toute la sélection.
 - Dossiers de calques : repli, renommage, visibilité globale (canvas et exports), déplacement et glisser-déposer des calques ; structure enregistrée (format 3).
