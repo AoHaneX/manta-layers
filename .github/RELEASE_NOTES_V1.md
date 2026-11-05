@@ -26,12 +26,12 @@ GitHub fournit automatiquement **Source code (zip)** et **Source code (tar.gz)**
 
 **Setup — `MantaLayers-1.0.0-Setup.exe`**
 ```text
-8480BEF8F4566AB3947FDEA80CA4946F1319B9DE4DD99020793A8BD9EA463737
+C21C24681A6BDE1816E36191F0BD52043919F9C24CE8CFEF55E2DD2F77410B2F
 ```
 
 **Portable — `MantaLayers-1.0.0-Windows-Portable.zip`**
 ```text
-3EFBD471F87D1B0E07871D9D3991DE5411B2840D1B72EAE70C321F34F19C8EAB
+23CFED4015078E24B70E14001822F2A22414AF53C4B78993D2B83B6192F731D8
 ```
 
 Le fichier **SHA256SUMS.txt** joint à cette release contient les empreintes des deux distributions Windows. Les archives de code source générées par GitHub ne figurent pas dans ce fichier.
