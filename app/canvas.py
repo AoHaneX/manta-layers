@@ -8,7 +8,7 @@ from __future__ import annotations
 from math import atan2, cos, degrees, hypot, radians, sin
 from typing import TYPE_CHECKING
 
-from PIL import Image, ImageChops
+from PIL import Image
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsView
@@ -17,6 +17,7 @@ from . import selection
 from .graphics import (
     MAX_ZOOM,
     CurvedTextGraphicItem,
+    apply_stroke_coverage,
     checker_brush,
     eraser_dab_origin,
     eraser_source_position,
@@ -197,7 +198,7 @@ class CanvasView(QGraphicsView):
             painter.setBrush(QColor(COLORS["rotation_handle"]))
             painter.drawEllipse(p, size/2, size/2)
         target = self.eraser_item or self.tool_target_graphic()
-        if self.main_window.eraser_active and isinstance(target, QGraphicsPixmapItem):
+        if self.main_window.brush_active() and isinstance(target, QGraphicsPixmapItem):
             local = self.eraser_cursor_local
             if local is not None:
                 size = self.main_window.eraser_size.value()
@@ -212,8 +213,9 @@ class CanvasView(QGraphicsView):
                 preview_pen = QPen(QColor(COLORS["primary"]), 1)
                 preview_pen.setCosmetic(True)
                 painter.setPen(preview_pen)
-                fill = QColor(COLORS["primary"])
-                fill.setAlpha(45)
+                pencil = self.main_window.pencil_active
+                fill = QColor(self.main_window.replacement_color if pencil else COLORS["primary"])
+                fill.setAlpha(110 if pencil else 45)
                 painter.setBrush(fill)
                 painter.drawPath(scene_path)
             if len(self.eraser_points) > 1:
@@ -474,14 +476,15 @@ class CanvasView(QGraphicsView):
         layer_id = self.main_window.tool_target_id()
         item = self.graphic_for(layer_id)
         layer = self.main_window.document.layer(layer_id)
+        tool = "le crayon" if self.main_window.pencil_active else "la gomme"
         if not layer or not isinstance(item, QGraphicsPixmapItem):
             self.main_window.statusBar().showMessage(
-                "La gomme nécessite un calque image sélectionné", 3000
+                f"{tool.capitalize()} nécessite un calque image sélectionné", 3000
             )
             return
         if layer.locked:
             self.main_window.statusBar().showMessage(
-                "Déverrouillez le calque pour utiliser la gomme", 3000
+                f"Déverrouillez le calque pour utiliser {tool}", 3000
             )
             return
         local = item.mapFromScene(self.mapToScene(event.position().toPoint()))
@@ -509,7 +512,7 @@ class CanvasView(QGraphicsView):
         if event.button() == Qt.MouseButton.LeftButton:
             # Un outil actif ne modifie jamais la sélection : il continue de
             # viser le dernier calque choisi.
-            if self.main_window.eraser_active:
+            if self.main_window.brush_active():
                 self._start_eraser_stroke(event)
                 self.viewport().update()
                 event.accept()
@@ -697,7 +700,7 @@ class CanvasView(QGraphicsView):
             self.viewport().update()
             event.accept()
             return
-        if self.main_window.eraser_active:
+        if self.main_window.brush_active():
             item = self.eraser_item or self.tool_target_graphic()
             if item and isinstance(item, QGraphicsPixmapItem):
                 local = item.mapFromScene(self.mapToScene(event.position().toPoint()))
@@ -754,7 +757,7 @@ class CanvasView(QGraphicsView):
             self.unsetCursor()
             event.accept()
             return
-        if (event.button() == Qt.MouseButton.LeftButton and self.main_window.eraser_active
+        if (event.button() == Qt.MouseButton.LeftButton and self.main_window.brush_active()
                 and self.eraser_item and self.eraser_points):
             layer_id = self.eraser_item.data(0)
             points = self.eraser_points
@@ -831,7 +834,8 @@ class CanvasView(QGraphicsView):
         try:
             base = render_layer_with_mask(layer, self.main_window.document)
         except Exception as exc:
-            self.main_window.statusBar().showMessage(f"Gomme impossible : {exc}", 4000)
+            tool = "Crayon" if self.main_window.pencil_active else "Gomme"
+            self.main_window.statusBar().showMessage(f"{tool} impossible : {exc}", 4000)
             return False
         self.eraser_item = item
         self.eraser_original_pixmap = item.pixmap()
@@ -866,9 +870,8 @@ class CanvasView(QGraphicsView):
         box = stamp_eraser_stroke(self.eraser_coverage, self.eraser_settings, points)
         if box is None:
             return
-        region = self.eraser_base.crop(box)
-        region.putalpha(ImageChops.multiply(region.getchannel("A"),
-                                            ImageChops.invert(self.eraser_coverage.crop(box))))
+        region = apply_stroke_coverage(self.eraser_base.crop(box), self.eraser_coverage.crop(box),
+                                       self.eraser_settings)
         left, top = box[0], box[1]
         flip_horizontal, flip_vertical = self.eraser_flips
         if flip_horizontal:

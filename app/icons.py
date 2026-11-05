@@ -231,6 +231,15 @@ def color_tool_icon(tool: str) -> QIcon:
         painter.drawLine(5, 15, 15, 5)
         painter.drawLine(4, 12, 8, 16)
         painter.drawEllipse(QRectF(13, 3, 4, 4))
+    elif tool == "pencil":
+        painter.save()
+        painter.translate(10, 10)
+        painter.rotate(45)
+        painter.setBrush(color)
+        painter.drawRect(QRectF(-2.5, -8, 5, 11))  # body
+        painter.drawLine(QPointF(-2.5, 3), QPointF(0, 8))  # sharpened tip
+        painter.drawLine(QPointF(2.5, 3), QPointF(0, 8))
+        painter.restore()
     elif tool == "eraser":
         painter.save()
         painter.translate(10, 10)

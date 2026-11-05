@@ -59,12 +59,13 @@ class ColorToolsMixin(_WindowBase):
             value = max(1, min(2048, current + direction))
             self.eraser_size_preset.setCurrentIndex(self.eraser_size_preset.count() - 1)
             self.eraser_size.setValue(value)
-        self.statusBar().showMessage(f"Taille de gomme : {value} px", 1800)
+        tool = "du crayon" if self.pencil_active else "de la gomme"
+        self.statusBar().showMessage(f"Taille {tool} : {value} px", 1800)
         self.canvas.viewport().update()
 
     def eraser_stroke_settings(self) -> dict:
-        """Settings of a new eraser stroke, without its points (shared by the preview and the commit)."""
-        return {
+        """Settings of a new eraser or pencil stroke, without its points (shared by the preview and the commit)."""
+        settings = {
             "size": self.eraser_size.value(),
             "shape": self.eraser_shape.currentData(),
             "pixel_art": self.eraser_pixel_art.isChecked(),
@@ -72,12 +73,15 @@ class ColorToolsMixin(_WindowBase):
             "opacity": self.eraser_opacity.value(),
             "pixel_centered": True,
         }
+        if self.pencil_active:
+            settings.update(tool="pencil", color=self.replacement_color)
+        return settings
 
     def commit_eraser_stroke(self, layer_id: str, points: list[QPointF]):
         layer = self.document.layer(layer_id)
         item = self.canvas.graphic_for(layer_id)
         if not layer or layer.kind != "image" or layer.locked or not isinstance(item, QGraphicsPixmapItem):
-            self.statusBar().showMessage("Trait de gomme ignoré : calque non modifiable", 3000)
+            self.statusBar().showMessage("Trait ignoré : calque non modifiable", 3000)
             return
         width, height = item.pixmap().width(), item.pixmap().height()
         stroke = self.eraser_stroke_settings()
@@ -87,7 +91,7 @@ class ColorToolsMixin(_WindowBase):
                              eraser_source_position(point.y(), height, size, layer.flip_vertical)]
                             for point in points]
         self.mutate(
-            "Trait de gomme",
+            "Trait de crayon" if stroke.get("tool") == "pencil" else "Trait de gomme",
             lambda doc: doc.layer(layer_id).eraser_strokes.append(stroke),
             layer_id,
         )
