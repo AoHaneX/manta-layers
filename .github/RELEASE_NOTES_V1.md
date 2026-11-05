@@ -1,35 +1,43 @@
-# Manta Layers v1.0.0 — Première version publique
+# Manta Layers v1.0.0 — Windows
 
-Manta Layers est un éditeur d'images à calques de la suite **Blue Shrimp · ReefKit**, conçu pour Windows 10/11 (64 bits).
+Manta Layers v1.0.0 est disponible pour **Windows 10 et 11, 64 bits**. Cet éditeur d'images à calques fait partie de la suite **Blue Shrimp · ReefKit**. Il permet de composer des visuels avec des images, du texte et des formes, avec une édition non destructive, un historique d'annulation et le format de projet `.manta`.
 
-Cette première version propose une application utilisable entièrement hors ligne, avec une édition non destructive, un format de projet `.manta` et des outils de composition graphique.
+Les deux distributions Windows embarquent Python et les dépendances nécessaires. **Aucune installation de Python n'est requise.**
 
-### Fonctionnalités principales
+### Installateur — Setup
 
-- Calques d'images, textes vectoriels, formes, dossiers et sélection multiple.
-- Déplacement, rotation, redimensionnement, alignement et magnétisme.
-- Sélections rectangulaires, elliptiques et lasso ; masques et gomme non destructifs.
-- Outils de couleur, pipette sur le bureau, fond transparent et export PNG/JPEG/WebP.
-- Bibliothèque de modèles, créateur de tokens JDR et découpe de spritesheets.
-- Historique d'annulation et copies de récupération.
+Téléchargez **MantaLayers-1.0.0-Setup.exe**, puis suivez l'assistant.
 
-### Télécharger
+L'installation se fait par défaut pour votre compte Windows, sans droits d'administrateur. Elle crée un raccourci dans le menu Démarrer et propose un raccourci facultatif sur le bureau.
 
-| Fichier | Utilisation |
-| --- | --- |
-| `MantaLayers-1.0.0-Setup.exe` | Installation Windows avec raccourcis |
-| `MantaLayers-1.0.0-Windows-Portable.zip` | Version autonome : décompresser et lancer `MantaLayers.exe` |
-| `SHA256SUMS.txt` | Empreintes SHA-256 pour vérifier les fichiers |
+La désinstallation conserve vos modèles, polices importées, réglages, journaux et fichiers de récupération.
 
-**Python n'est pas nécessaire** pour utiliser les versions Windows distribuées. La version dite « portable » conserve toutefois ses paramètres et données utilisateur dans le profil Windows, comme la version installée.
+### Version portable — ZIP
+
+Téléchargez **MantaLayers-1.0.0-Windows-Portable.zip**, extrayez toute l'archive, puis lancez **MantaLayers.exe**.
+
+Aucune installation nécessaire. Conservez l'exécutable et le dossier `_internal` côte à côte. Comme pour la version installée, les réglages et données utilisateur sont conservés dans votre compte Windows : cette version est autonome, mais pas entièrement indépendante du profil utilisateur.
+
+### Code source — ZIP et TAR.GZ
+
+GitHub fournit automatiquement **Source code (zip)** et **Source code (tar.gz)** lors de la publication de cette version. Ces archives contiennent le code source du tag `v1.0.0`, pas l'application Windows déjà compilée.
+
+### Empreintes SHA-256
+
+**Setup — `MantaLayers-1.0.0-Setup.exe`**
+```text
+8480BEF8F4566AB3947FDEA80CA4946F1319B9DE4DD99020793A8BD9EA463737
+```
+
+**Portable — `MantaLayers-1.0.0-Windows-Portable.zip`**
+```text
+3EFBD471F87D1B0E07871D9D3991DE5411B2840D1B72EAE70C321F34F19C8EAB
+```
+
+Le fichier **SHA256SUMS.txt** joint à cette release contient les empreintes des deux distributions Windows. Les archives de code source générées par GitHub ne figurent pas dans ce fichier.
 
 ### Informations importantes
 
-- Le détourage par IA locale n'est pas intégré aux exécutables autonomes ; le détourage par couleur reste disponible.
-- Les documents `.manta` peuvent être enregistrés et rouverts, mais l'ouverture par double-clic depuis l'explorateur Windows n'est pas encore prise en charge.
-- Les fichiers exécutables ne sont pas signés numériquement ; Windows SmartScreen peut afficher un avertissement. Vérifiez l'origine du téléchargement et les sommes SHA-256.
-- Les œuvres graphiques et mascottes ne sont pas sous licence MIT ; voir `LICENSE`.
-
-Documentation : [README](https://github.com/AoHaneX/manta-layers#readme) · [Guide d'utilisation](https://github.com/AoHaneX/manta-layers/blob/master/docs/GUIDE.md) · [Journal des modifications](https://github.com/AoHaneX/manta-layers/blob/master/CHANGELOG.md)
-
-> Cette release est d'abord préparée en **brouillon**. Elle ne doit être publiée qu'après validation de l'installation et du lancement sous Windows.
+- Les exécutables ne sont pas signés numériquement : Windows SmartScreen peut afficher un avertissement.
+- Le détourage par IA locale n'est pas inclus dans les distributions Windows, mais le détourage par couleur de fond reste disponible.
+- La documentation complète est disponible dans le [README](https://github.com/AoHaneX/manta-layers#readme) et le [guide d'utilisation](https://github.com/AoHaneX/manta-layers/blob/master/docs/GUIDE.md).
