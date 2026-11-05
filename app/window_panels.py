@@ -143,7 +143,7 @@ class WindowPanelsMixin(_WindowBase):
         left_layout.addWidget(title)
         self.left_collapsible_widgets.append(title)
         subtitle = QLabel("Éditeur d'images à calques\nBlue Shrimp · ReefKit")
-        subtitle.setObjectName("muted")
+        subtitle.setObjectName("brandSubtitle")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)
         left_layout.addWidget(subtitle)
