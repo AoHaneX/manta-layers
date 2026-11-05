@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import QPointF
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QColorDialog
 
 from .commands import DocumentCommand
+from .dialogs import pick_color
 from .graphics import CurvedTextGraphicItem, resolve_font_family
 from .model import Document, Layer
 from .textpath import DEFAULT_CONTROLS, normalize_controls
@@ -228,7 +228,7 @@ class TextFlowsMixin(_WindowBase):
     def choose_color(self):
         old = self.document.layer(self.selected_id)
         if old and old.kind == "text":
-            color = QColorDialog.getColor(QColor(old.color), self, "Couleur du texte")
+            color = pick_color(QColor(old.color), self, "Couleur du texte")
             if color.isValid() and color.name().upper() != old.color.upper():
                 self.mutate("Couleur du texte", lambda doc: setattr(doc.layer(old.id), "color", color.name().upper()), old.id)
 
@@ -237,7 +237,7 @@ class TextFlowsMixin(_WindowBase):
         if not old or old.kind != "text" or old.locked:
             return
         initial = QColor(old.text_background or "#FFFFFF")
-        color = QColorDialog.getColor(initial, self, "Couleur de fond du texte")
+        color = pick_color(initial, self, "Couleur de fond du texte")
         if not color.isValid():
             return
         value = None if color.alpha() == 0 else color.name().upper()

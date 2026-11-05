@@ -9,8 +9,9 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QPointF
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QColorDialog, QGraphicsPixmapItem, QMessageBox
+from PySide6.QtWidgets import QGraphicsPixmapItem, QMessageBox
 
+from .dialogs import pick_color
 from .graphics import eraser_source_position, layer_source_pixel
 from .model import Layer
 from .screen_picker import ScreenColorPicker
@@ -298,6 +299,6 @@ class ColorToolsMixin(_WindowBase):
             self.set_current_color(self.variation_colors[index])
 
     def choose_replacement_color(self):
-        color = QColorDialog.getColor(QColor(self.replacement_color), self, "Couleur de remplacement")
+        color = pick_color(QColor(self.replacement_color), self, "Couleur de remplacement")
         if color.isValid():
             self.set_current_color(color.name())
