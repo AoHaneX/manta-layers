@@ -10,6 +10,9 @@ COLORS = {
     "primary_pressed": "#27AEBF",
     "text": "#EDF9FE",
     "muted": "#ACC9D4",
+    # Text laid on the light top of the left panel illustration.
+    "sidebar_ink": "#033A63",
+    "sidebar_ink_hover": "#01223D",
     "copper": "#D6A06A",
     "danger": "#F07178",
     "danger_pressed": "#C95760",
@@ -226,13 +229,14 @@ QPushButton#sidebarToggle:pressed {{ background: {COLORS['primary_pressed']}; }}
 QPushButton#docInfo {{
     background: transparent;
     border: 1px solid transparent;
-    color: {COLORS['muted']};
+    color: {COLORS['sidebar_ink']};
+    font-weight: 600;
     min-height: 0;
     padding: 4px 6px;
 }}
 QPushButton#docInfo:hover {{
-    border-color: {COLORS['primary']};
-    color: {COLORS['primary_hover']};
+    border-color: {COLORS['sidebar_ink']};
+    color: {COLORS['sidebar_ink_hover']};
 }}
 QPushButton[variant="primary"] {{
     background-color: {COLORS['primary']};
@@ -339,6 +343,7 @@ QLabel#sectionTitle {{
     margin-top: 8px;
 }}
 QLabel#muted {{ color: {COLORS['muted']}; }}
+QLabel#brandSubtitle {{ color: {COLORS['sidebar_ink']}; font-weight: 600; }}
 QStatusBar {{ border-top: 1px solid {COLORS['border']}; color: {COLORS['muted']}; }}
 QScrollBar:vertical {{ background: {COLORS['background']}; width: 10px; margin: 0; }}
 QScrollBar::handle:vertical {{ background: {COLORS['border']}; min-height: 28px; border-radius: 5px; }}
