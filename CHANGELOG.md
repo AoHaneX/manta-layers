@@ -8,6 +8,10 @@
 - Les textes propres à Qt (boutons Oui/Non, Annuler, sélecteur de couleur, « Suppr » dans les menus) sont en français ; la question des modifications non enregistrées propose « Enregistrer », « Ne pas enregistrer » et « Annuler ».
 - La liste des calques se reconstruit environ quatre fois plus vite : avec 1 000 calques, une action ne fige plus l'interface pendant 4 à 5 secondes.
 
+### Distribution Windows
+- Version Windows autonome, sans Python à installer : un installeur (`MantaLayers-<version>-Setup.exe`, pour l'utilisateur courant sans droits d'administrateur, ou pour tous les utilisateurs) et une archive portable (`MantaLayers-<version>-Windows-Portable.zip`), construits par `packaging\build.ps1` (PyInstaller et Inno Setup, versions figées). La désinstallation conserve les modèles, polices, journaux et réglages de l'utilisateur.
+- Dans cette version autonome, le détourage par IA locale est indiqué comme non inclus, au lieu de proposer une commande `pip` ; la méthode par couleur de fond reste disponible.
+
 ### Corrections (outils)
 - Valider une courbure en attente en cliquant sur un autre calque ne détruit plus la scène pendant qu'elle traite ce clic.
 - Les outils appliqués à un calque dont l'image est endommagée (baguette, copie de la sélection, détourage, rognage, recadrage, fusion, tokens, spritesheets) affichent un message ciblé au lieu de l'erreur inattendue ; la baguette « tous les calques » ignore ces calques.
