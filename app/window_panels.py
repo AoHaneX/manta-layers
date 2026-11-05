@@ -169,6 +169,7 @@ class WindowPanelsMixin(_WindowBase):
             ("lock", "▣ Verrouiller le calque", self.toggle_lock),
             ("delete", "× Supprimer le calque", self.delete_layer),
             ("fit", "⤢ Cadrer le document", lambda: self.canvas.fit_document()),
+            ("resize", "⇲ Redimensionner le projet", self.resize_document),
         ]:
             btn = QPushButton(text)
             if text.startswith("+ Importer"):
