@@ -1,6 +1,6 @@
 # Journal des versions
 
-## Non publié
+## 1.0.0 — 5 novembre 2026
 
 ### Corrections (audit de release)
 - Un calque tourné dont la largeur et la hauteur ont des échelles différentes reste un rectangle : il n'est plus affiché ni exporté cisaillé, et effacer, couper ou déplacer une sélection, détourer ou rogner ce calque touche exactement les pixels affichés ; la poignée de redimensionnement garde le coin opposé immobile. Les projets qui contenaient un tel calque l'affichent désormais sans cisaillement.

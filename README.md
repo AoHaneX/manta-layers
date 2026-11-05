@@ -1,4 +1,4 @@
-# Manta Layers — v0.1.0
+# Manta Layers — v1.0.0
 
 **Éditeur d'images à calques pour Windows, dans l'univers Blue Shrimp / ReefKit.**
 
@@ -254,7 +254,7 @@ Ensuite, dans la fenêtre « Supprimer l'arrière-plan », utilise « Téléchar
 
 Avant toute modification majeure : création d'un projet vide, import de 3 images, déplacement, redimensionnement, annuler/rétablir, duplication, fermeture/réouverture d'un `.manta`, export PNG/WebP/JPEG.
 
-## Limites connues de cette V0.1
+## Limites connues de cette version 1.0
 
 - La déformation par enveloppe Warp des formes de lettres n'est pas encore implémentée ; le texte suit une trajectoire, ses glyphes ne sont pas déformés.
 - La sélection n'est pas enregistrée dans le projet. Effacer au pixel près n'est possible que sur les calques image : un texte reste vectoriel.
