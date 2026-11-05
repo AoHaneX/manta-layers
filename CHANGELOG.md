@@ -19,6 +19,7 @@
 - L'archive portable utilise des chemins conformes au format ZIP : elle se décompresse correctement hors de Windows.
 
 ### Corrections (outils)
+- Choisir une couleur en cliquant dans le carré du sélecteur la donne vraiment quand on part du noir (couleur d'un nouveau texte, contour d'une forme) : la luminosité monte au maximum au lieu de rester à zéro, ce qui laissait le texte noir. Le curseur de luminosité permet toujours de revenir au noir.
 - La baguette magique appliquée au calque visé lit les pixels de son image, et non plus un rendu à la taille du document : sur un calque réduit ou agrandi, un liseré plus fin qu'un pixel du document se sélectionne et s'efface, et un clic hors du cadre sélectionne la partie du calque qui dépasse. Séparer cette sélection en nouveau calque garde l'échelle, la rotation et les retouches du calque d'origine.
 - Quitter les outils de sélection (autre outil, bouton de l'outil, autre onglet) retire la sélection et ses pointillés, au lieu de les laisser affichés ; `Ctrl+Z` la rétablit.
 - Le sous-titre et les dimensions du document, dans le panneau de gauche, sont en bleu foncé et restent lisibles sur le haut clair de l'illustration.
