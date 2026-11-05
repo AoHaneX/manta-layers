@@ -907,6 +907,59 @@ def document_mask_to_layer(mask: Image.Image, layer: Layer, size: tuple[int, int
     return local
 
 
+def _displayed_orientation(mask: Image.Image, layer: Layer) -> Image.Image:
+    """Source-aligned mask flipped like the displayed pixmap (flips are their own inverse)."""
+    if layer.flip_horizontal:
+        mask = mask.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    if layer.flip_vertical:
+        mask = mask.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+    return mask
+
+
+def layer_mask_to_document(mask: Image.Image, layer: Layer, size: tuple[int, int],
+                           smooth: bool = False) -> Image.Image:
+    """Inverse of document_mask_to_layer: a source-aligned mask drawn where the layer is shown."""
+    target = QImage(size[0], size[1], QImage.Format.Format_Alpha8)
+    target.fill(0)
+    painter = QPainter(target)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, smooth)
+    painter.setTransform(layer_transform(layer))
+    painter.drawImage(0, 0, mask_to_qimage(_displayed_orientation(mask, layer)))
+    painter.end()
+    return qimage_to_mask(target)
+
+
+def layer_source_position(layer: Layer, point: QPointF, size: tuple[int, int]) -> tuple[int, int] | None:
+    """Source pixel of an image layer under a document point, flips undone; None off the layer."""
+    inverse, invertible = layer_transform(layer).inverted()
+    if not invertible:
+        return None
+    local = inverse.map(point)
+    x, y = floor(local.x()), floor(local.y())
+    width, height = size
+    if not (0 <= x < width and 0 <= y < height):
+        return None
+    return (width - 1 - x if layer.flip_horizontal else x,
+            height - 1 - y if layer.flip_vertical else y)
+
+
+def layer_selection_outline(mask: Image.Image, layer: Layer) -> QPainterPath:
+    """Document-space outline of a source-aligned mask, at the resolution of the layer's pixels.
+
+    The canvas shows the source pixels of a scaled layer: a selection made on
+    them is outlined pixel by pixel, even where the document grid is coarser
+    or outside the frame. Too fragmented, it is outlined by its bounding box.
+    """
+    shown = _displayed_orientation(mask, layer)
+    path = selection_outline(shown)
+    if path is None:
+        path = QPainterPath()
+        box = shown.getbbox()
+        if box is not None:
+            path.addRect(QRectF(box[0], box[1], box[2] - box[0], box[3] - box[1]))
+    return layer_transform(layer).map(path)
+
+
 def render_layers(document: Document, layer_ids=None, with_background: bool = False) -> Image.Image:
     """Document-sized RGBA rendering of some layers (all visible ones by default)."""
     keep = None if layer_ids is None else set(layer_ids)

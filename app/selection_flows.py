@@ -10,7 +10,7 @@ from hashlib import sha1
 from io import BytesIO
 from typing import TYPE_CHECKING, Any, cast
 
-from PIL import Image
+from PIL import Image, ImageChops
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QComboBox, QDialog, QLineEdit, QPlainTextEdit
@@ -22,6 +22,9 @@ from .graphics import (
     RENDER_ERRORS,
     crop_image_layer,
     document_mask_to_layer,
+    layer_mask_to_document,
+    layer_selection_outline,
+    layer_source_position,
     pil_to_qimage,
     render_layer_image,
     render_layer_with_mask,
@@ -60,6 +63,12 @@ class SelectionFlowsMixin(_WindowBase):
     # --- Selections ---------------------------------------------------------------------
     # The selection is a document-sized mask, outside the Document: it is not
     # saved in projects, but every change is an undoable SelectionCommand.
+    #
+    # The magic wand on one image layer also keeps the exact selection in that
+    # layer's source pixels (``selection_layer``): a scaled layer shows pixels
+    # finer than the document grid, and parts of it outside the frame, which
+    # the document mask cannot hold. Edits of that layer use the exact mask as
+    # long as the layer keeps the geometry it was made for.
 
     def _combine_mode(self, modifiers) -> str:
         shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
@@ -72,12 +81,49 @@ class SelectionFlowsMixin(_WindowBase):
             return "subtract"
         return self.selection_mode_combo.currentData()
 
-    def _install_selection(self, data: bytes | None):
-        self.selection_mask = selection.decode(data) if data else None
+    @staticmethod
+    def _layer_geometry(layer) -> tuple:
+        """What an exact selection depends on: the image and where its pixels are shown."""
+        return (layer.asset, layer.x, layer.y, layer.sx, layer.sy, layer.rotation,
+                layer.flip_horizontal, layer.flip_vertical)
+
+    def _selection_state(self) -> tuple | None:
+        """Undoable form of the selection: PNG document mask and optional exact layer mask."""
+        if self.selection_mask is None:
+            return None
+        exact = None
+        if self.selection_layer is not None:
+            layer_id, geometry, mask = self.selection_layer
+            exact = (layer_id, geometry, selection.encode(mask))
+        return selection.encode(self.selection_mask), exact
+
+    def _install_selection(self, state: tuple | None):
+        self.selection_mask, self.selection_layer = None, None
+        if state is not None:
+            data, exact = state
+            self.selection_mask = selection.decode(data)
+            if exact is not None:
+                layer_id, geometry, mask = exact
+                self.selection_layer = (layer_id, geometry, selection.decode(mask))
         self._refresh_selection_visual()
 
+    def _exact_selection(self, layer) -> Image.Image | None:
+        """Exact selection in the source pixels of ``layer``, if it was made for it as it is now."""
+        if self.selection_layer is None or layer is None or layer.kind != "image":
+            return None
+        layer_id, geometry, mask = self.selection_layer
+        if layer_id != layer.id or geometry != self._layer_geometry(layer):
+            return None
+        return mask
+
     def _refresh_selection_visual(self):
-        self.canvas.update_selection_visual(self.selection_mask, self.show_selection_mask.isChecked())
+        outline = None
+        if self.selection_layer is not None:
+            layer = self.document.layer(self.selection_layer[0])
+            exact = self._exact_selection(layer)
+            if exact is not None:
+                outline = layer_selection_outline(exact, layer)
+        self.canvas.update_selection_visual(self.selection_mask, self.show_selection_mask.isChecked(), outline)
         self._update_selection_actions()
 
     def _update_selection_actions(self):
@@ -86,13 +132,36 @@ class SelectionFlowsMixin(_WindowBase):
             action.setEnabled(has_selection)
         self.separate_selection_btn.setEnabled(has_selection)
 
-    def set_selection(self, mask, description: str):
-        if mask is not None and selection.is_empty(mask):
+    def set_selection(self, mask, description: str, exact: tuple[Any, Image.Image] | None = None):
+        """Replace the selection as an undoable step; ``exact`` is (layer, source-aligned mask)."""
+        if exact is not None and selection.is_empty(exact[1]):
+            exact = None
+        if mask is not None and selection.is_empty(mask) and exact is None:
             mask = None
-        before = selection.encode(self.selection_mask) if self.selection_mask is not None else None
-        after = selection.encode(mask) if mask is not None else None
+        if mask is None and exact is not None:
+            mask = selection.empty((self.document.width, self.document.height))  # all outside the frame
+        before = self._selection_state()
+        after = None
+        if mask is not None:
+            layer_part = None
+            if exact is not None:
+                layer, layer_mask = exact
+                layer_part = (layer.id, self._layer_geometry(layer), selection.encode(layer_mask))
+            after = (selection.encode(mask), layer_part)
         if before != after:
             self.undo_stack.push(SelectionCommand(cast("MainWindow", self), before, after, description))
+
+    def _combine_exact(self, shape: Image.Image, mode: str) -> tuple[Any, Image.Image] | None:
+        """Keep an exact layer selection through a document-space change (another tool, Maj, Alt)."""
+        if mode == "replace" or self.selection_layer is None:
+            return None
+        layer = self.document.layer(self.selection_layer[0])
+        current = self._exact_selection(layer)
+        if current is None:
+            return None
+        shape_on_layer = document_mask_to_layer(shape, layer, current.size,
+                                                smooth=not self.selection_pixel_perfect.isChecked())
+        return layer, selection.combine(current, shape_on_layer, mode)
 
     def _finish_shape(self, shape):
         if self.selection_pixel_perfect.isChecked():
@@ -112,7 +181,8 @@ class SelectionFlowsMixin(_WindowBase):
         draw = selection.ellipse if tool == "ellipse" else selection.rectangle
         shape = self._finish_shape(draw(size, box, antialias))
         label = "Sélection elliptique" if tool == "ellipse" else "Sélection rectangulaire"
-        self.set_selection(selection.combine(self.selection_mask, shape, mode), label)
+        self.set_selection(selection.combine(self.selection_mask, shape, mode), label,
+                           self._combine_exact(shape, mode))
 
     def apply_selection_polygon(self, points, modifiers) -> bool:
         """Selection from a closed lasso outline (document coordinates)."""
@@ -125,13 +195,23 @@ class SelectionFlowsMixin(_WindowBase):
                 self.deselect()  # a click without an outline clears, as with the other tools
             self.statusBar().showMessage("Contour trop petit : aucune sélection", 2500)
             return False
-        self.set_selection(selection.combine(self.selection_mask, self._finish_shape(shape), mode), "Lasso")
+        shape = self._finish_shape(shape)
+        self.set_selection(selection.combine(self.selection_mask, shape, mode), "Lasso",
+                           self._combine_exact(shape, mode))
         return True
 
     def apply_magic_wand(self, scene_position: QPointF, modifiers):
+        mode = self._combine_mode(modifiers)
+        tolerance, contiguous = self.wand_tolerance.value(), self.wand_contiguous.isChecked()
+        layer = None if self.wand_all_layers.isChecked() else self.document.layer(self.tool_target_id())
+        if layer is not None and layer.kind == "image":
+            self._magic_wand_on_layer(layer, scene_position, mode)
+            return
         x, y = int(scene_position.x() // 1), int(scene_position.y() // 1)
         if not (0 <= x < self.document.width and 0 <= y < self.document.height):
-            self.statusBar().showMessage("Cliquez à l'intérieur du document", 3000)
+            hint = (" (pour un calque qui dépasse du cadre, décochez « Échantillonner tous les calques »)"
+                    if self.wand_all_layers.isChecked() else "")
+            self.statusBar().showMessage(f"Cliquez à l'intérieur du document{hint}", 4000)
             return
         if self.wand_all_layers.isChecked():
             # Damaged images (shown hatched) are left out of the analysed picture.
@@ -141,18 +221,50 @@ class SelectionFlowsMixin(_WindowBase):
             if len(readable) < len(self.document.layers):
                 self.statusBar().showMessage("Les calques à l'image endommagée sont ignorés", 4000)
         else:
-            layer_id = self.tool_target_id()
-            if layer_id is None:
+            if layer is None:
                 self.statusBar().showMessage("Sélectionnez le calque à analyser", 3000)
                 return
+            layer_id = layer.id
             image = self._render_or_report("Baguette magique", lambda: render_layers(self.document, [layer_id]))
         if image is None:
             return
-        wand = selection.magic_wand(image, (x, y), self.wand_tolerance.value(),
-                                    self.wand_contiguous.isChecked())
-        mode = self._combine_mode(modifiers)
-        self.set_selection(selection.combine(self.selection_mask, self._finish_shape(wand), mode),
-                           "Baguette magique")
+        wand = self._finish_shape(selection.magic_wand(image, (x, y), tolerance, contiguous))
+        self.set_selection(selection.combine(self.selection_mask, wand, mode), "Baguette magique",
+                           self._combine_exact(wand, mode))
+
+    def _magic_wand_on_layer(self, layer, scene_position: QPointF, mode: str):
+        """Magic wand on the source pixels of one image layer, inside or outside the frame.
+
+        A scaled layer shows its own pixels, finer than the document grid: a
+        thin line one source pixel wide can vanish from a document-sized
+        render. The wand reads the pixels the canvas shows instead, and the
+        selection keeps them exactly for the edits of this layer.
+        """
+        if self._is_unreadable(layer):
+            self.statusBar().showMessage("L'image de ce calque est endommagée", 3000)
+            return
+        image = self._render_or_report("Baguette magique", lambda: render_layer_with_mask(layer, self.document))
+        if image is None:
+            return
+        seed = layer_source_position(layer, scene_position, image.size)
+        if seed is None:
+            self.statusBar().showMessage(f"Cliquez sur un pixel du calque « {layer.name} »", 3000)
+            return
+        exact = selection.magic_wand(image, seed, self.wand_tolerance.value(), self.wand_contiguous.isChecked())
+        pixel_perfect = self.selection_pixel_perfect.isChecked()
+        if not pixel_perfect:
+            # The feather radius is given in document pixels.
+            scale = max(1e-6, (abs(layer.sx) * abs(layer.sy)) ** 0.5)
+            exact = selection.feather(exact, self.selection_feather.value() / scale)
+        size = (self.document.width, self.document.height)
+        shown = layer_mask_to_document(exact, layer, size, smooth=not pixel_perfect)
+        if mode != "replace" and self.selection_mask is not None:
+            current = self._exact_selection(layer)
+            if current is None:
+                current = document_mask_to_layer(self.selection_mask, layer, image.size, smooth=not pixel_perfect)
+            exact = selection.combine(current, exact, mode)
+        self.set_selection(selection.combine(self.selection_mask, shown, mode), "Baguette magique",
+                           (layer, exact))
 
     def select_all(self):
         self.set_selection(selection.full((self.document.width, self.document.height)), "Tout sélectionner")
@@ -167,7 +279,7 @@ class SelectionFlowsMixin(_WindowBase):
 
     def _reset_selection(self):
         """New or opened document: start without selection (not an undoable step)."""
-        self.selection_mask = None
+        self.selection_mask, self.selection_layer = None, None
         self._refresh_selection_visual()
 
     def _selection_layer(self, editable: bool):
@@ -220,8 +332,10 @@ class SelectionFlowsMixin(_WindowBase):
         if area is None:
             if self.selection_mask is None:
                 raise ValueError("Aucune sélection active")
-            area = document_mask_to_layer(self.selection_mask, layer, self._source_size(layer),
-                                          smooth=not self.selection_pixel_perfect.isChecked())
+            area = self._exact_selection(layer)
+            if area is None:
+                area = document_mask_to_layer(self.selection_mask, layer, self._source_size(layer),
+                                              smooth=not self.selection_pixel_perfect.isChecked())
         current = selection.decode(doc.assets[layer.mask]) if layer.mask else None
         updated = (selection.hide if operation == "hide" else selection.reveal)(current, area)
         if updated.getextrema() == (255, 255):
@@ -275,22 +389,68 @@ class SelectionFlowsMixin(_WindowBase):
         self.clear_selection_content()
         return True
 
+    def _exact_selection_copy(self, layer):
+        """The exactly selected pixels of ``layer`` as a new layer at the same place and scale.
+
+        Returns (layer, assets); "empty" when nothing visible is selected; None
+        without an exact selection or when the edits cannot be replayed on the
+        cropped copy (the document-resolution copy is used instead).
+        """
+        exact = self._exact_selection(layer)
+        if exact is None:
+            return None
+        area = exact
+        if layer.mask:
+            current = selection.decode(self.document.assets[layer.mask])
+            if current.size != exact.size:
+                current = current.resize(exact.size, Image.Resampling.NEAREST)
+            area = ImageChops.multiply(current, exact)
+        candidate = deepcopy(layer)
+        candidate.mask = new_id()
+        probe = Document(self.document.width, self.document.height, None, [candidate],
+                         {**self.document.assets, candidate.mask: selection.encode(area)})
+        try:
+            box = render_layer_with_mask(candidate, probe).getchannel("A").getbbox()
+            if box is None:
+                return "empty"
+            copy, assets = crop_image_layer(candidate, probe, box)
+        except RENDER_ERRORS:
+            return None
+        copy.id, copy.name, copy.locked = new_id(), f"{layer.name} (sélection)", False
+        return copy, assets
+
     def selection_to_new_layer(self, cut: bool = False, offset: tuple[int, int] = (0, 0)) -> bool:
         layer = self._selection_layer(editable=cut)
-        pixels = self.selected_pixels(layer) if layer is not None else None
-        if pixels is None:
+        if layer is None:
             return False
-        image, (left, top) = pixels
-        output = BytesIO()
-        image.save(output, format="PNG")
-        data, holder = output.getvalue(), {}
+        exact_copy = self._exact_selection_copy(layer)
+        if exact_copy == "empty":
+            self.statusBar().showMessage("Aucun pixel visible dans la sélection", 3000)
+            return False
+        data = b""
+        if exact_copy is None:
+            pixels = self.selected_pixels(layer)
+            if pixels is None:
+                return False
+            image, (left, top) = pixels
+            output = BytesIO()
+            image.save(output, format="PNG")
+            data = output.getvalue()
+        holder: dict[str, str] = {}
 
         def apply(doc):
             if cut:
                 self._edit_layer_mask(doc, layer.id, "hide")
-            new = doc.add_image_bytes(data, f"{layer.name} (sélection)", center=False)
-            new.x, new.y = float(left + offset[0]), float(top + offset[1])
-            doc.layers.remove(new)
+            if exact_copy is not None:
+                # Same scale, rotation and edits as its source: no pixel is resampled.
+                copy, assets = exact_copy
+                new = deepcopy(copy)
+                doc.assets.update(assets)
+                new.x, new.y = new.x + offset[0], new.y + offset[1]
+            else:
+                new = doc.add_image_bytes(data, f"{layer.name} (sélection)", center=False)
+                new.x, new.y = float(left + offset[0]), float(top + offset[1])
+                doc.layers.remove(new)
             doc.layers.insert(doc.layers.index(doc.layer(layer.id)) + 1, new)
             new.folder = doc.layer(layer.id).folder  # stays next to its source, in its folder
             holder["id"] = new.id

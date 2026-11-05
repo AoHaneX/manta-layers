@@ -324,14 +324,19 @@ class CanvasView(QGraphicsView):
             else:
                 painter.drawLine(QPointF(visible.left(), value), QPointF(visible.right(), value))
 
-    def update_selection_visual(self, mask, show_mask: bool) -> None:
-        """Recompute the tint and outline once per selection change."""
-        if mask is None or selection.is_empty(mask):
-            self.selection_overlay_image = self.selection_path = self.selection_box = None
-        else:
+    def update_selection_visual(self, mask, show_mask: bool, outline: QPainterPath | None = None) -> None:
+        """Recompute the tint and outline once per selection change.
+
+        ``outline`` replaces the outline of ``mask`` when the selection is
+        known more precisely (the source pixels of a scaled layer).
+        """
+        self.selection_overlay_image = self.selection_path = self.selection_box = None
+        if mask is not None and not selection.is_empty(mask):
             self.selection_overlay_image = selection_overlay(mask, show_mask)
             self.selection_path = selection_outline(mask)
             self.selection_box = selection.bounds(mask)
+        if outline is not None and not outline.isEmpty():
+            self.selection_path = outline
         self.viewport().update()
 
     def _selection_pens(self) -> tuple[QPen, QPen]:
