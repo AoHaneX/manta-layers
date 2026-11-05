@@ -1,7 +1,31 @@
-"""Left panel: readable text on its light illustration."""
+"""Left panel: readable text on its light illustration, and the project size at hand."""
 import pytest
 
 pytest.importorskip("PySide6")
+
+
+def test_sidebar_offers_resizing_the_project(window, monkeypatch):
+    from app import file_flows
+
+    class Accepting:
+        def __init__(self, width, height, parent):
+            pass
+
+        def exec(self):
+            from PySide6.QtWidgets import QDialog
+            return QDialog.DialogCode.Accepted
+
+        def dimensions(self):
+            return 640, 360
+
+        def deleteLater(self):
+            pass
+
+    monkeypatch.setattr(file_flows, "ResizeDocumentDialog", Accepting)
+    button = window.utility_buttons["resize"]
+    assert button.isVisibleTo(window) and "Redimensionner le projet" in button.text()
+    button.click()
+    assert (window.document.width, window.document.height) == (640, 360)
 
 
 def _luminance(rgb):
