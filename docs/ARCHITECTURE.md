@@ -1,6 +1,6 @@
 # Architecture technique de Manta Layers
 
-Note pour les développeurs. L'usage est décrit dans le [README](../README.md).
+Note pour les développeurs. L'usage est décrit dans le [README](../README.md) et le [guide d'utilisation](GUIDE.md).
 
 ## Principes
 
