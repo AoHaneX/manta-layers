@@ -11,6 +11,8 @@
 ### Distribution Windows
 - Version Windows autonome, sans Python à installer : un installeur (`MantaLayers-<version>-Setup.exe`, pour l'utilisateur courant sans droits d'administrateur, ou pour tous les utilisateurs) et une archive portable (`MantaLayers-<version>-Windows-Portable.zip`), construits par `packaging\build.ps1` (PyInstaller et Inno Setup, versions figées). La désinstallation conserve les modèles, polices, journaux et réglages de l'utilisateur.
 - Dans cette version autonome, le détourage par IA locale est indiqué comme non inclus, au lieu de proposer une commande `pip` ; la méthode par couleur de fond reste disponible.
+- Les licences des composants tiers redistribués (Qt et PySide6 sous LGPL v3, Python, Pillow et ses bibliothèques, chargeur PyInstaller, runtime Microsoft) sont décrites dans `THIRD_PARTY_NOTICES.md` et leurs textes complets livrés dans le dossier `licenses` de l'application.
+- L'archive portable utilise des chemins conformes au format ZIP : elle se décompresse correctement hors de Windows.
 
 ### Corrections (outils)
 - Valider une courbure en attente en cliquant sur un autre calque ne détruit plus la scène pendant qu'elle traite ce clic.
