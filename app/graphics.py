@@ -544,19 +544,46 @@ def stamp_eraser_stroke(coverage: Image.Image, stroke: dict,
     return clipped if clipped[0] < clipped[2] and clipped[1] < clipped[3] else None
 
 
+def is_pencil_stroke(stroke: dict) -> bool:
+    """Pencil strokes share the eraser's list (and replay order) and carry a colour."""
+    return stroke.get("tool") == "pencil"
+
+
+def apply_stroke_coverage(region: Image.Image, coverage: Image.Image, stroke: dict) -> Image.Image:
+    """``region`` (RGBA) after one stroke whose dabs cover it by ``coverage`` (L, same size).
+
+    The eraser lowers the alpha and keeps the colours; the pencil lays its
+    colour over the pixels (premultiplied, so a soft dab on transparent pixels
+    takes the pencil colour). Uncovered pixels are returned unchanged.
+    """
+    if not is_pencil_stroke(stroke):
+        result = region.copy()
+        result.putalpha(ImageChops.multiply(region.getchannel("A"), ImageChops.invert(coverage)))
+        return result
+    color = QColor(str(stroke.get("color", "")))
+    paint = Image.new("RGBa", region.size, (color.red(), color.green(), color.blue(), 255))
+    painted = Image.composite(paint, region.convert("RGBa"), coverage).convert("RGBA")
+    # Unpremultiplying rounds the colour of what is left semi-transparent: a pixel that was
+    # fully transparent gets the exact pencil colour, with the alpha the dab gave it.
+    exact = Image.new("RGBA", region.size, (color.red(), color.green(), color.blue(), 0))
+    exact.putalpha(painted.getchannel("A"))
+    was_clear = region.getchannel("A").point([255] + [0] * 255)
+    painted = Image.composite(exact, painted, was_clear)
+    # Elsewhere, pixels the stroke did not touch are kept exactly as they were.
+    return Image.composite(painted, region, coverage.point([0] + [255] * 255))
+
+
 def apply_eraser_strokes(image: Image.Image, strokes: list[dict]) -> Image.Image:
-    """Applique des traits à l'alpha, sans toucher aux couleurs ni lisser le pixel art."""
+    """Replay eraser and pencil strokes, without smoothing pixel art."""
     if not strokes:
         return image
     result = image.copy()
-    alpha = result.getchannel("A")
     for stroke in strokes:
         coverage = Image.new("L", result.size, 0)
         if stroke_box := stamp_eraser_stroke(coverage, stroke):
-            # Only the touched area changes: elsewhere the alpha is multiplied by 1.
-            region = ImageChops.multiply(alpha.crop(stroke_box), ImageChops.invert(coverage.crop(stroke_box)))
-            alpha.paste(region, stroke_box[:2])
-    result.putalpha(alpha)
+            # Only the touched area changes.
+            region = apply_stroke_coverage(result.crop(stroke_box), coverage.crop(stroke_box), stroke)
+            result.paste(region, stroke_box[:2])
     return result
 
 

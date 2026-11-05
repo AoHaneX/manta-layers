@@ -107,6 +107,8 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         self.picker_text_layer_id: str | None = None
         self.paint_mode: str | None = None
         self.eraser_active = False
+        # The pencil draws strokes with the eraser's sizes and engine, in the current colour.
+        self.pencil_active = False
         self.text_tool_active = False
         self.selection_tool: str | None = None
         # Shape being drawn on the canvas: rectangle, ellipse, polygon, line or arrow.
@@ -762,14 +764,22 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
     # --- Canvas tools ----------------------------------------------------------------
     # Only one tool is active at a time; every activation goes through _clear_tools.
 
+    def brush_active(self) -> bool:
+        """True while the eraser or the pencil draws strokes on the canvas."""
+        return self.eraser_active or self.pencil_active
+
     def any_tool_active(self) -> bool:
-        return bool(self.eraser_active or self.picker_active or self.paint_mode
+        return bool(self.brush_active() or self.picker_active or self.paint_mode
                     or self.text_tool_active or self.selection_tool or self.shape_tool)
 
     def _clear_tools(self, keep: str | None = None):
         if keep != "eraser" and self.eraser_active:
             self.canvas.cancel_eraser_preview()
             self.eraser_active = False
+            self.canvas.eraser_cursor_local = None
+        if keep != "pencil" and self.pencil_active:
+            self.canvas.cancel_eraser_preview()
+            self.pencil_active = False
             self.canvas.eraser_cursor_local = None
         if keep != "picker":
             self.picker_active = False
@@ -788,6 +798,7 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         """Reflect the tool flags on every button, then refresh options and cursor."""
         pairs = [
             (self.eraser_btn, self.eraser_active),
+            (self.pencil_btn, self.pencil_active),
             (self.picker_btn, self.picker_active and self.picker_target == "tools"),
             (self.text_picker_btn, self.picker_active and self.picker_target == "text"),
             (self.text_background_picker_btn,
@@ -804,6 +815,7 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
             button.setChecked(bool(checked))
             button.blockSignals(False)
         for action, checked in ((self.eraser_action, self.eraser_active),
+                                (self.pencil_action, self.pencil_active),
                                 (self.text_tool_action, self.text_tool_active)):
             action.blockSignals(True)
             action.setChecked(checked)
@@ -843,7 +855,7 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         self._sync_tool_buttons()
 
     def _refresh_color_tool_cursor(self):
-        if self.eraser_active:
+        if self.brush_active():
             cursor = Qt.CursorShape.BlankCursor
         elif self.text_tool_active:
             cursor = Qt.CursorShape.IBeamCursor
@@ -875,6 +887,19 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
                 "Gomme active · glisser pour effacer · [ et ] changent la taille", 4500
             )
         self.eraser_active = bool(active)
+        self.canvas.eraser_cursor_local = None
+        self._sync_tool_buttons()
+
+    def set_pencil_active(self, active: bool):
+        self.canvas.cancel_eraser_preview()
+        if active:
+            self._clear_tools("pencil")
+            self._show_tool_target()
+            self.tabs.setCurrentWidget(self.tools_tab)
+            self.statusBar().showMessage(
+                "Crayon actif · glisser pour dessiner avec la couleur choisie · [ et ] changent la taille", 4500
+            )
+        self.pencil_active = bool(active)
         self.canvas.eraser_cursor_local = None
         self._sync_tool_buttons()
 
@@ -979,7 +1004,8 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         """Only show the settings of the active tool."""
         eraser = self.eraser_active
         bucket = self.paint_mode is not None and not eraser
-        self.eraser_settings.setVisible(eraser)
+        # The pencil shares the eraser's size, shape and softness settings.
+        self.eraser_settings.setVisible(eraser or self.pencil_active)
         self.paint_settings.setVisible(bucket)
         self.selection_settings.setVisible(bool(self.selection_tool))
         self.wand_settings.setVisible(self.selection_tool == "wand")

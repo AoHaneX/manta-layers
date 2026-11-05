@@ -117,6 +117,8 @@ class Layer:
     flip_vertical: bool = False
     color_replacements: dict[str, str] = field(default_factory=dict)
     color_fills: list[dict] = field(default_factory=list)
+    # Eraser strokes, and pencil strokes marked {"tool": "pencil", "color": "#RRGGBB"},
+    # replayed together in the order they were drawn.
     eraser_strokes: list[dict] = field(default_factory=list)
     # Optional non-destructive layer mask: asset id of an 8-bit PNG the size of
     # the source image (255 visible, 0 hidden). Used by selections and background removal.
@@ -232,6 +234,11 @@ class Layer:
             points = [point for point in points if isfinite(point[0]) and isfinite(point[1])][:MAX_STROKE_POINTS]
             if not points:
                 continue
+            # Pencil strokes paint their colour; any other stroke erases (older files have no "tool").
+            pencil = raw_stroke.get("tool") == "pencil"
+            if pencil and not is_hex_color(raw_stroke.get("color")):
+                continue
+            extra = {"tool": "pencil", "color": str(raw_stroke["color"]).upper()} if pencil else {}
             valid_strokes.append({
                 "points": points,
                 "size": size,
@@ -242,6 +249,7 @@ class Layer:
                 # Dabs centred on the pixel under the pointer. Older strokes were
                 # placed half a pixel off and keep that placement when replayed.
                 "pixel_centered": bool(raw_stroke.get("pixel_centered", False)),
+                **extra,
             })
         layer.eraser_strokes = valid_strokes
         if layer.folder is not None and (not isinstance(layer.folder, str) or not layer.folder):
