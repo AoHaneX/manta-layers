@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  statuses: write
 
 jobs:
   build-windows:
@@ -87,6 +88,55 @@ jobs:
             dist/release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
+
+      - name: Start packaged executable (headless smoke check)
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $exe = Join-Path $PWD "dist\MantaLayers\MantaLayers.exe"
+          if (-not (Test-Path $exe)) { throw "Missing packaged executable: $exe" }
+          $app = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 6
+          $app.Refresh()
+          if ($app.HasExited) {
+            throw "Packaged MantaLayers.exe stopped during startup (exit $($app.ExitCode))."
+          }
+          Stop-Process -Id $app.Id -Force
+          Write-Host "Headless startup succeeded."
+
+      - name: Prepare a v1.0.0 GitHub release draft after successful build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && env.APP_VERSION == '1.0.0'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "v$env:APP_VERSION"
+          $releases = gh release list --repo "$env:GITHUB_REPOSITORY" --limit 100 --json tagName,isDraft | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Unable to read existing releases." }
+          $existing = @($releases | Where-Object { $_.tagName -eq $tag })
+          if ($existing.Count -gt 0) {
+            Write-Host "Release $tag already exists; not replacing it automatically."
+            exit 0
+          }
+          $files = @(
+            "dist\release\MantaLayers-$env:APP_VERSION-Setup.exe",
+            "dist\release\MantaLayers-$env:APP_VERSION-Windows-Portable.zip",
+            "dist\release\SHA256SUMS.txt"
+          )
+          & gh release create $tag @files --repo "$env:GITHUB_REPOSITORY" --target "$env:GITHUB_SHA" --title "Manta Layers $tag" --notes-file ".github\RELEASE_NOTES_V1.md" --draft
+          if ($LASTEXITCODE -ne 0) { throw "Failed to create draft release $tag." }
+
+      - name: Report Windows packaging result
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/master'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_RESULT: ${{ job.status }}
+        run: |
+          $state = if ($env:BUILD_RESULT -eq "success") { "success" } else { "failure" }
+          gh api --method POST "repos/$env:GITHUB_REPOSITORY/statuses/$env:GITHUB_SHA" -f "state=$state" -f "context=manta/windows-release" -f "description=Windows tests, portable zip and installer: $state" | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Could not report build status." }
 
       # Tag builds produce a draft rather than an immediately public release.
       # Verify the files and installation before publishing.
