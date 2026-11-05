@@ -56,9 +56,11 @@ else { Write-Warning "THIRD_PARTY_NOTICES.md absent : a ajouter avant toute publ
 New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
 Get-ChildItem $ReleaseDir -Filter "MantaLayers-*" | Remove-Item -Force
 Write-Host "Archive portable..."
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-[System.IO.Compression.ZipFile]::CreateFromDirectory($AppDir, $PortableZip,
-    [System.IO.Compression.CompressionLevel]::Optimal, $true)
+# Python's zipfile writes "/" separators as the ZIP format requires; the .NET archive of
+# Windows PowerShell 5.1 writes "\", which other systems extract as odd file names.
+Invoke-Checked $VenvPython @("-c",
+    "import shutil, sys; shutil.make_archive(sys.argv[1], 'zip', root_dir=sys.argv[2], base_dir='MantaLayers')",
+    $PortableZip.Substring(0, $PortableZip.Length - 4), $DistDir)
 
 if (-not $SkipInstaller) {
     $Candidates = @(
