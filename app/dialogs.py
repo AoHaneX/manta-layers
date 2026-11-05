@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtCore import QEvent, QObject, QSize, Qt
+from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -26,6 +27,43 @@ from PySide6.QtWidgets import (
 
 from .model import MAX_DIMENSION, MAX_DOCUMENT_PIXELS, Document
 from .templates import delete_template, duplicate_template, instantiate_template, list_templates, rename_template
+
+
+class ColorDialog(QColorDialog):
+    """Qt colour dialog where a click in the colour square never leaves the colour black.
+
+    Starting from black (a new text, a shape outline), the square only sets
+    the hue and saturation and Qt keeps the brightness at 0: every choice
+    stays black until the brightness slider is raised. A press in the square
+    while the colour is black raises the brightness first. Lowering the slider
+    down to black still works.
+    """
+
+    def __init__(self, initial: QColor, parent: QWidget | None, title: str):
+        super().__init__(initial, parent)
+        self.setWindowTitle(title)
+        self.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog)
+        # The square is a private Qt widget: without it, the dialog keeps Qt's behaviour.
+        self._square = next((child for child in self.findChildren(QWidget)
+                             if child.metaObject().className() == "QtPrivate::QColorPicker"), None)
+        if self._square is not None:
+            self._square.installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if (watched is self._square and event.type() == QEvent.Type.MouseButtonPress
+                and self.currentColor().value() == 0):
+            # The square then picks the hue and saturation at full brightness.
+            self.setCurrentColor(QColor.fromHsv(0, 0, 255))
+        return super().eventFilter(watched, event)
+
+
+def pick_color(initial: QColor | str, parent: QWidget | None, title: str) -> QColor:
+    """Like QColorDialog.getColor (an invalid colour when cancelled), with ColorDialog."""
+    dialog = ColorDialog(QColor(initial), parent, title)
+    try:
+        return dialog.currentColor() if dialog.exec() == QDialog.DialogCode.Accepted else QColor()
+    finally:
+        dialog.deleteLater()
 
 
 def _dimension_input(value: int) -> QSpinBox:

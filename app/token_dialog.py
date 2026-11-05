@@ -10,7 +10,6 @@ from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
-    QColorDialog,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -27,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import export
+from .dialogs import pick_color
 from .graphics import RENDER_ERRORS, checker_brush, pil_to_qimage, render_layers_region
 from .model import IMPORT_FORMATS, MAX_PIXELS
 from .theme import COLORS
@@ -237,7 +237,7 @@ class TokenDialog(QDialog):
         self.offset_y.setValue(self.offset_y.value() + dy * ratio)
 
     def choose_color(self) -> None:
-        color = QColorDialog.getColor(QColor(self.border_color), self, "Couleur de bordure")
+        color = pick_color(QColor(self.border_color), self, "Couleur de bordure")
         if color.isValid():
             self.border_color = color.name().upper()
             self._show_color()

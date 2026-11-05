@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractSpinBox,
     QApplication,
-    QColorDialog,
     QDialog,
     QFileDialog,
     QGraphicsPixmapItem,
@@ -33,6 +32,7 @@ from PySide6.QtWidgets import (
 from . import __version__, background, background_dialog, selection
 from .color_tools import ColorToolsMixin
 from .commands import DocumentCommand, SelectionCommand
+from .dialogs import pick_color
 from .file_flows import DocumentFlowsMixin
 from .graphics import (
     RENDER_ERRORS,
@@ -982,7 +982,7 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         layer = self.document.layer(self.selected_id)
         if layer is None or layer.kind != "shape" or layer.locked:
             return False
-        color = QColorDialog.getColor(QColor(getattr(layer, key) or "#FFFFFF"), self, title)
+        color = pick_color(QColor(getattr(layer, key) or "#FFFFFF"), self, title)
         return color.isValid() and self.set_shape_property(key, color.name().upper())
 
     def create_shape(self, start: QPointF, end: QPointF, modifiers) -> bool:
