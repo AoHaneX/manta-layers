@@ -118,6 +118,17 @@ def test_dialog_without_runtime_explains_how_to_enable_ai(tmp_path, qapp, monkey
     assert dialog.download_button.isHidden()
 
 
+def test_the_packaged_application_does_not_suggest_pip(tmp_path, qapp, monkeypatch):
+    monkeypatch.setattr(B, "onnx_runtime_available", lambda: False)
+    monkeypatch.setattr(B.sys, "frozen", True, raising=False)
+    dialog = make_dialog(tmp_path, qapp)
+    assert dialog.method.itemText(1) == "IA locale — non incluse"
+    dialog.method.setCurrentIndex(0)
+    dialog._method_changed()
+    assert "pip" not in dialog.status.text() and "pas incluse" in dialog.status.text()
+    assert "pip" not in B.runtime_missing_message()
+
+
 def test_dialog_runs_a_model_in_a_thread_with_preview(tmp_path, qapp, monkeypatch):
     (tmp_path / "u2netp.onnx").write_bytes(b"fake")
     monkeypatch.setattr(B, "onnx_runtime_available", lambda: True)
