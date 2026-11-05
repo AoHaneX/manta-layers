@@ -21,6 +21,7 @@ import contextlib
 import hashlib
 import http.client
 import importlib.util
+import sys
 import urllib.parse
 import urllib.request
 from collections import Counter
@@ -82,6 +83,20 @@ def onnx_runtime_available() -> bool:
     return all(importlib.util.find_spec(name) is not None for name in ("onnxruntime", "numpy"))
 
 
+def packaged_application() -> bool:
+    """True in the Windows build (PyInstaller), where pip cannot add the optional AI packages."""
+    return bool(getattr(sys, "frozen", False))
+
+
+def runtime_missing_message() -> str:
+    """Why the AI method is unavailable and what the user can do about it."""
+    if packaged_application():
+        return ("La méthode IA n'est pas incluse dans cette version de Manta Layers : "
+                "la méthode par couleur de fond reste disponible.")
+    return ("onnxruntime n'est pas installé. Installez les dépendances facultatives : "
+            "pip install -r requirements-ai.txt")
+
+
 def spec_for(path: Path) -> ModelSpec:
     """Pre-processing for a model file, deduced from its name (U²-Net by default)."""
     stem = Path(path).stem.lower()
@@ -141,10 +156,7 @@ def onnx_mask(image: Image.Image, model_path: Path, progress: Progress | None = 
     if not model_path.is_file():
         raise BackgroundRemovalError(f"Modèle introuvable : {model_path}")
     if session_factory is None and not onnx_runtime_available():
-        raise BackgroundRemovalError(
-            "onnxruntime n'est pas installé. Installez les dépendances facultatives : "
-            "pip install -r requirements-ai.txt"
-        )
+        raise BackgroundRemovalError(runtime_missing_message())
     import numpy as np
 
     progress("Chargement du modèle…", 10)

@@ -218,7 +218,8 @@ class BackgroundRemovalDialog(QDialog):
         for path in models:
             self.method.addItem(f"IA locale : {background.spec_for(path).label}", str(path))
         if not runtime:
-            self.method.addItem("IA locale — onnxruntime non installé", None)
+            label = "non incluse" if background.packaged_application() else "onnxruntime non installé"
+            self.method.addItem(f"IA locale — {label}", None)
         elif not models:
             self.method.addItem("IA locale — aucun modèle installé", None)
         for index in range(self.method.count()):
@@ -240,8 +241,11 @@ class BackgroundRemovalDialog(QDialog):
         self.tolerance.setEnabled(self._is_colour())
         self.preview_mask = self.raw_mask = None
         if not background.onnx_runtime_available():
-            self._set_status("Pour la méthode IA : pip install -r requirements-ai.txt, "
-                             "puis placez ou téléchargez un modèle.")
+            if background.packaged_application():
+                self._set_status(background.runtime_missing_message())
+            else:
+                self._set_status("Pour la méthode IA : pip install -r requirements-ai.txt, "
+                                 "puis placez ou téléchargez un modèle.")
         elif self._is_colour():
             self._set_status("Idéale pour un fond uni ou un pixel art.")
         else:
