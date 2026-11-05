@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from PIL import Image, ImageChops
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap, QTransform
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsView
 
 from . import selection
@@ -25,6 +25,7 @@ from .graphics import (
     render_layer_with_mask,
     selection_outline,
     selection_overlay,
+    set_item_geometry,
     stamp_eraser_stroke,
 )
 from .model import Layer
@@ -60,6 +61,7 @@ class CanvasView(QGraphicsView):
         self.mode = None
         self.old_layer = None
         self.drag_item = None
+        self.drag_geometry: tuple[float, float, float] = (1.0, 1.0, 0.0)
         self.handle_index = None
         self.selection_drag: dict | None = None
         # Lasso outline being drawn (free or polygonal), in document coordinates.
@@ -539,6 +541,8 @@ class CanvasView(QGraphicsView):
                     self.old_layer = self.main_window.document.clone()
                     self.drag_item = item
                     self.handle_index = handle
+                    # Scale and angle of the item while it is dragged, committed on release.
+                    self.drag_geometry = (layer.sx, layer.sy, layer.rotation)
                     if mode == "resize":
                         local = self.local_handles(item)
                         self.corner_local = local[handle]
@@ -718,7 +722,8 @@ class CanvasView(QGraphicsView):
                 local_dy = self.corner_local.y() - self.fixed_local.y()
                 sx = max(0.05, min(50, dx / local_dx))
                 sy = max(0.05, min(50, dy / local_dy))
-                item.setTransform(QTransform.fromScale(sx, sy))
+                self.drag_geometry = (sx, sy, old.rotation)
+                set_item_geometry(item, sx, sy, old.rotation)
                 off_x = cos(r)*sx*self.fixed_local.x() - sin(r)*sy*self.fixed_local.y()
                 off_y = sin(r)*sx*self.fixed_local.x() + cos(r)*sy*self.fixed_local.y()
                 item.setPos(self.fixed_world - QPointF(off_x, off_y))
@@ -727,7 +732,8 @@ class CanvasView(QGraphicsView):
                 angle = heading - self.angle_offset
                 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                     angle = round(angle / 15) * 15
-                item.setRotation(angle)
+                self.drag_geometry = (old.sx, old.sy, angle)
+                set_item_geometry(item, old.sx, old.sy, angle)
                 shift = self.fixed_center - item.mapToScene(item.boundingRect().center())
                 item.setPos(item.pos() + shift)
             self.viewport().update()
@@ -799,9 +805,8 @@ class CanvasView(QGraphicsView):
         elif item and before and mode:
             src = before.layer(item.data(0))
             if src:
-                sx = item.transform().m11()
-                sy = item.transform().m22()
-                state = (item.pos().x(), item.pos().y(), sx, sy, item.rotation())
+                sx, sy, angle = self.drag_geometry if mode in ("resize", "rotate") else (src.sx, src.sy, src.rotation)
+                state = (item.pos().x(), item.pos().y(), sx, sy, angle)
                 old_state = (src.x, src.y, src.sx, src.sy, src.rotation)
                 if any(abs(a-b) > 0.001 for a,b in zip(state, old_state)):
                     self.main_window.commit_canvas_transform(before, src.id, state,

@@ -779,8 +779,7 @@ def create_graphic(layer: Layer, document: Document, tolerate_unreadable=None) -
         item = CurvedTextGraphicItem(layer)
     item.setData(0, layer.id)
     item.setPos(layer.x, layer.y)
-    item.setTransform(QTransform.fromScale(layer.sx, layer.sy))
-    item.setRotation(layer.rotation)
+    set_item_geometry(item, layer.sx, layer.sy, layer.rotation)
     item.setOpacity(layer.opacity)
     # A hidden folder hides its layers on the canvas and in every export.
     item.setVisible(document.is_visible(layer))
@@ -863,10 +862,25 @@ def qimage_to_pil(image: QImage) -> Image.Image:
     return _qimage_as_pil(image, QImage.Format.Format_RGBA8888, "RGBA")
 
 
+def scale_rotation(sx: float, sy: float, rotation: float) -> QTransform:
+    """Scale along the layer's own axes, then rotate: a rotated layer stays a rectangle."""
+    return QTransform.fromScale(sx, sy) * QTransform().rotate(rotation)
+
+
+def set_item_geometry(item: QGraphicsItem, sx: float, sy: float, rotation: float) -> None:
+    """Give a scene item the layer's scale and rotation, in the order of ``layer_transform``.
+
+    QGraphicsItem.setRotation() would rotate before the transform() scale: a
+    rotated layer with sx != sy would be drawn sheared, and masks, trims and
+    resize handles computed with layer_transform would miss its pixels.
+    """
+    item.setRotation(0)
+    item.setTransform(scale_rotation(sx, sy, rotation))
+
+
 def layer_transform(layer: Layer) -> QTransform:
-    """Item-local to document coordinates, identical to the canvas item."""
-    return (QTransform.fromScale(layer.sx, layer.sy) * QTransform().rotate(layer.rotation)
-            * QTransform.fromTranslate(layer.x, layer.y))
+    """Item-local to document coordinates, identical to the canvas item (see set_item_geometry)."""
+    return scale_rotation(layer.sx, layer.sy, layer.rotation) * QTransform.fromTranslate(layer.x, layer.y)
 
 
 def document_mask_to_layer(mask: Image.Image, layer: Layer, size: tuple[int, int],
