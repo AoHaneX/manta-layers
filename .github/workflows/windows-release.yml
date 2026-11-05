@@ -3,6 +3,11 @@ name: Windows release
 on:
   workflow_dispatch:
   push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/windows-release.yml"
+      - "packaging/**"
     tags:
       - "v*.*.*"
 
