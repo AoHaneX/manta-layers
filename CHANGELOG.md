@@ -8,6 +8,9 @@
 - Les textes propres à Qt (boutons Oui/Non, Annuler, sélecteur de couleur, « Suppr » dans les menus) sont en français ; la question des modifications non enregistrées propose « Enregistrer », « Ne pas enregistrer » et « Annuler ».
 - La liste des calques se reconstruit environ quatre fois plus vite : avec 1 000 calques, une action ne fige plus l'interface pendant 4 à 5 secondes.
 
+### Ajouts
+- Un bouton « Redimensionner le projet » dans les utilitaires du panneau de gauche change la largeur et la hauteur du document.
+
 ### Distribution Windows
 - Version Windows autonome, sans Python à installer : un installeur (`MantaLayers-<version>-Setup.exe`, pour l'utilisateur courant sans droits d'administrateur, ou pour tous les utilisateurs) et une archive portable (`MantaLayers-<version>-Windows-Portable.zip`), construits par `packaging\build.ps1` (PyInstaller et Inno Setup, versions figées). La désinstallation conserve les modèles, polices, journaux et réglages de l'utilisateur.
 - Dans cette version autonome, le détourage par IA locale est indiqué comme non inclus, au lieu de proposer une commande `pip` ; la méthode par couleur de fond reste disponible.
@@ -15,6 +18,9 @@
 - L'archive portable utilise des chemins conformes au format ZIP : elle se décompresse correctement hors de Windows.
 
 ### Corrections (outils)
+- La baguette magique appliquée au calque visé lit les pixels de son image, et non plus un rendu à la taille du document : sur un calque réduit ou agrandi, un liseré plus fin qu'un pixel du document se sélectionne et s'efface, et un clic hors du cadre sélectionne la partie du calque qui dépasse. Séparer cette sélection en nouveau calque garde l'échelle, la rotation et les retouches du calque d'origine.
+- Quitter les outils de sélection (autre outil, bouton de l'outil, autre onglet) retire la sélection et ses pointillés, au lieu de les laisser affichés ; `Ctrl+Z` la rétablit.
+- Le sous-titre et les dimensions du document, dans le panneau de gauche, sont en bleu foncé et restent lisibles sur le haut clair de l'illustration.
 - Valider une courbure en attente en cliquant sur un autre calque ne détruit plus la scène pendant qu'elle traite ce clic.
 - Les outils appliqués à un calque dont l'image est endommagée (baguette, copie de la sélection, détourage, rognage, recadrage, fusion, tokens, spritesheets) affichent un message ciblé au lieu de l'erreur inattendue ; la baguette « tous les calques » ignore ces calques.
 - Passer une forme fermée en ligne ou en flèche lui donne un contour visible.
