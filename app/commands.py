@@ -67,9 +67,13 @@ class DocumentCommand(QUndoCommand):
 
 
 class SelectionCommand(QUndoCommand):
-    """Undoable selection change; masks are kept PNG-compressed."""
+    """Undoable selection change; masks are kept PNG-compressed.
 
-    def __init__(self, win: "MainWindow", before: bytes | None, after: bytes | None, description: str):
+    A state is None (no selection) or the document mask with the optional
+    exact layer mask, as made by MainWindow._selection_state().
+    """
+
+    def __init__(self, win: "MainWindow", before: tuple | None, after: tuple | None, description: str):
         super().__init__(description)
         self.win = win
         self.before = before

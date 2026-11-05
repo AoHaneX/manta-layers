@@ -120,6 +120,8 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         # Assets found damaged when the document was opened (see _make_scene).
         self._unreadable_assets: set[str] = set()
         self.selection_mask: Image.Image | None = None
+        # Exact magic wand selection in one layer's source pixels: (layer id, geometry, mask).
+        self.selection_layer: tuple[str, tuple, Image.Image] | None = None
         # Multiple selection of the layer panel (layer ids), see set_layer_checked.
         self.checked_ids: set[str] = set()
         # Folded folders of the current document, kept across undo and redo.
