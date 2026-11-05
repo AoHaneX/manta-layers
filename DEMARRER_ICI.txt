@@ -1,4 +1,4 @@
-MANTA LAYERS 0.1.0 — DÉMARRER ICI
+MANTA LAYERS 1.0.0 — DÉMARRER ICI
 
 1) Décompresser tout le ZIP.
 2) Installer Python 3.11 ou plus récent depuis https://www.python.org/downloads/windows/ si besoin.
@@ -10,7 +10,7 @@ Le logiciel fonctionne ensuite localement.
 La sauvegarde du projet se fait en .manta, l'image finale en PNG/JPEG/WebP.
 Le texte courbé, la gomme, les pots de peinture et les modèles sont inclus.
 Les sélections, les masques de calque et la suppression de l'arrière-plan (IA locale facultative) sont inclus.
-La déformation Warp des lettres et le recadrage libre ne sont pas encore inclus dans la version 0.1
+La déformation Warp des lettres et le recadrage libre ne sont pas encore inclus dans la version 1.0
 (le recadrage du document sur son contenu est disponible).
 
 Documentation plus détaillée dans README.md.
