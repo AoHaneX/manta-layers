@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import export
 from .graphics import RENDER_ERRORS, checker_brush, pil_to_qimage, render_layers_region
 from .model import IMPORT_FORMATS, MAX_PIXELS
 from .theme import COLORS
@@ -291,7 +292,7 @@ class TokenDialog(QDialog):
         if not self.window_._confirm_completed_path(Path(path), destination, "Exporter le token"):
             return None
         try:
-            self.render_full().save(destination, format="PNG", optimize=True)
+            export.save_image(self.render_full(), destination)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Export impossible", str(exc))
             return None
