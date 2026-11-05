@@ -302,35 +302,43 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         # Clearing the list makes it report "no current row": that is not the
         # user deselecting the layer, so selection signals are ignored meanwhile.
         refreshing, self.refreshing = self.refreshing, True
+        self.layer_list.setUpdatesEnabled(False)
         try:
             self.layer_list.clear()
             self._layer_rows = {}
+            entries: list[tuple[str, bool, QWidget]] = []
             shown_folders = set()
             for layer in reversed(doc.layers):
                 folder = doc.folder(layer.folder)
                 if folder is not None and folder.id not in shown_folders:
                     shown_folders.add(folder.id)
-                    self._add_layer_list_row(folder.id, True, build_folder_row(
-                        self, folder, self._folder_check_state(doc, folder.id)))
+                    entries.append((folder.id, True, build_folder_row(
+                        self, folder, self._folder_check_state(doc, folder.id))))
                 if folder is not None and folder.collapsed:
                     continue
                 controls = build_layer_row(self, layer, layer.id in self.checked_ids)
                 self._layer_rows[layer.id] = controls
-                row = self._add_layer_list_row(layer.id, False, controls)
-                if layer.id == self.selected_id:
+                entries.append((layer.id, False, controls))
+            # All items first, then their widgets: interleaving addItem and
+            # setItemWidget relayouts the list each time, quadratic in the rows
+            # (about 4 s for 1,000 layers, after every action).
+            rows = [self._add_layer_list_item(item_id, is_folder) for item_id, is_folder, _ in entries]
+            for row, (item_id, _is_folder, controls) in zip(rows, entries):
+                self._name_icon_buttons(controls)
+                self.layer_list.setItemWidget(row, controls)
+                if item_id == self.selected_id:
                     self.layer_list.setCurrentItem(row)
         finally:
+            self.layer_list.setUpdatesEnabled(True)
             self.refreshing = refreshing
         self.layer_list.verticalScrollBar().setValue(scroll)
 
-    def _add_layer_list_row(self, item_id: str, is_folder: bool, controls: QWidget) -> QListWidgetItem:
+    def _add_layer_list_item(self, item_id: str, is_folder: bool) -> QListWidgetItem:
         row = QListWidgetItem()
         row.setData(Qt.ItemDataRole.UserRole, item_id)
         row.setData(FOLDER_ROLE, is_folder)
-        self.layer_list.addItem(row)
         row.setSizeHint(QSize(row.sizeHint().width(), 34))
-        self._name_icon_buttons(controls)
-        self.layer_list.setItemWidget(row, controls)
+        self.layer_list.addItem(row)
         return row
 
     def _folder_check_state(self, doc: Document, folder_id: str) -> Qt.CheckState:

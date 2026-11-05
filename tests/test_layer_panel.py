@@ -243,3 +243,28 @@ def test_the_folder_check_box_toggles_at_every_click(window):
         box.click()  # the row is updated in place: its captured state used to stay "unchecked"
         states.append(set(window.checked_ids))
     assert states == [{first.id, second.id}, set(), {first.id, second.id}]
+
+
+def test_the_layer_list_adds_its_rows_before_their_widgets(window, monkeypatch):
+    """Interleaving addItem and setItemWidget relayouts the list each time: 4 s for 1,000 layers."""
+    from PySide6.QtWidgets import QListWidget
+
+    document = Document(64, 64)
+    for index in range(30):
+        document.add_image_bytes(png(4, 4, (index, 0, 0, 255)), f"Sprite {index}")
+    folder = document.create_folder([document.layers[0].id, document.layers[1].id], "Dossier")
+    assert folder is not None
+    counts = []
+    original = QListWidget.setItemWidget
+
+    def recording(list_widget, item, widget):
+        counts.append(list_widget.count())
+        original(list_widget, item, widget)
+
+    monkeypatch.setattr(QListWidget, "setItemWidget", recording)
+    window.install_document(document, document.layers[5].id)
+    rows = window.layer_list.count()
+    assert rows == 31 and counts == [rows] * rows
+    current = window.layer_list.currentItem()
+    assert current is not None and current.data(Qt.ItemDataRole.UserRole) == document.layers[5].id
+    assert all(window.layer_list.itemWidget(window.layer_list.item(index)) is not None for index in range(rows))
