@@ -47,11 +47,10 @@ Invoke-Checked $VenvPython @("-m", "PyInstaller", "--noconfirm", "--clean",
     (Join-Path $PSScriptRoot "MantaLayers.spec"))
 
 # Licences next to the executable: MIT for the code, reserved rights for the artwork,
-# and the notices of the bundled libraries when the file exists.
+# the notices of the bundled libraries and their full texts (exact bundled versions).
 Copy-Item (Join-Path $Root "LICENSE") (Join-Path $AppDir "LICENSE.txt")
-$Notices = Join-Path $Root "THIRD_PARTY_NOTICES.md"
-if (Test-Path $Notices) { Copy-Item $Notices (Join-Path $AppDir "THIRD_PARTY_NOTICES.md") }
-else { Write-Warning "THIRD_PARTY_NOTICES.md absent : a ajouter avant toute publication." }
+Copy-Item (Join-Path $Root "THIRD_PARTY_NOTICES.md") (Join-Path $AppDir "THIRD_PARTY_NOTICES.md")
+Invoke-Checked $VenvPython @((Join-Path $PSScriptRoot "collect_licenses.py"), (Join-Path $AppDir "licenses"))
 
 New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
 Get-ChildItem $ReleaseDir -Filter "MantaLayers-*" | Remove-Item -Force

@@ -23,7 +23,7 @@ Le script :
 
 1. crée `build\venv-release` et y installe les versions exactes de `requirements-build.txt` ;
 2. lance PyInstaller avec `MantaLayers.spec` ;
-3. copie `LICENSE` et `THIRD_PARTY_NOTICES.md` à côté de l'exe ;
+3. copie `LICENSE` et `THIRD_PARTY_NOTICES.md` à côté de l'exe, et `collect_licenses.py` place dans `licenses\` les textes complets des composants embarqués : Python, Pillow, PyInstaller, et les LGPL et GPL v3 de Qt et PySide6 (fichiers de `licenses\` ici) ;
 4. produit le ZIP puis l'installeur ;
 5. écrit leurs empreintes dans `dist\release\SHA256SUMS.txt`.
 
