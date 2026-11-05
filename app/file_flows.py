@@ -157,6 +157,10 @@ class DocumentFlowsMixin(_WindowBase):
             QMessageBox.StandardButton.Discard |
             QMessageBox.StandardButton.Cancel
         )
+        # Named explicitly: the stock French label of Discard ("Ne pas tenir compte") is unclear here.
+        box.button(QMessageBox.StandardButton.Save).setText("Enregistrer")
+        box.button(QMessageBox.StandardButton.Discard).setText("Ne pas enregistrer")
+        box.button(QMessageBox.StandardButton.Cancel).setText("Annuler")
         box.button(QMessageBox.StandardButton.Save).setStyleSheet(dialog_button_style("primary"))
         box.button(QMessageBox.StandardButton.Discard).setStyleSheet(dialog_button_style("danger"))
         box.setDefaultButton(QMessageBox.StandardButton.Save)

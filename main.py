@@ -36,6 +36,21 @@ def outdated_pillow() -> str | None:
     return version if major < MINIMUM_PILLOW else None
 
 
+def install_french_translation(application):
+    """Translate Qt's own texts (Save/Cancel buttons, Yes/No, colour dialog, "Del") into French.
+
+    Returns the translator, which must stay referenced while the application runs,
+    or None when the translation file is missing.
+    """
+    from PySide6.QtCore import QLibraryInfo, QTranslator
+    translator = QTranslator(application)
+    directory = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    if not translator.load("qtbase_fr", directory):
+        return None
+    application.installTranslator(translator)
+    return translator
+
+
 def main() -> int:
     configure_windows_taskbar()
     # Started without a console: errors go to a log file in the user data folder.
@@ -51,6 +66,9 @@ def main() -> int:
         return 2
 
     app = QApplication(sys.argv)
+    translator = install_french_translation(app)
+    if translator is None:
+        logger.warning("Qt French translation not found: standard buttons stay in English")
     app.setApplicationName("Manta Layers")
     app.setOrganizationName("Blue Shrimp · ReefKit")
     app.setWindowIcon(QIcon(str(Path(__file__).resolve().parent / 'assets' / 'manta.png')))
