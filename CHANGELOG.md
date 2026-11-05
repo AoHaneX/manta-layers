@@ -2,6 +2,12 @@
 
 ## Non publié
 
+### Corrections (audit de release)
+- Un calque tourné dont la largeur et la hauteur ont des échelles différentes reste un rectangle : il n'est plus affiché ni exporté cisaillé, et effacer, couper ou déplacer une sélection, détourer ou rogner ce calque touche exactement les pixels affichés ; la poignée de redimensionnement garde le coin opposé immobile. Les projets qui contenaient un tel calque l'affichent désormais sans cisaillement.
+- Un export d'image qui échoue (disque plein, droits, format) laisse intact le fichier qu'il devait remplacer ; le WebP, limité à 16 383 pixels de côté, est refusé avec un message au lieu de produire un fichier vide. L'export des tokens bénéficie de la même protection.
+- Les textes propres à Qt (boutons Oui/Non, Annuler, sélecteur de couleur, « Suppr » dans les menus) sont en français ; la question des modifications non enregistrées propose « Enregistrer », « Ne pas enregistrer » et « Annuler ».
+- La liste des calques se reconstruit environ quatre fois plus vite : avec 1 000 calques, une action ne fige plus l'interface pendant 4 à 5 secondes.
+
 ### Corrections (outils)
 - Valider une courbure en attente en cliquant sur un autre calque ne détruit plus la scène pendant qu'elle traite ce clic.
 - Les outils appliqués à un calque dont l'image est endommagée (baguette, copie de la sélection, détourage, rognage, recadrage, fusion, tokens, spritesheets) affichent un message ciblé au lieu de l'erreur inattendue ; la baguette « tous les calques » ignore ces calques.
