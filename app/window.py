@@ -779,8 +779,7 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         if keep != "text":
             self.text_tool_active = False
         if keep != "select":
-            self.selection_tool = None
-            self.canvas.cancel_selection_drag()
+            self._leave_selection_tools()
         if keep != "shape":
             self.shape_tool = None
             self.canvas.shape_drag = None
@@ -889,7 +888,22 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         self.text_tool_active = bool(active)
         self._sync_tool_buttons()
 
+    def _leave_selection_tools(self):
+        """Leaving the selection tools drops the selection and its outline (Ctrl+Z brings it back).
+
+        A selection made from the menus with no selection tool active is kept.
+        """
+        was_active = bool(self.selection_tool)
+        self.selection_tool = None
+        self.canvas.cancel_selection_drag()
+        if was_active and self.selection_mask is not None:
+            self.deselect()
+
     def set_selection_tool(self, tool: str | None):
+        if not tool:
+            self._leave_selection_tools()
+        elif tool != self.selection_tool:
+            self.canvas.cancel_selection_drag()  # an outline being drawn belongs to the previous tool
         if tool:
             self._clear_tools("select")
             self._show_tool_target()
