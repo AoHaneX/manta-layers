@@ -58,3 +58,17 @@ def test_an_outdated_pillow_is_detected(monkeypatch):
     assert main.outdated_pillow() == "12.3.0"
     monkeypatch.setattr(PIL, "__version__", "13.0.0")
     assert main.outdated_pillow() is None
+
+
+def test_qt_standard_texts_are_translated_into_french(qapp):
+    from PySide6.QtCore import QCoreApplication
+
+    import main
+    translator = main.install_french_translation(qapp)
+    try:
+        assert translator is not None
+        assert QCoreApplication.translate("QPlatformTheme", "Cancel") == "Annuler"
+        assert QCoreApplication.translate("QShortcut", "Del") == "Suppr"
+    finally:
+        if translator is not None:
+            qapp.removeTranslator(translator)

@@ -60,3 +60,18 @@ def test_nothing_typed_asks_nothing(window, monkeypatch):
     window.name_input.setFocus()
     monkeypatch.setattr(QMessageBox, "exec", lambda *_: (_ for _ in ()).throw(AssertionError("no prompt")))
     assert window.maybe_save()
+
+
+def test_the_unsaved_changes_prompt_speaks_french(window, monkeypatch):
+    window.name_input.setFocus()
+    window.name_input.setText("Nom tapé")
+    labels = []
+
+    def exec_(box):
+        labels.extend(button.text() for button in box.buttons())
+        box.button(QMessageBox.StandardButton.Cancel).click()
+        return 0
+
+    monkeypatch.setattr(QMessageBox, "exec", exec_)
+    assert window.maybe_save() is False
+    assert sorted(labels) == ["Annuler", "Enregistrer", "Ne pas enregistrer"]
