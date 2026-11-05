@@ -9,6 +9,7 @@
 - La liste des calques se reconstruit environ quatre fois plus vite : avec 1 000 calques, une action ne fige plus l'interface pendant 4 à 5 secondes.
 
 ### Ajouts
+- Un outil Crayon, sous « Remplissage + » dans l'onglet Outils (raccourci `B`), dessine avec la couleur courante, aux tailles et réglages de la gomme (pixel art ou classique, dureté, opacité). Ses traits sont conservés comme ceux de la gomme, sans modifier l'image source, et rejoués dans l'ordre avec gomme et remplissages.
 - Un bouton « Redimensionner le projet » dans les utilitaires du panneau de gauche change la largeur et la hauteur du document.
 
 ### Distribution Windows
