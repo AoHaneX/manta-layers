@@ -1,0 +1,28 @@
+{
+  "convention": 1,
+  "id": "manta-layers",
+  "appName": "MantaLayers",
+  "displayName": "Manta Layers",
+  "repository": "AoHaneX/manta-layers",
+  "executable": "MantaLayers.exe",
+  "installer": true,
+  "versionSources": [
+    { "file": "app/__init__.py", "pattern": "^__version__ *= *\"([^\"]+)\"" }
+  ],
+  "changelog": "CHANGELOG.md",
+  "userData": [
+    {
+      "path": "%LOCALAPPDATA%\\MantaLayers",
+      "content": "Modèles, polices importées, modèles d'IA, journaux et copies de récupération"
+    },
+    {
+      "path": "HKEY_CURRENT_USER\\Software\\Blue Shrimp\\Manta Layers",
+      "content": "Réglages (dossiers mémorisés, magnétisme)"
+    }
+  ],
+  "notes": [
+    "Vos projets `.manta` et vos images ne sont jamais modifiés par l'installation, la mise à jour ou la désinstallation.",
+    "Le détourage par IA locale n'est pas inclus dans la version autonome ; la méthode par couleur de fond reste disponible.",
+    "Les licences des composants tiers (Qt et PySide6 sous LGPL v3, Python, Pillow, PyInstaller) sont livrées dans le dossier `licenses` de l'application."
+  ]
+}
