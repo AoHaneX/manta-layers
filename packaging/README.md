@@ -1,9 +1,13 @@
 # Construire la version Windows
 
-Ce dossier produit les deux fichiers d'une release :
+Ce dossier produit les fichiers d'une release, nommés selon la convention de release ReefKit lue par RiftKit Launcher :
 
-- `MantaLayers-<version>-Setup.exe` est l'installeur Inno Setup. Par défaut, il installe pour l'utilisateur courant, sans droits d'administrateur ; l'installation pour tous les utilisateurs reste possible.
-- `MantaLayers-<version>-Windows-Portable.zip` contient le même dossier, à décompresser n'importe où.
+- `MantaLayers-vX.Y.Z-setup.exe` est l'installeur Inno Setup. Par défaut, il installe pour l'utilisateur courant, sans droits d'administrateur ; l'installation pour tous les utilisateurs reste possible.
+- `MantaLayers-vX.Y.Z-win64.zip` contient le même dossier, avec `MantaLayers.exe` à la racine de l'archive, à décompresser n'importe où.
+- `SHA256SUMS.txt` donne l'empreinte SHA-256 des deux fichiers.
+- `release-notes.md` est le texte de la release GitHub : la section `## X.Y.Z` du `CHANGELOG.md`, puis les téléchargements, l'installation, les données conservées et la vérification d'intégrité.
+
+La release v1.0.0, publiée avant cette convention, garde ses noms d'origine (`MantaLayers-1.0.0-Setup.exe`, `MantaLayers-1.0.0-Windows-Portable.zip`, avec un dossier `MantaLayers\` dans l'archive).
 
 ## Prérequis
 
@@ -17,15 +21,18 @@ Ce dossier produit les deux fichiers d'une release :
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
 
-Pour ne construire que le ZIP, ajoutez `-SkipInstaller`.
+Pour ne construire que le ZIP, ajoutez `-SkipInstaller`. Avec `-Tag vX.Y.Z`, le script s'arrête si le tag ne correspond pas à la version du code.
 
 Le script :
 
 1. crée `build\venv-release` et y installe les versions exactes de `requirements-build.txt` ;
 2. lance PyInstaller avec `MantaLayers.spec` ;
 3. copie `LICENSE` et `THIRD_PARTY_NOTICES.md` à côté de l'exe, et `collect_licenses.py` place dans `licenses\` les textes complets des composants embarqués : Python, Pillow, PyInstaller, et les LGPL et GPL v3 de Qt et PySide6 (fichiers de `licenses\` ici) ;
-4. produit le ZIP puis l'installeur ;
-5. écrit leurs empreintes dans `dist\release\SHA256SUMS.txt`.
+4. produit le ZIP puis l'installeur (Inno Setup 6 est obligatoire, sauf avec `-SkipInstaller`) ;
+5. vérifie avec `reefkit_release.py` que `MantaLayers.exe` est à la racine du ZIP et que ses chemins sont portables, puis écrit `dist\release\SHA256SUMS.txt` et `dist\release\release-notes.md` ;
+6. lance `MantaLayers.exe` depuis le ZIP extrait, sans Python dans le `PATH` et avec un profil utilisateur temporaire : vos modèles, polices et réglages ne sont pas touchés.
+
+`release.json` décrit l'application pour `reefkit_release.py`, outil commun identique dans chaque dépôt ReefKit.
 
 La version vient de `app/__init__.py`.
 
@@ -59,7 +66,7 @@ Ces contrôles ont été passés le 2026-11-05 sur la build 0.1.0. Ils sont à r
 2. L'installation silencieuse fonctionne :
 
    ```powershell
-   MantaLayers-<version>-Setup.exe /VERYSILENT /CURRENTUSER /DIR="C:\Test é\Manta"
+   MantaLayers-vX.Y.Z-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER /DIR="C:\Test é\Manta"
    ```
 
    Elle crée le raccourci du menu Démarrer et l'entrée « Applications installées ».
