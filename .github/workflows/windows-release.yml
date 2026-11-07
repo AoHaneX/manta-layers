@@ -1,154 +1,129 @@
 name: Windows release
 
+# ReefKit release convention, read by RiftKit Launcher (packaging/reefkit_release.py):
+#   MantaLayers-vX.Y.Z-win64.zip, MantaLayers-vX.Y.Z-setup.exe, SHA256SUMS.txt, Markdown notes.
+# - Pull request or push to master touching the packaging, or manual run: test, build and launch;
+#   nothing is published.
+# - Tag vX.Y.Z (any future version): the same, then a DRAFT release. Publishing it stays manual.
+#   An existing draft only receives the standard files; a published release (v1.0.0 included)
+#   is never modified, so pushing or re-pushing its tag cannot replace its files.
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-release.yml'
+      - 'packaging/**'
+      - 'requirements*.txt'
+      - 'CHANGELOG.md'
   push:
     branches:
       - master
     paths:
-      - ".github/workflows/windows-release.yml"
-      - "packaging/**"
+      - '.github/workflows/windows-release.yml'
+      - 'packaging/**'
     tags:
-      - "v*.*.*"
+      - 'v*.*.*'
 
 permissions:
-  contents: write
-  statuses: write
+  contents: read
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-windows:
-    name: Test and package Windows x64
+    name: Test, package and launch (Windows x64)
     runs-on: windows-latest
-
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: '1'
+      TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Check out sources
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.13 x64
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          python-version: "3.13"
-          architecture: "x64"
-
-      - name: Verify the application version and tag
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Check the tag against the version of the code
+        id: version
         shell: pwsh
         run: |
-          $source = Get-Content -Raw -Encoding UTF8 "app/__init__.py"
-          $match = [regex]::Match($source, '__version__\s*=\s*"([^"]+)"')
-          if (-not $match.Success) {
-            throw "Cannot read app/__init__.py version."
-          }
-          $version = $match.Groups[1].Value
-          if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -ne "v$version") {
-            throw "Git tag $env:GITHUB_REF_NAME does not match app version v$version."
-          }
-          "APP_VERSION=$version" >> $env:GITHUB_ENV
-          Write-Host "Building Manta Layers $version"
-
+          $version = python packaging/reefkit_release.py version --tag "$env:TAG"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          "version=$version" >> $env:GITHUB_OUTPUT
       - name: Install test dependencies
-        shell: pwsh
         run: python -m pip install -r requirements-dev.txt
-
       - name: Run automated tests
-        shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest
-
-      - name: Check Inno Setup 6 availability
+      - name: Install Inno Setup 6 if the runner lacks it
         shell: pwsh
         run: |
-          $inno = Join-Path ([Environment]::GetFolderPath("ProgramFilesX86")) "Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $inno)) {
-            throw "Inno Setup 6 / ISCC.exe is missing on the Windows runner."
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Get-Command ISCC.exe -ErrorAction SilentlyContinue) -and -not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { exit 1 }
           }
-
-      - name: Build portable ZIP and Windows installer
+      # Pinned build environment, PyInstaller, licences, ZIP with MantaLayers.exe at its root,
+      # installer, SHA256SUMS.txt and notes, then a launch from the extracted ZIP.
+      - name: Build, check and launch the deliverables
         shell: pwsh
-        run: |
-          & .\packaging\build.ps1 -Python "python" -PythonArguments @()
-          $expected = @(
-            "dist\release\MantaLayers-$env:APP_VERSION-Setup.exe",
-            "dist\release\MantaLayers-$env:APP_VERSION-Windows-Portable.zip",
-            "dist\release\SHA256SUMS.txt"
-          )
-          foreach ($file in $expected) {
-            if (-not (Test-Path $file)) {
-              throw "Missing release artifact: $file"
-            }
-          }
-
-      - name: Upload build artifacts for verification
-        uses: actions/upload-artifact@v4
+        run: ./packaging/build.ps1 -Python python -PythonArguments @() -Tag "$env:TAG"
+      - name: Verify SHA256SUMS.txt
+        run: python packaging/reefkit_release.py verify --dir dist/release
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: MantaLayers-Windows-${{ env.APP_VERSION }}
+          name: MantaLayers-v${{ steps.version.outputs.version }}-windows
           path: |
-            dist/release/MantaLayers-*-Setup.exe
-            dist/release/MantaLayers-*-Windows-Portable.zip
+            dist/release/MantaLayers-v${{ steps.version.outputs.version }}-win64.zip
+            dist/release/MantaLayers-v${{ steps.version.outputs.version }}-setup.exe
             dist/release/SHA256SUMS.txt
+            dist/release/release-notes.md
           if-no-files-found: error
           retention-days: 30
 
-      - name: Start packaged executable (headless smoke check)
-        shell: pwsh
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          $exe = Join-Path $PWD "dist\MantaLayers\MantaLayers.exe"
-          if (-not (Test-Path $exe)) { throw "Missing packaged executable: $exe" }
-          $app = Start-Process -FilePath $exe -PassThru
-          Start-Sleep -Seconds 6
-          $app.Refresh()
-          if ($app.HasExited) {
-            throw "Packaged MantaLayers.exe stopped during startup (exit $($app.ExitCode))."
-          }
-          Stop-Process -Id $app.Id -Force
-          Write-Host "Headless startup succeeded."
-
-      - name: Prepare a v1.0.0 GitHub release draft after successful build
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && env.APP_VERSION == '1.0.0'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $tag = "v$env:APP_VERSION"
-          $releases = gh release list --repo "$env:GITHUB_REPOSITORY" --limit 100 --json tagName,isDraft | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw "Unable to read existing releases." }
-          $existing = @($releases | Where-Object { $_.tagName -eq $tag })
-          if ($existing.Count -gt 0) {
-            Write-Host "Release $tag already exists; not replacing it automatically."
-            exit 0
-          }
-          $files = @(
-            "dist\release\MantaLayers-$env:APP_VERSION-Setup.exe",
-            "dist\release\MantaLayers-$env:APP_VERSION-Windows-Portable.zip",
-            "dist\release\SHA256SUMS.txt"
-          )
-          & gh release create $tag @files --repo "$env:GITHUB_REPOSITORY" --target "$env:GITHUB_SHA" --title "Manta Layers $tag" --notes-file ".github\RELEASE_NOTES_V1.md" --draft
-          if ($LASTEXITCODE -ne 0) { throw "Failed to create draft release $tag." }
-
-      - name: Report Windows packaging result
-        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/master'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BUILD_RESULT: ${{ job.status }}
-        run: |
-          $state = if ($env:BUILD_RESULT -eq "success") { "success" } else { "failure" }
-          gh api --method POST "repos/$env:GITHUB_REPOSITORY/statuses/$env:GITHUB_SHA" -f "state=$state" -f "context=manta/windows-release" -f "description=Windows tests, portable zip and installer: $state" | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "Could not report build status." }
-
-      # Tag builds produce a draft rather than an immediately public release.
-      # Verify the files and installation before publishing.
-      - name: Create or update draft GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  draft-release:
+    name: Draft GitHub release
+    needs: build-windows
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.build-windows.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          name: Manta Layers v${{ env.APP_VERSION }}
-          draft: true
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: |
-            dist/release/MantaLayers-*-Setup.exe
-            dist/release/MantaLayers-*-Windows-Portable.zip
-            dist/release/SHA256SUMS.txt
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: MantaLayers-v${{ needs.build-windows.outputs.version }}-windows
+          path: release
+      - name: Verify the downloaded files against SHA256SUMS.txt
+        run: python3 packaging/reefkit_release.py verify --dir release
+      - name: Create or complete the draft release
+        run: |
+          set -euo pipefail
+          files=("release/MantaLayers-v$VERSION-win64.zip" "release/MantaLayers-v$VERSION-setup.exe" release/SHA256SUMS.txt)
+          state=$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || echo none)
+          case "$state" in
+            none)
+              gh release create "$TAG" "${files[@]}" --draft --verify-tag \
+                --title "Manta Layers $TAG" --notes-file release/release-notes.md
+              echo "Draft $TAG created: review it, then publish it by hand." ;;
+            true)
+              gh release upload "$TAG" "${files[@]}" --clobber
+              echo "::notice::Draft $TAG already existed: standard files added, its text and other files kept." ;;
+            *)
+              echo "::warning::Release $TAG is already published: left unchanged. The files are in the workflow artifact." ;;
+          esac
