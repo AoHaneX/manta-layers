@@ -7,6 +7,10 @@
 #ifndef AppVersion
   #error "Passer la version : ISCC /DAppVersion=x.y.z MantaLayers.iss"
 #endif
+; ReefKit release convention (RiftKit Launcher): MantaLayers-vX.Y.Z-setup.exe.
+#ifndef OutputBaseName
+  #define OutputBaseName "MantaLayers-v" + AppVersion + "-setup"
+#endif
 
 #define AppName "Manta Layers"
 #define AppExe "MantaLayers.exe"
@@ -34,7 +38,7 @@ LicenseFile=..\LICENSE
 SetupIconFile=..\assets\manta.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
-OutputBaseFilename=MantaLayers-{#AppVersion}-Setup
+OutputBaseFilename={#OutputBaseName}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern

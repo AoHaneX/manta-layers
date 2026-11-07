@@ -23,6 +23,8 @@ Téléchargez la dernière version depuis la page [Releases](https://github.com/
 | `MantaLayers-1.0.0-Setup.exe` | Installeur. Par défaut, il installe pour votre compte, sans droits d'administrateur, et crée un raccourci dans le menu Démarrer (et sur le Bureau si vous le cochez). |
 | `MantaLayers-1.0.0-Windows-Portable.zip` | Archive à décompresser n'importe où, puis lancer `MantaLayers.exe`. |
 
+À partir de la version suivante, les fichiers suivent la convention de release ReefKit, lue par RiftKit Launcher : `MantaLayers-vX.Y.Z-setup.exe`, `MantaLayers-vX.Y.Z-win64.zip` (avec `MantaLayers.exe` à la racine de l'archive) et `SHA256SUMS.txt`. Les fichiers de la v1.0.0 gardent leurs noms.
+
 **Prérequis :** Windows 10 ou 11, 64 bits. Python n'est pas nécessaire.
 
 **Premier lancement :** l'exécutable n'est pas signé. Windows SmartScreen peut alors afficher « Windows a protégé votre ordinateur » : cliquez sur **Informations complémentaires**, puis **Exécuter quand même**. Les empreintes SHA-256 des fichiers sont publiées avec chaque version (`SHA256SUMS.txt`).
