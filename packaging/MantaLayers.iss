@@ -7,7 +7,7 @@
 #ifndef AppVersion
   #error "Passer la version : ISCC /DAppVersion=x.y.z MantaLayers.iss"
 #endif
-; ReefKit release convention (RiftKit Launcher): MantaLayers-vX.Y.Z-setup.exe.
+; ReefKit release convention (ReefKit Launcher): MantaLayers-vX.Y.Z-setup.exe.
 #ifndef OutputBaseName
   #define OutputBaseName "MantaLayers-v" + AppVersion + "-setup"
 #endif

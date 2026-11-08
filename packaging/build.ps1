@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Builds the Windows release of Manta Layers: portable ZIP and Inno Setup installer, named after
-    the ReefKit release convention read by RiftKit Launcher (packaging\reefkit_release.py).
+    the ReefKit release convention read by ReefKit Launcher (packaging\reefkit_release.py).
     Everything is written under dist\ (ignored by Git):
 
         dist\release\MantaLayers-vX.Y.Z-win64.zip    MantaLayers.exe at the root of the archive
@@ -104,6 +104,6 @@ $FinalizeArguments = @($ReleaseTool, "finalize", "--dir", $ReleaseDir) + $TagArg
 if ($SkipInstaller) { $FinalizeArguments += "--allow-missing-installer" }
 Invoke-Checked $VenvPython $FinalizeArguments
 # Start the application from the extracted archive, without Python on the PATH and with a
-# temporary user profile, as RiftKit Launcher will: the user's own data is not touched.
+# temporary user profile, as ReefKit Launcher will: the user's own data is not touched.
 Invoke-Checked $VenvPython @($ReleaseTool, "smoke", "--dir", $ReleaseDir)
 Write-Host "Termine : $ReleaseDir"

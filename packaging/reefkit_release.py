@@ -1,4 +1,4 @@
-"""ReefKit release helper: the Windows release convention read by RiftKit Launcher (convention 1).
+"""ReefKit release helper: the Windows release convention read by ReefKit Launcher (convention 1).
 
 Keep this file identical in every ReefKit application repository: what differs between
 applications lives in ``packaging/release.json`` next to it. Standard library only, Python 3.11+.
@@ -303,7 +303,7 @@ def smoke(config: Config, directory: Path, seconds: float, env_pairs: list[str],
     version = read_version(config)
     archive = directory / config.portable(version)
     check_portable(config, archive)
-    with tempfile.TemporaryDirectory(prefix="riftkit-smoke-", ignore_cleanup_errors=True) as temporary:
+    with tempfile.TemporaryDirectory(prefix="reefkit-smoke-", ignore_cleanup_errors=True) as temporary:
         base = Path(temporary)
         target = base / "Dossier d'essai é" / config.app_name
         with zipfile.ZipFile(archive) as bundle:
