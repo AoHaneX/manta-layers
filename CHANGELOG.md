@@ -2,7 +2,7 @@
 
 Chaque section `## X.Y.Z` devient la partie « Nouveautés » des notes de la release GitHub `vX.Y.Z` (`packaging/reefkit_release.py`).
 
-## Prochaine version
+## 1.0.1 — 8 novembre 2026
 
 ### Distribution Windows
 - Les fichiers suivent la convention de release ReefKit, lue par ReefKit Launcher : `MantaLayers-vX.Y.Z-setup.exe`, `MantaLayers-vX.Y.Z-win64.zip` avec `MantaLayers.exe` à la racine de l'archive, `SHA256SUMS.txt` et des notes de version structurées. La release 1.0.0 garde ses fichiers et leurs noms.
