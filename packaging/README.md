@@ -1,6 +1,6 @@
 # Construire la version Windows
 
-Ce dossier produit les fichiers d'une release, nommés selon la convention de release ReefKit lue par RiftKit Launcher :
+Ce dossier produit les fichiers d'une release, nommés selon la convention de release ReefKit lue par ReefKit Launcher :
 
 - `MantaLayers-vX.Y.Z-setup.exe` est l'installeur Inno Setup. Par défaut, il installe pour l'utilisateur courant, sans droits d'administrateur ; l'installation pour tous les utilisateurs reste possible.
 - `MantaLayers-vX.Y.Z-win64.zip` contient le même dossier, avec `MantaLayers.exe` à la racine de l'archive, à décompresser n'importe où.

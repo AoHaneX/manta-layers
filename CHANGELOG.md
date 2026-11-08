@@ -5,7 +5,7 @@ Chaque section `## X.Y.Z` devient la partie « Nouveautés » des notes de la re
 ## Prochaine version
 
 ### Distribution Windows
-- Les fichiers suivent la convention de release ReefKit, lue par RiftKit Launcher : `MantaLayers-vX.Y.Z-setup.exe`, `MantaLayers-vX.Y.Z-win64.zip` avec `MantaLayers.exe` à la racine de l'archive, `SHA256SUMS.txt` et des notes de version structurées. La release 1.0.0 garde ses fichiers et leurs noms.
+- Les fichiers suivent la convention de release ReefKit, lue par ReefKit Launcher : `MantaLayers-vX.Y.Z-setup.exe`, `MantaLayers-vX.Y.Z-win64.zip` avec `MantaLayers.exe` à la racine de l'archive, `SHA256SUMS.txt` et des notes de version structurées. La release 1.0.0 garde ses fichiers et leurs noms.
 - Un tag `vX.Y.Z` construit et vérifie la version sur Windows x64, puis prépare une release brouillon, publiée à la main.
 
 ## 1.0.0 — 5 novembre 2026

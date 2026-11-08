@@ -1,6 +1,6 @@
 name: Windows release
 
-# ReefKit release convention, read by RiftKit Launcher (packaging/reefkit_release.py):
+# ReefKit release convention, read by ReefKit Launcher (packaging/reefkit_release.py):
 #   MantaLayers-vX.Y.Z-win64.zip, MantaLayers-vX.Y.Z-setup.exe, SHA256SUMS.txt, Markdown notes.
 # - Pull request or push to master touching the packaging, or manual run: test, build and launch;
 #   nothing is published.

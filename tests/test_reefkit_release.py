@@ -1,4 +1,4 @@
-"""Tests of packaging/reefkit_release.py, the release convention read by RiftKit Launcher.
+"""Tests of packaging/reefkit_release.py, the release convention read by ReefKit Launcher.
 
 Keep this file identical in every ReefKit application repository, like the helper itself.
 """
