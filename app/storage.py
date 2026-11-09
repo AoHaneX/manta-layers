@@ -7,6 +7,7 @@ import zlib
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZIP_STORED, BadZipFile, ZipFile
 
+from . import model
 from .model import MAX_ASSET_BYTES, MAX_LAYERS, Document
 
 
@@ -25,6 +26,12 @@ def save_project(
     if len(document.layers) > MAX_LAYERS:
         raise ValueError(f"Le projet contient {len(document.layers)} calques : "
                          f"un projet en compte au plus {MAX_LAYERS}")
+    asset_bytes = sum(len(document.assets[asset_id]) for asset_id in used)
+    if asset_bytes > model.MAX_PROJECT_ASSET_BYTES:
+        raise ValueError(
+            f"Les images du projet occupent {asset_bytes / 1_073_741_824:.1f} Go : un projet en enregistre "
+            f"au plus {model.MAX_PROJECT_ASSET_BYTES / 1_073_741_824:.0f} Go. "
+            "Supprimez ou réduisez des calques image.")
     manifest = document.manifest()
     if metadata:
         manifest["template"] = metadata
@@ -87,6 +94,8 @@ def open_project(path: str | Path) -> Document:
             if len(layers) > MAX_LAYERS:
                 raise ValueError("Projet avec trop de calques")
             assets = {}
+            names = set(z.namelist())
+            total_bytes = 0  # decompressed size of the images read so far
             for layer in layers:
                 if not isinstance(layer, dict) or layer.get("kind") != "image":
                     continue
@@ -97,12 +106,17 @@ def open_project(path: str | Path) -> Document:
                     # Prévient toute lecture arbitraire à partir d'un manifeste corrompu.
                     if not isinstance(asset_id, str) or len(asset_id) != 32 or not all(c in '0123456789abcdef' for c in asset_id):
                         raise ValueError("Identifiant d'image invalide")
-                    if key == "mask" and f"assets/{asset_id}.png" not in z.namelist():
+                    if key == "mask" and f"assets/{asset_id}.png" not in names:
                         continue  # a missing mask is dropped, the layer stays readable
                     if asset_id not in assets:
                         info = z.getinfo(f"assets/{asset_id}.png")
                         if info.file_size > MAX_ASSET_BYTES:
                             raise ValueError("Image trop volumineuse")
+                        # Checked before reading: sizes come from the archive directory,
+                        # and z.read() refuses data longer than the declared size.
+                        total_bytes += info.file_size
+                        if total_bytes > model.MAX_PROJECT_ASSET_BYTES:
+                            raise ValueError("Images du projet trop volumineuses")
                         assets[asset_id] = z.read(info)
         return Document.from_manifest(manifest, assets)
     # Damaged archives fail in many ways (corrupted compressed data, unsupported

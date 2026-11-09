@@ -30,6 +30,9 @@ MAX_DOCUMENT_PIXELS = 120_000_000
 # Worst case of a MAX_PIXELS RGBA image stored as PNG (incompressible noise),
 # with a margin: any image accepted on import can be saved and reopened.
 MAX_ASSET_BYTES = 300 * 1024 * 1024
+# All images and masks of one project together (checked when saving and opening):
+# a small forged archive must not expand into more memory than this.
+MAX_PROJECT_ASSET_BYTES = 2 * 1024 * 1024 * 1024
 # Only these decoders ever see user files: Pillow would otherwise pick any
 # plugin from the file content, whatever its extension.
 IMPORT_FORMATS = ("PNG", "JPEG", "WEBP", "BMP", "GIF")

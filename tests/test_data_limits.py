@@ -207,3 +207,54 @@ def test_an_unusable_recovery_folder_is_reported(qapp, tmp_path, monkeypatch):
         window.undo_stack.setClean()
         window.close()
 
+
+# --- Total size of the images of a project ----------------------------------------------------
+
+def _image_document(count):
+    document = Document(64, 64)
+    for index in range(count):
+        document.add_image_bytes(png_bytes(8 + index, 8), f"image {index}", center=False)
+    return document
+
+
+def test_images_beyond_the_project_budget_are_not_read(tmp_path, monkeypatch):
+    from app import model
+
+    path = tmp_path / "images.manta"
+    document = _image_document(3)
+    save_project(document, path)
+    sizes = sorted(len(data) for data in document.assets.values())
+    monkeypatch.setattr(model, "MAX_PROJECT_ASSET_BYTES", sum(sizes) - 1)
+    with pytest.raises(ValueError, match="trop volumineuses"):
+        open_project(path)
+    monkeypatch.setattr(model, "MAX_PROJECT_ASSET_BYTES", sum(sizes))
+    assert len(open_project(path).layers) == 3
+
+
+def test_a_project_beyond_the_image_budget_is_not_saved(tmp_path, monkeypatch):
+    from app import model
+
+    path = tmp_path / "images.manta"
+    path.write_bytes(b"previous")
+    document = _image_document(3)
+    monkeypatch.setattr(model, "MAX_PROJECT_ASSET_BYTES", sum(len(data) for data in document.assets.values()) - 1)
+    with pytest.raises(ValueError, match="Go"):
+        save_project(document, path)
+    assert path.read_bytes() == b"previous"  # whatever cannot be reopened is never written
+
+
+def test_a_highly_compressed_image_entry_counts_at_its_decompressed_size(tmp_path, monkeypatch):
+    from app import model
+
+    path = tmp_path / "forge.manta"
+    ids = [f"{index + 1:032x}" for index in range(3)]
+    manifest = {"format": "MantaLayers", "version": 2, "width": 10, "height": 10,
+                "layers": [{"id": f"L{index}", "kind": "image", "asset": asset} for index, asset in enumerate(ids)]}
+    with ZipFile(path, "w", storage.ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+        for asset in ids:
+            archive.writestr(f"assets/{asset}.png", b"\0" * 1_000_000)
+    monkeypatch.setattr(model, "MAX_PROJECT_ASSET_BYTES", 2_500_000)
+    with pytest.raises(ValueError, match="trop volumineuses"):
+        open_project(path)
+
