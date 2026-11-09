@@ -178,3 +178,20 @@ def test_layers_without_edits_are_not_cached_twice():
     graphics.RENDER_CACHE.clear()
     graphics.render_layer_image(document.assets[plain.asset], {}, [], [], cache_key=plain.asset)
     assert graphics.RENDER_CACHE._used == 0  # the pixmap cache keeps the displayed layer
+
+
+def test_another_document_releases_the_renders_of_the_previous_one(window):
+    from app import graphics
+    first = Document(40, 40)
+    layer = first.add_image_bytes(png_bytes(16, 16), "ancien")
+    layer.color_fills = [{"mode": "contiguous", "source": "#C80A0A", "target": "#00FF00", "x": 2, "y": 2,
+                          "tolerance": 0, "preserve_shading": False, "after_strokes": 0}]
+    window._start_session(first, None)
+    old_key = graphics._render_key(window.document.layer(layer.id))
+    assert graphics.PIXMAP_CACHE.get(old_key) is not None and graphics.RENDER_CACHE._used > 0
+    second = Document(40, 40)
+    shown = second.add_image_bytes(png_bytes(8, 8), "nouveau")
+    window._start_session(second, None)
+    assert graphics.PIXMAP_CACHE.get(old_key) is None
+    assert graphics.RENDER_CACHE._used == 0  # the new layer has no edits to cache before its mask
+    assert graphics.PIXMAP_CACHE.get(graphics._render_key(window.document.layer(shown.id))) is not None

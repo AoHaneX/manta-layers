@@ -13,7 +13,14 @@ from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
 
 from . import export, selection
 from .dialogs import NewProjectDialog, ResizeDocumentDialog
-from .graphics import UNREADABLE_ROLE, font_is_installed, make_scene, qimage_to_pil, render_document
+from .graphics import (
+    UNREADABLE_ROLE,
+    clear_render_caches,
+    font_is_installed,
+    make_scene,
+    qimage_to_pil,
+    render_document,
+)
 from .model import MAX_DOCUMENT_PIXELS, Document, Layer
 from .paths import safe_file_stem
 from .recovery import SessionRecovery, recovery_text
@@ -81,6 +88,9 @@ class DocumentFlowsMixin(_WindowBase):
 
         Raises if the document cannot be shown; the current one then stays as it was.
         """
+        # Renders of the previous document would stay in memory until evicted
+        # (up to 768 MB); if this one cannot be shown, the current one is re-rendered.
+        clear_render_caches()
         scene = self._make_scene(document, tolerate_all=True)
         unreadable = {item.data(0) for item in scene.items() if item.data(UNREADABLE_ROLE)}
         self._unreadable_assets = {asset for layer in document.layers if layer.id in unreadable

@@ -631,6 +631,15 @@ PIXMAP_CACHE = _ImageCache(512 * 1024 * 1024)
 RENDER_CACHE = _ImageCache(256 * 1024 * 1024)
 
 
+def clear_render_caches() -> None:
+    """Forget every cached render, when another document replaces the current one.
+
+    Not on undo or redo: the history reuses the renders of the same document.
+    """
+    PIXMAP_CACHE.clear()
+    RENDER_CACHE.clear()
+    _LAST_SOURCE.clear()
+
 
 def _render_key(layer: Layer) -> str:
     # Un identifiant d'image désigne toujours le même contenu : seuls les
