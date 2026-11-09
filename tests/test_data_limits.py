@@ -182,3 +182,28 @@ def test_the_error_report_opens_no_dialog_outside_the_interface_thread(qapp, mon
     thread.start()
     thread.join()
     assert shown == []
+
+
+def test_an_unusable_recovery_folder_is_reported(qapp, tmp_path, monkeypatch):
+    from PySide6.QtCore import QSettings
+
+    from app.window import MainWindow
+
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **_k: warnings.append(args[2]))
+    blocker = tmp_path / "fichier"
+    blocker.write_text("not a folder")
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(settings=settings, recovery_dir=blocker / "recovery")
+    try:
+        assert window.recovery.lock is None and window.recovery.unavailable_reason
+        assert window.mutate("Texte", lambda doc: doc.add_text("x"))
+        assert not window.autosave_now()
+        assert not window.autosave_now()
+        assert len(warnings) == 1  # one dialog, then the status bar
+        assert "récupération" in window.statusBar().currentMessage()
+    finally:
+        window._commit_pending_edits()
+        window.undo_stack.setClean()
+        window.close()
+

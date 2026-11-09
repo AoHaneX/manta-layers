@@ -68,13 +68,20 @@ class SessionRecovery:
         self.task: RecoveryWriter | None = None
         # Called with the reason when a copy cannot be written (on the interface thread).
         self.on_failure: Callable[[str], None] | None = None
+        # Why no copy can be written in this session (folder or lock unavailable).
+        self.unavailable_reason: str | None = None
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
             lock = QLockFile(str(self.directory / f"{self.session_id}.lock"))
             if lock.tryLock(0):
                 self.lock = lock
-        except OSError:
-            pass
+            else:
+                self.unavailable_reason = (f"le dossier de récupération {self.directory} "
+                                           f"ne peut pas être verrouillé ({lock.error().name})")
+        except OSError as exc:
+            self.unavailable_reason = f"le dossier de récupération est inutilisable ({exc})"
+        if self.unavailable_reason is not None:
+            logging.getLogger(LOGGER_NAME).warning("Recovery disabled: %s", self.unavailable_reason)
         self.remove_orphan_locks()
 
     def files(self, session_id: str) -> tuple[Path, Path]:
@@ -104,8 +111,13 @@ class SessionRecovery:
         With ``background``, a thread writes it from a snapshot of the document,
         so that compressing and verifying a large project never freezes the interface.
         """
-        if self.lock is None or self.autosaved_revision == revision:
-            return False  # no lock, or nothing changed since the last copy
+        if self.lock is None:
+            # No copy can be written in this session: say so instead of failing silently.
+            if self.unavailable_reason is not None and self.on_failure is not None:
+                self.on_failure(self.unavailable_reason)
+            return False
+        if self.autosaved_revision == revision:
+            return False  # nothing changed since the last copy
         if self.task is not None:
             return False  # the previous copy is still being written
         project, meta = self.files(self.session_id)
