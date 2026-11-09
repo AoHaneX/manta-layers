@@ -631,6 +631,7 @@ PIXMAP_CACHE = _ImageCache(512 * 1024 * 1024)
 RENDER_CACHE = _ImageCache(256 * 1024 * 1024)
 
 
+
 def _render_key(layer: Layer) -> str:
     # Un identifiant d'image désigne toujours le même contenu : seuls les
     # réglages non destructifs et les retournements font varier le rendu.
@@ -645,19 +646,30 @@ def pil_to_qimage(image: Image.Image) -> QImage:
                   QImage.Format.Format_RGBA8888).copy()
 
 
-def render_layer_with_mask(layer: Layer, document: Document) -> Image.Image:
-    """Source pixels of an image layer with its edits and mask, not flipped."""
+def render_layer_edits(layer: Layer, document: Document) -> Image.Image:
+    """Source pixels of an image layer with its edits, before its mask, not flipped."""
     asset = layer.image_asset()
-    image = render_layer_image(
+    return render_layer_image(
         document.assets[asset], layer.color_replacements,
         layer.color_fills, layer.eraser_strokes, cache_key=asset,
     )
-    if layer.mask:
-        mask = selection.decode(document.assets[layer.mask])
-        if mask.size != image.size:
-            mask = mask.resize(image.size, Image.Resampling.NEAREST)
-        image = selection.apply_alpha(image, mask)
-    return image
+
+
+def layer_mask_image(layer: Layer, document: Document, size: tuple[int, int]) -> Image.Image | None:
+    """Mask of an image layer at the size of its source pixels, or None without a mask."""
+    if not layer.mask:
+        return None
+    mask = selection.decode(document.assets[layer.mask])
+    if mask.size != size:
+        mask = mask.resize(size, Image.Resampling.NEAREST)
+    return mask
+
+
+def render_layer_with_mask(layer: Layer, document: Document) -> Image.Image:
+    """Source pixels of an image layer with its edits and mask, not flipped."""
+    image = render_layer_edits(layer, document)
+    mask = layer_mask_image(layer, document, image.size)
+    return image if mask is None else selection.apply_alpha(image, mask)
 
 
 def crop_image_layer(layer: Layer, document: Document,

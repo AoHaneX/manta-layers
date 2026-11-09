@@ -21,9 +21,10 @@ from .graphics import (
     checker_brush,
     eraser_dab_origin,
     eraser_source_position,
+    layer_mask_image,
     layer_transform,
     pil_to_qimage,
-    render_layer_with_mask,
+    render_layer_edits,
     selection_outline,
     selection_overlay,
     set_item_geometry,
@@ -90,7 +91,8 @@ class CanvasView(QGraphicsView):
         self.eraser_points: list[QPointF] = []
         self.eraser_cursor_local: QPointF | None = None
         # Live eraser preview, computed in source pixels exactly like the final render.
-        self.eraser_base: Image.Image | None = None  # layer pixels before the stroke, not flipped
+        self.eraser_base: Image.Image | None = None  # layer pixels before the stroke and mask, not flipped
+        self.eraser_mask: Image.Image | None = None  # layer mask, applied after the stroke
         self.eraser_coverage: Image.Image | None = None  # coverage of the current stroke
         self.eraser_settings: dict | None = None  # stroke settings (size, shape…) without points
         self.eraser_flips = (False, False)
@@ -832,7 +834,10 @@ class CanvasView(QGraphicsView):
     def begin_eraser_preview(self, item: QGraphicsPixmapItem, layer: Layer) -> bool:
         """Prepare the live preview of a stroke on ``item``; False if the layer cannot be read."""
         try:
-            base = render_layer_with_mask(layer, self.main_window.document)
+            # As in the final render, the stroke is drawn before the mask is applied:
+            # a pencil stroke stays hidden where the mask hides the layer.
+            base = render_layer_edits(layer, self.main_window.document)
+            mask = layer_mask_image(layer, self.main_window.document, base.size)
         except Exception as exc:
             tool = "Crayon" if self.main_window.pencil_active else "Gomme"
             self.main_window.statusBar().showMessage(f"{tool} impossible : {exc}", 4000)
@@ -840,6 +845,7 @@ class CanvasView(QGraphicsView):
         self.eraser_item = item
         self.eraser_original_pixmap = item.pixmap()
         self.eraser_base = base
+        self.eraser_mask = mask
         self.eraser_coverage = Image.new("L", base.size, 0)
         self.eraser_settings = self.main_window.eraser_stroke_settings()
         self.eraser_flips = (layer.flip_horizontal, layer.flip_vertical)
@@ -872,6 +878,8 @@ class CanvasView(QGraphicsView):
             return
         region = apply_stroke_coverage(self.eraser_base.crop(box), self.eraser_coverage.crop(box),
                                        self.eraser_settings)
+        if self.eraser_mask is not None:
+            region = selection.apply_alpha(region, self.eraser_mask.crop(box))
         left, top = box[0], box[1]
         flip_horizontal, flip_vertical = self.eraser_flips
         if flip_horizontal:
@@ -892,6 +900,7 @@ class CanvasView(QGraphicsView):
         self.eraser_item = None
         self.eraser_points = []
         self.eraser_base = None
+        self.eraser_mask = None
         self.eraser_coverage = None
         self.eraser_settings = None
         self.eraser_pixmap = None

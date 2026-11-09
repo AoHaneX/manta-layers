@@ -59,3 +59,35 @@ def test_mirrored_dab_covers_the_mirrored_pixels(size, position):
     shown = eraser_dab_origin(position, size)
     source = eraser_dab_origin(eraser_source_position(position, extent, size, True), size)
     assert source == extent - shown - size
+
+
+@pytest.mark.parametrize("pencil", [False, True])
+@pytest.mark.parametrize("flips", [(False, False), (True, False), (False, True)])
+def test_preview_on_a_masked_layer_matches_the_saved_stroke(window, pencil, flips):
+    """The mask is applied after the stroke: a pencil stroke stays hidden where the mask hides the layer."""
+    from PIL import Image
+
+    from app import selection
+    from app.model import new_id
+
+    document = Document(40, 30)
+    layer = document.add_image_bytes(png_bytes(30, 20, (200, 120, 40, 255)), "Calque", center=False)
+    mask = Image.new("L", (30, 20), 255)
+    mask.paste(0, (0, 0, 15, 20))  # left half hidden
+    layer.mask = new_id()
+    document.assets[layer.mask] = selection.encode(mask)
+    layer.flip_horizontal, layer.flip_vertical = flips
+    window.install_document(document, layer.id)
+    window.set_pencil_active(pencil)
+    window.eraser_size.setValue(3)
+    window.eraser_pixel_art.setChecked(True)
+    item = window.canvas.graphic_for(layer.id)
+    canvas = window.canvas
+    points = [QPointF(2, 10), QPointF(28, 10)]
+    assert canvas.begin_eraser_preview(item, layer)
+    canvas._apply_eraser_preview_segment(points[0], points[0])
+    canvas._apply_eraser_preview_segment(points[0], points[1])
+    preview = _alpha(item)
+    canvas.cancel_eraser_preview()
+    window.commit_eraser_stroke(layer.id, points)
+    assert preview == _alpha(window.canvas.graphic_for(layer.id))
