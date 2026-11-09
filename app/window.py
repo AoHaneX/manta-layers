@@ -636,13 +636,23 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         QMessageBox.warning(self, "Action impossible", f"{description} : {exc}")
 
     def commit_canvas_moves(self, before: Document, positions: dict[str, tuple[float, float]]) -> bool:
-        """Record layers dragged together as one undoable step."""
-        after = before.clone()
+        """Record layers dragged together as one undoable step.
+
+        Layers left in place are ignored: a click without a drag records nothing.
+        """
+        moved = {}
         for layer_id, (x, y) in positions.items():
-            layer = after.layer(layer_id)
-            if layer is not None:
-                layer.x, layer.y = x, y
-        return self._push(DocumentCommand(self, before, after, f"Déplacer {len(positions)} calques",
+            layer = before.layer(layer_id)
+            if layer is not None and (abs(layer.x - x) > 0.001 or abs(layer.y - y) > 0.001):
+                moved[layer_id] = (x, y)
+        if not moved:
+            return False
+        after = before.clone()
+        for layer_id, (x, y) in moved.items():
+            moved_layer = after.layer(layer_id)
+            assert moved_layer is not None  # a clone holds the same layers
+            moved_layer.x, moved_layer.y = x, y
+        return self._push(DocumentCommand(self, before, after, f"Déplacer {len(moved)} calques",
                                           self.selected_id, self.selected_id))
 
     def toggle_snap(self, enabled: bool):

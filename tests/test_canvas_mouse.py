@@ -131,3 +131,32 @@ def test_a_drawn_rectangle_selection_follows_the_mouse(image_layer):
     mouse_drag(window, QPointF(100, 60), QPointF(120, 70))
     assert selection.bounds(window.selection_mask) == (100, 60, 120, 70)
     assert window.undo_stack.count() == 1 and not window.is_modified()
+
+
+@pytest.fixture
+def two_checked_layers(image_layer):
+    window, layer_id = image_layer
+    other = window.document.clone()
+    second = other.add_image_bytes(png_bytes(40, 20, (0, 0, 200, 255)), "autre", center=False)
+    second.x, second.y = 200.0, 60.0
+    window.install_document(other, layer_id)
+    window.undo_stack.clear()
+    window.set_checked_layers([layer_id, second.id])
+    window.select_layer(layer_id)
+    return window, layer_id, second.id
+
+
+def test_clicking_a_checked_layer_without_moving_records_nothing(two_checked_layers):
+    window, layer_id, _other = two_checked_layers
+    mouse_drag(window, QPointF(120, 70), QPointF(120, 70), steps=1)
+    assert window.undo_stack.count() == 0
+    assert not window.is_modified()
+
+
+def test_dragging_checked_layers_moves_them_in_one_step(two_checked_layers):
+    window, layer_id, other = two_checked_layers
+    mouse_drag(window, QPointF(120, 70), QPointF(150, 90))
+    assert window.undo_stack.count() == 1
+    assert window.undo_stack.text(0) == "Déplacer 2 calques"
+    assert window.document.layer(layer_id).x == pytest.approx(130, abs=1)
+    assert window.document.layer(other).x == pytest.approx(230, abs=1)
