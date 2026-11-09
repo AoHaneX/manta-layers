@@ -432,17 +432,22 @@ class Document:
         and folders left without layers are removed.
         """
         known = {item.id for item in self.folders}
+        members: dict[str, list[Layer]] = {}
         for layer in self.layers:
             if layer.folder not in known:
                 layer.folder = None
-        for item in self.folders:
-            indices = [index for index, layer in enumerate(self.layers) if layer.folder == item.id]
-            if not indices or indices[-1] - indices[0] + 1 == len(indices):
-                continue
-            members = [self.layers[index] for index in indices]
-            others = [layer for layer in self.layers if layer.folder != item.id]
-            position = sum(1 for layer in self.layers[:indices[-1]] if layer.folder != item.id)
-            self.layers = others[:position] + members + others[position:]
+            if layer.folder is not None:
+                members.setdefault(layer.folder, []).append(layer)
+        # One pass from the top: the first layer met of a folder is its topmost one,
+        # where the whole block goes (linear, whatever the number of folders).
+        ordered: list[Layer] = []
+        for layer in reversed(self.layers):
+            if layer.folder is None:
+                ordered.append(layer)
+            elif layer.folder in members:
+                ordered.extend(reversed(members.pop(layer.folder)))
+        ordered.reverse()
+        self.layers = ordered
         used = {layer.folder for layer in self.layers}
         self.folders = [item for item in self.folders if item.id in used]
 
@@ -571,6 +576,9 @@ class Document:
         raw_folders = manifest.get("folders", [])
         if not isinstance(raw_folders, list):
             raise ValueError("Liste de dossiers invalide")
+        # A folder always holds at least one layer: a saved project never has more.
+        if len(raw_folders) > MAX_LAYERS:
+            raise ValueError("Projet avec trop de dossiers")
         folders = [Folder.from_dict(item) for item in raw_folders]
         if len({item.id for item in folders}) != len(folders):
             raise ValueError("Identifiants de dossiers dupliqués")

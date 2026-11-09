@@ -258,3 +258,35 @@ def test_a_highly_compressed_image_entry_counts_at_its_decompressed_size(tmp_pat
     with pytest.raises(ValueError, match="trop volumineuses"):
         open_project(path)
 
+
+# --- Folders --------------------------------------------------------------------------------
+
+def test_more_folders_than_layers_allow_are_refused(tmp_path):
+    path = tmp_path / "dossiers.manta"
+    save_project(_text_document(2), path)
+    with ZipFile(path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    manifest["folders"] = [{"id": f"f{index}", "name": "d"} for index in range(MAX_LAYERS + 1)]
+    forged = tmp_path / "forge.manta"
+    with ZipFile(forged, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+    with pytest.raises(ValueError, match="trop de dossiers"):
+        open_project(forged)
+
+
+def test_normalizing_many_folders_stays_fast():
+    import time
+
+    from app.model import Folder
+
+    document = _text_document(MAX_LAYERS)
+    document.folders = [Folder(id=f"f{index}") for index in range(MAX_LAYERS)]
+    for index, layer in enumerate(document.layers):
+        layer.folder = f"f{index % 50}" if index % 3 else None
+    start = time.perf_counter()
+    document.normalize_folders()
+    assert time.perf_counter() - start < 1.0
+    assert len(document.folders) == 50
+    for folder in document.folders:  # every folder is one contiguous block
+        indices = [index for index, layer in enumerate(document.layers) if layer.folder == folder.id]
+        assert indices == list(range(indices[0], indices[-1] + 1))
