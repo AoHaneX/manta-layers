@@ -72,6 +72,6 @@ Ces contrôles ont été passés le 2026-11-05 sur la build 0.1.0. Ils sont à r
    Elle crée le raccourci du menu Démarrer et l'entrée « Applications installées ».
 3. Réinstaller par-dessus remplace `_internal` sans laisser de fichiers de l'ancienne version.
 4. La désinstallation (`unins000.exe /VERYSILENT`) retire le dossier, le raccourci et l'entrée, et laisse `%LOCALAPPDATA%\MantaLayers` intact.
-5. Une vérification manuelle reste nécessaire sur un Windows sans Python, par exemple Windows Sandbox (voir `RELEASE_AUDIT_V1.md` §8).
+5. Une vérification manuelle reste nécessaire sur un Windows sans Python, par exemple Windows Sandbox.
 
    L'installeur n'est pas signé : SmartScreen affiche « Windows a protégé votre ordinateur ». Il faut alors cliquer sur « Informations complémentaires », puis « Exécuter quand même ».

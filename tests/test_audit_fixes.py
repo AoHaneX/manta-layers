@@ -1,4 +1,4 @@
-"""Regression tests for the defects found by the third audit (docs/AUDIT_V3.md)."""
+"""Regression tests for previously fixed defects."""
 import json
 import time
 from zipfile import ZipFile
