@@ -1,4 +1,4 @@
-# Manta Layers — v1.0.1
+# Manta Layers — v1.1.0
 
 **Éditeur d'images à calques pour Windows, de la suite Blue Shrimp · ReefKit.**
 
@@ -20,8 +20,8 @@ Téléchargez la dernière version depuis la page [Releases](https://github.com/
 
 | Fichier | Usage |
 |---|---|
-| `MantaLayers-v1.0.1-setup.exe` | Installeur. Par défaut, il installe pour votre compte, sans droits d'administrateur, et crée un raccourci dans le menu Démarrer (et sur le Bureau si vous le cochez). |
-| `MantaLayers-v1.0.1-win64.zip` | Archive à décompresser n'importe où, puis lancer `MantaLayers.exe`. |
+| `MantaLayers-v1.1.0-setup.exe` | Installeur. Par défaut, il installe pour votre compte, sans droits d'administrateur, et crée un raccourci dans le menu Démarrer (et sur le Bureau si vous le cochez). |
+| `MantaLayers-v1.1.0-win64.zip` | Archive à décompresser n'importe où, puis lancer `MantaLayers.exe`. |
 | `SHA256SUMS.txt` | Empreintes SHA-256 des deux fichiers ci-dessus. |
 
 Ces noms suivent la convention de release ReefKit, lue par ReefKit Launcher. Les fichiers de la v1.0.0 gardent leurs noms d'origine (`MantaLayers-1.0.0-Setup.exe`, `MantaLayers-1.0.0-Windows-Portable.zip`, exécutable dans le dossier `MantaLayers` de l'archive).

@@ -2,6 +2,20 @@
 
 Chaque section `## X.Y.Z` devient la partie « Nouveautés » des notes de la release GitHub `vX.Y.Z` (`packaging/reefkit_release.py`).
 
+## 1.1.0 — 12 novembre 2026
+
+### Animations GIF et APNG
+- Les GIF et PNG animés (APNG) s'importent comme des calques animés, déplaçables, redimensionnables, pivotables, avec leur opacité et leur visibilité. Leurs images sont recomposées fidèlement (effacement et fusion des images, transparence partielle des APNG) ; l'image par défaut d'un APNG, qui ne fait pas partie de l'animation, est ignorée.
+- Toutes les animations démarrent à 0 s et bouclent : le document dure autant que la plus longue, et chacune suit son propre rythme, sans fréquence d'images imposée.
+- Une barre de lecture, sous le canevas, apparaît dès qu'un calque est animé : lecture et pause (aussi avec `Espace`), retour au début, curseur de temps et durée.
+- Export en « GIF animé » et en « PNG animé (APNG) » depuis « Exporter l'image » : une image par changement d'image d'une animation, boucles comprises, en boucle infinie, avec progression et annulation. L'APNG conserve la transparence partielle ; le GIF la coupe à 50 % (limite du format).
+- Les exports PNG, JPEG et WebP montrent les premières images des animations ; les projets `.manta` conservent les animations, qui se rouvrent à 0 s, en pause.
+- Les retouches au pixel (gomme, crayon, pots, effacement de sélection, détourage, rognage, fusion) sont refusées sur un calque animé, avec un message.
+
+### Calques et import
+- Un curseur d'opacité, sous la liste des calques, règle le calque sélectionné avec un aperçu immédiat ; un glissement forme une seule étape d'historique.
+- Déposer une image propose de créer un document à ses dimensions ou de l'ajouter en calque au document actuel.
+
 ## 1.0.1 — 8 novembre 2026
 
 ### Distribution Windows

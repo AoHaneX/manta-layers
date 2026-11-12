@@ -1,9 +1,9 @@
-MANTA LAYERS 1.0.1 — DÉMARRER ICI
+MANTA LAYERS 1.1.0 — DÉMARRER ICI
 
 Version Windows prête à l'emploi (recommandée, sans Python) :
   https://github.com/AoHaneX/manta-layers/releases
-  - MantaLayers-v1.0.1-setup.exe : installeur, sans droits d'administrateur.
-  - MantaLayers-v1.0.1-win64.zip : à décompresser, puis lancer MantaLayers.exe.
+  - MantaLayers-v1.1.0-setup.exe : installeur, sans droits d'administrateur.
+  - MantaLayers-v1.1.0-win64.zip : à décompresser, puis lancer MantaLayers.exe.
 
 Lancement depuis le code source (ce dossier) :
 1) Installer Python 3.11 ou plus récent (64 bits) depuis https://www.python.org/downloads/windows/
