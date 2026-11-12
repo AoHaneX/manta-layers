@@ -332,6 +332,19 @@ class Document:
     def layer(self, layer_id: str | None) -> Layer | None:
         return next((lay for lay in self.layers if lay.id == layer_id), None)
 
+    @classmethod
+    def from_image_bytes(cls, contents: bytes, layer_name: str) -> Document:
+        """Transparent document the exact size of an image, holding it as its only layer at (0, 0).
+
+        The size is read after the EXIF rotation, as the layer shows it; the
+        image keeps its pixels and alpha. Raises ValueError like add_image_bytes.
+        """
+        document = cls(1, 1, None)
+        layer = document.add_image_bytes(contents, layer_name, center=False)
+        with Image.open(BytesIO(document.assets[layer.image_asset()]), formats=("PNG",)) as stored:
+            document.width, document.height = stored.size
+        return document
+
     def add_image_bytes(self, contents: bytes, name: str, center: bool = True) -> Layer:
         try:
             source = Image.open(BytesIO(contents), formats=IMPORT_FORMATS)

@@ -65,6 +65,7 @@ Ce guide détaille les manipulations de l'interface. Pour l'installation et la l
   - Édition > Rogner les marges transparentes du calque retire les bords vides sans déplacer l'image ;
   - Édition > Recadrer le document sur son contenu ajuste le document à ses calques.
 - **Dimensions du document :** le bouton « Redimensionner le projet » du panneau de gauche, ou un clic sur les dimensions affichées sous le titre, change la largeur et la hauteur.
+- **Déposer une image :** une image glissée depuis l'explorateur ouvre la fenêtre « Open image ». « Create new » crée un document transparent aux dimensions exactes de l'image, qui devient « Calque 0 » (les autres images déposées s'y ajoutent en calques centrés) ; si le document actuel a des modifications non enregistrées, elles sont proposées à l'enregistrement d'abord. « Add current » ajoute chaque image en calque centré dans le document actuel, sans changer sa taille. Fermer la fenêtre n'importe rien. Le bouton « Importer des images » ajoute toujours directement des calques.
 
 ## Sélections et masques
 

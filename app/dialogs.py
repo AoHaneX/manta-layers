@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QInputDialog,
+    QLabel,
     QListView,
     QListWidget,
     QListWidgetItem,
@@ -21,10 +22,12 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from .icons import import_choice_icon
 from .model import MAX_DIMENSION, MAX_DOCUMENT_PIXELS, Document
 from .templates import delete_template, duplicate_template, instantiate_template, list_templates, rename_template
 
@@ -55,6 +58,56 @@ class ColorDialog(QColorDialog):
             # The square then picks the hue and saturation at full brightness.
             self.setCurrentColor(QColor.fromHsv(0, 0, 255))
         return super().eventFilter(watched, event)
+
+
+class ImportChoiceDialog(QDialog):
+    """Choice shown when images are dropped: a new document from the image, or a layer here.
+
+    ``choice`` is "new" or "add" once accepted, None when closed (Échap, the
+    close button): nothing is imported then. ``can_add`` False disables
+    "Add current" when there is no document to add to.
+    """
+
+    def __init__(self, parent: QWidget | None = None, can_add: bool = True):
+        super().__init__(parent)
+        self.setObjectName("importChoiceDialog")
+        self.setWindowTitle("Open image")
+        self.setModal(True)
+        self.choice: str | None = None
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 20, 22, 22)
+        layout.setSpacing(18)
+        question = QLabel("Do you want to add the image as a layer in the current document or create a new?")
+        question.setObjectName("importChoiceText")
+        question.setWordWrap(True)
+        layout.addWidget(question)
+        row = QHBoxLayout()
+        row.setSpacing(14)
+        self.buttons: dict[str, QToolButton] = {}
+        for key, text, tooltip in (
+            ("new", "Create new", "Nouveau document aux dimensions de l'image, sur fond transparent"),
+            ("add", "Add current", "Nouveau calque dans le document actuel, sans changer sa taille"),
+        ):
+            button = QToolButton()
+            button.setObjectName("importChoice")
+            button.setText(text)
+            button.setToolTip(tooltip)
+            button.setIcon(import_choice_icon(key))
+            button.setIconSize(QSize(44, 44))
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            button.setFixedSize(150, 116)
+            button.clicked.connect(lambda _checked=False, key=key: self._choose(key))
+            row.addWidget(button)
+            self.buttons[key] = button
+        self.buttons["add"].setEnabled(can_add)
+        row.addStretch(1)
+        layout.addLayout(row)
+        (self.buttons["add"] if can_add else self.buttons["new"]).setFocus()
+        self.setFixedSize(self.sizeHint().expandedTo(QSize(360, 0)))
+
+    def _choose(self, key: str) -> None:
+        self.choice = key
+        self.accept()
 
 
 def pick_color(initial: QColor | str, parent: QWidget | None, title: str) -> QColor:

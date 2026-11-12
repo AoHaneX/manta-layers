@@ -71,6 +71,42 @@ class DocumentFlowsMixin(_WindowBase):
         self.update_title()
         self._warn_missing_fonts(document)
 
+    def new_document_from_images(self, paths) -> bool:
+        """New transparent document the size of the first readable image, which becomes "Calque 0".
+
+        Unreadable files are reported, as when importing. The other images are
+        added as centred layers of the new document. The current document is
+        only replaced once an image could be read and its unsaved changes were
+        saved or given up: otherwise nothing changes.
+        """
+        document, rest = None, list(paths or [])
+        while rest and document is None:
+            raw_path = rest.pop(0)
+            try:
+                document = Document.from_image_bytes(Path(raw_path).read_bytes(), "Calque 0")
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(self, "Import impossible", f"{raw_path}\n{exc}")
+        if document is None:
+            return False
+        for raw_path in rest:
+            try:
+                document.add_image_bytes(Path(raw_path).read_bytes(), Path(raw_path).stem)
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(self, "Import impossible", f"{raw_path}\n{exc}")
+        if not self.maybe_save():
+            return False
+        try:
+            self._start_session(document, None)
+        except Exception as exc:
+            QMessageBox.critical(self, "Création impossible", str(exc))
+            return False
+        self.editing_template = None
+        self.template_origin = None
+        self.update_title()
+        if document.layers:
+            self.select_layer(document.layers[-1].id)
+        return True
+
     def _make_scene(self, document: Document, tolerate_all: bool = False):
         """Canvas scene; images already damaged when the project was opened are shown hatched.
 

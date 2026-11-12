@@ -164,6 +164,34 @@ def history_arrow_icon(redo: bool) -> QIcon:
     return QIcon(pixmap)
 
 
+def import_choice_icon(kind: str, size: int = 44) -> QIcon:
+    """Large icons of the image drop choice: "new" (a page with +) or "add" (stacked pages with +)."""
+    pixmap = _blank_pixmap(size)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    color = QColor(COLORS["text"])
+    pen = QPen(color, max(1.5, size / 22))
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    unit = size / 44
+    if kind == "add":
+        # The current document behind, the added image in front.
+        back = QRectF(6 * unit, 6 * unit, 24 * unit, 24 * unit)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(back, 3 * unit, 3 * unit)
+        page = QRectF(14 * unit, 14 * unit, 24 * unit, 24 * unit)
+        painter.setBrush(QColor(COLORS["field"]))  # the button colour: hides the back outline
+    else:
+        page = QRectF(9 * unit, 9 * unit, 26 * unit, 26 * unit)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawRoundedRect(page, 3 * unit, 3 * unit)
+    centre, arm = page.center(), 6 * unit
+    painter.drawLine(QPointF(centre.x() - arm, centre.y()), QPointF(centre.x() + arm, centre.y()))
+    painter.drawLine(QPointF(centre.x(), centre.y() - arm), QPointF(centre.x(), centre.y() + arm))
+    painter.end()
+    return QIcon(pixmap)
+
+
 def color_tool_icon(tool: str) -> QIcon:
     """Dessine les outils couleur sans dépendre des emojis du système."""
     pixmap = _blank_pixmap(20)

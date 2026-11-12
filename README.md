@@ -41,7 +41,7 @@ Ces noms suivent la convention de release ReefKit, lue par ReefKit Launcher. Les
 | Domaine | Ce que permet Manta Layers |
 |---|---|
 | **Documents** | Nouveau projet aux dimensions choisies (fond transparent, blanc ou noir). Format `.manta` qui conserve images sources, calques et réglages. Export PNG (transparence), JPEG (aplati sur blanc) et WebP, de l'image entière ou d'un calque. |
-| **Images** | Import PNG, JPEG, WebP, BMP et GIF (première image), par menu, glisser-déposer ou presse-papiers, jusqu'à 67 mégapixels par image. L'orientation EXIF des photos est appliquée. |
+| **Images** | Import PNG, JPEG, WebP, BMP et GIF (première image), par menu, presse-papiers ou glisser-déposer (au choix : nouveau document aux dimensions de l'image ou calque du document actuel), jusqu'à 67 mégapixels par image. L'orientation EXIF des photos est appliquée. |
 | **Calques** | Création, duplication, renommage, suppression, visibilité, verrouillage, opacité, réorganisation par glisser-déposer. Sélection multiple, dossiers repliables, fusion avec transparence. |
 | **Transformations** | Déplacement, redimensionnement par poignées, rotation, retournement. Valeurs exactes au clavier. Guides d'alignement et magnétisme. |
 | **Texte** | Texte vectoriel édité directement sur le canvas, multiligne. Formes droit, arc, U, U inversé et courbe de Bézier, avec poignées interactives. Polices importées. |
