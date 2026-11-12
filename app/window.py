@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from . import __version__, background, background_dialog, selection
 from .color_tools import ColorToolsMixin
 from .commands import DocumentCommand, SelectionCommand
-from .dialogs import pick_color
+from .dialogs import ImportChoiceDialog, pick_color
 from .file_flows import DocumentFlowsMixin
 from .graphics import (
     RENDER_ERRORS,
@@ -1447,10 +1447,31 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
     def dropEvent(self, event):
         paths = self.image_paths_from_mime(event.mimeData())
         if paths:
-            self._import_paths(paths)
             event.acceptProposedAction()
+            self.receive_dropped_images(paths)
         else:
             event.ignore()
+
+    def receive_dropped_images(self, paths: list[str]) -> None:
+        """Ask what to do with dropped images, once the drop is over.
+
+        The choice is shown after the drop event returns: a modal dialog inside
+        it would keep the file explorer waiting for the end of the drag.
+        """
+        QTimer.singleShot(0, lambda: self.import_dropped_images(paths))
+
+    def import_dropped_images(self, paths: list[str]) -> None:
+        """Create a document from the dropped images, or add them as layers of the current one."""
+        dialog = ImportChoiceDialog(self, can_add=self.document is not None)
+        try:
+            dialog.exec()
+            choice = dialog.choice
+        finally:
+            dialog.deleteLater()
+        if choice == "new":
+            self.new_document_from_images(paths)
+        elif choice == "add":
+            self._import_paths(paths)
 
     @staticmethod
     def image_paths_from_mime(mime_data) -> list[str]:

@@ -188,6 +188,36 @@ QToolButton#colorTool:checked {{
     background-color: {COLORS['primary']};
     border-color: {COLORS['primary_hover']};
 }}
+QLabel#importChoiceText {{
+    color: {COLORS['text']};
+    font-size: 13px;
+}}
+QToolButton#importChoice {{
+    background-color: {COLORS['field']};
+    border: 1px solid {COLORS['border']};
+    border-radius: {RADIUS['panel']}px;
+    color: {COLORS['text']};
+    font-size: 13px;
+    font-weight: 600;
+    /* 150 x 116 px with the padding and the border, focused or not. */
+    padding: 12px 8px 10px 8px;
+    min-width: 132px;
+    max-width: 132px;
+    min-height: 92px;
+    max-height: 92px;
+}}
+QToolButton#importChoice:hover, QToolButton#importChoice:focus {{
+    border: 1px solid {COLORS['primary']};
+    padding: 12px 8px 10px 8px;
+}}
+QToolButton#importChoice:pressed {{
+    background-color: {COLORS['panel']};
+    color: {COLORS['text']};
+}}
+QToolButton#importChoice:disabled {{
+    border-color: {COLORS['panel']};
+    color: {COLORS['disabled']};
+}}
 QToolButton#layerDragHandle {{
     background: transparent;
     border: none;

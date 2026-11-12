@@ -661,8 +661,8 @@ class CanvasView(QGraphicsView):
     def dropEvent(self, event):
         paths = self.main_window.image_paths_from_mime(event.mimeData())
         if paths:
-            self.main_window._import_paths(paths)
             event.acceptProposedAction()
+            self.main_window.receive_dropped_images(paths)
         else:
             event.ignore()
 
