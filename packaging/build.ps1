@@ -12,7 +12,7 @@
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File packaging\build.ps1
     powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -SkipInstaller
-    powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Tag v1.0.1
+    powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Tag v1.1.0
 #>
 param(
     # Python used to create the build environment (64-bit, 3.11 or later; 3.13 is tested).
