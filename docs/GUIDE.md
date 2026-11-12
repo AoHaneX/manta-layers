@@ -7,7 +7,7 @@ Ce guide détaille les manipulations de l'interface. Pour l'installation et la l
 - **Déplacement :** sélectionnez le calque dans l'image, puis faites-le glisser avec le bouton gauche. Les flèches du clavier le déplacent de 1 px, ou de 10 px avec `Maj`. Une série de pressions rapprochées forme une seule étape d'historique.
 - **Redimensionnement :** tirez sur les petits carrés cyan aux quatre coins. Pour un réglage précis, modifiez Échelle X et Échelle Y dans le panneau de droite.
 - **Rotation :** tirez sur la poignée jaune au-dessus de l'objet, ou réglez l'angle à droite. `Maj` contraint l'angle par pas de 15°.
-- **Opacité :** 0 % rend le calque invisible, 100 % le rend opaque.
+- **Opacité :** le curseur « Opacité », sous la liste des calques, règle celle du calque sélectionné, de 0 % (invisible) à 100 %. Le canevas suit le curseur en direct, et un glissement compte pour une seule étape d'historique, comme une série de pressions sur les flèches. L'opacité se multiplie à la transparence propre des pixels, sans les modifier, et elle est enregistrée dans le projet et appliquée aux exports et aux fusions.
 - **Visibilité :** cliquez sur l'œil à gauche du nom. Son fond est cyan quand le calque est visible, transparent quand il est masqué.
 - **Type de calque :** une petite icône, placée entre l'œil et le nom, indique un calque image, texte ou forme.
 - **Ordre :**

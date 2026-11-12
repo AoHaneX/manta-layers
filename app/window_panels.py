@@ -41,7 +41,7 @@ from .selection import COMBINE_LABELS, COMBINE_MODES
 from .shape_panel import ShapePropertyRows
 from .textpath import SHAPE_LABELS, TEXT_SHAPES
 from .theme import COLORS
-from .widgets import CommitPlainTextEdit, LayerListWidget, SidebarBackground
+from .widgets import CommitPlainTextEdit, LayerListWidget, OpacityControl, SidebarBackground
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 
@@ -257,7 +257,17 @@ class WindowPanelsMixin(_WindowBase):
         self.layer_list = LayerListWidget(self)
         self.layer_list.setMinimumHeight(170)
         self.layer_list.currentItemChanged.connect(self.on_layer_list_select)
-        self.tabs.addTab(self.layer_list, "Calques")
+        layers_tab = QWidget()
+        layers_layout = QVBoxLayout(layers_tab)
+        layers_layout.setContentsMargins(0, 0, 0, 0)
+        layers_layout.setSpacing(8)
+        layers_layout.addWidget(self.layer_list, stretch=1)
+        # The opacity of the selected layer, at hand under the list.
+        self.opacity_control = OpacityControl()
+        self.opacity_control.previewed.connect(self.preview_layer_opacity)
+        self.opacity_control.committed.connect(self.commit_layer_opacity)
+        layers_layout.addWidget(self.opacity_control)
+        self.tabs.addTab(layers_tab, "Calques")
         self.history = QUndoView(self.undo_stack)
         self.history.setEmptyLabel("Document initial")
         self.tabs.addTab(self.history, "Historique")
@@ -613,7 +623,6 @@ class WindowPanelsMixin(_WindowBase):
             ("sx", "Échelle X", 0.05, 50, 2, .05),
             ("sy", "Échelle Y", 0.05, 50, 2, .05),
             ("rotation", "Rotation (°)", -36000, 36000, 1, 5),
-            ("opacity", "Opacité (%)", 0, 100, 0, 5),
         ]:
             w = QDoubleSpinBox()
             w.setRange(minimum, maximum)

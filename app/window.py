@@ -447,7 +447,7 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         editable_widgets = [self.name_input, self.text_input, self.font_combo, self.font_size,
                             self.text_color_control, self.text_background_control,
                             self.text_alignment_control, self.curve_control,
-                            self.character_spacing, *self.inputs.values()]
+                            self.character_spacing, self.opacity_control, *self.inputs.values()]
         widgets = [*editable_widgets, self.lock_btn]
         for w in widgets:
             w.setEnabled(layer is not None)
@@ -463,7 +463,8 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         for w in editable_widgets:
             w.setEnabled(not layer.locked)
         for key, spin in self.inputs.items():
-            spin.setValue(layer.opacity * 100 if key == "opacity" else getattr(layer, key))
+            spin.setValue(getattr(layer, key))
+        self.opacity_control.set_value(round(layer.opacity * 100))
         self.text_input.setPlainText(layer.text)
         for w in (self.text_input, self.font_combo, self.font_size,
                   self.text_color_control, self.text_background_control):
@@ -508,11 +509,12 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         self.paint_global_btn.setEnabled(can_paint)
         self._schedule_right_panel_layout()
 
-    def mutate(self, description: str, fn, select_after=None) -> bool:
+    def mutate(self, description: str, fn, select_after=None, merge_key=None) -> bool:
         """Apply ``fn`` to a copy of the document as one undoable step.
 
         ``select_after`` is the layer selected once the step is done (and redone),
         or a function returning it, called after ``fn`` for layers ``fn`` creates.
+        Steps with the same ``merge_key`` made in quick succession are merged.
         """
         before = self._current_snapshot()
         after = self.document.clone()
@@ -533,7 +535,8 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
             return False
         return self._push(DocumentCommand(self, before, after, description,
                                           self.selected_id,
-                                          select_after if select_after is not None else self.selected_id))
+                                          select_after if select_after is not None else self.selected_id,
+                                          merge_key=merge_key))
 
     # --- History storage ------------------------------------------------------------
     # Each step keeps the document before and after it. Snapshots are never
@@ -682,13 +685,13 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
             return
         if key in self.inputs:
             spin = self.inputs[key]
-            current = layer.opacity * 100 if key == "opacity" else getattr(layer, key)
+            current = getattr(layer, key)
             if abs(spin.value() - current) <= 0.5 * 10 ** -spin.decimals() + 1e-9:
                 return
             low, high = spin.minimum(), spin.maximum()
             if not low <= current <= high and spin.value() == min(high, max(low, current)):
                 return  # the field only shows the clamped value: leaving it changes nothing
-            value = spin.value() / 100 if key == "opacity" else spin.value()
+            value = spin.value()
         elif key == "name":
             value = self.name_input.text().strip()
             if not value:
@@ -746,6 +749,7 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         }
         for key, spin in self.inputs.items():
             commits[spin] = partial(self.commit_property, key)
+        commits[self.opacity_control.spin] = lambda: self.commit_layer_opacity(self.opacity_control.value())
         for key, spin in (("shape_width", self.shape_rows.width), ("shape_height", self.shape_rows.height),
                           ("stroke_width", self.shape_rows.stroke_width),
                           ("corner_radius", self.shape_rows.radius), ("polygon_sides", self.shape_rows.sides)):
@@ -1497,6 +1501,29 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         self._push(DocumentCommand(self, before, after, "Déplacer au clavier", layer.id, layer.id,
                                    merge_key=("nudge", layer.id)))
         return True
+
+    # --- Layer opacity ------------------------------------------------------------------
+
+    def preview_layer_opacity(self, percent: int) -> None:
+        """Show an opacity at once, on the canvas item only: no image is copied or rendered."""
+        layer = self.document.layer(self.selected_id)
+        item = self.canvas.graphic_for(self.selected_id)
+        if self.refreshing or layer is None or layer.locked or item is None:
+            return
+        item.setOpacity(percent / 100)
+
+    def commit_layer_opacity(self, percent: int) -> bool:
+        """Record the opacity of the selected layer; close steps on one layer are one history entry."""
+        if self.refreshing:
+            return False
+        layer = self.document.layer(self.selected_id)
+        if layer is None or layer.locked:
+            return False
+        value = max(0, min(100, int(percent))) / 100
+        if abs(layer.opacity - value) < 1e-9:
+            return False
+        return self.mutate(PROPERTY_LABELS["opacity"], lambda doc: setattr(doc.layer(layer.id), "opacity", value),
+                           layer.id, merge_key=("opacity", layer.id))
 
     def _wait_for_background_work(self):
         """A background removal or download closed mid-way must end before the window is destroyed."""
