@@ -9,7 +9,7 @@ from pathlib import Path
 from shutil import copy2
 
 from PIL import Image
-from PySide6.QtCore import QPointF, QSettings, QSize, Qt, QTimer
+from PySide6.QtCore import QElapsedTimer, QPointF, QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QImage, QUndoStack
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -41,6 +41,7 @@ from .graphics import (
     qimage_png,
     render_layer_with_mask,
     resolve_font_family,
+    set_scene_time,
 )
 from .icons import sidebar_arrow_icon
 from .layer_flows import LayerFlowsMixin
@@ -57,6 +58,7 @@ from .templates import insert_elements
 from .text_flows import TextFlowsMixin
 from .textpath import TEXT_SHAPES
 from .theme import COLORS, STYLE
+from .timeline import document_duration
 from .token_dialog import TokenDialog
 from .window_panels import WindowPanelsMixin
 
@@ -122,6 +124,14 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         # Assets found damaged when the document was opened (see _make_scene).
         self._unreadable_assets: set[str] = set()
         self.selection_mask: Image.Image | None = None
+        # Time shown by the canvas for the animated layers (see Playback).
+        self.animation_time_ms = 0.0
+        self.playing = False
+        self._play_timer = QTimer(self)
+        self._play_timer.setInterval(15)
+        self._play_timer.timeout.connect(self._play_tick)
+        self._play_clock = QElapsedTimer()
+        self._play_origin_ms = 0.0
         # Exact magic wand selection in one layer's source pixels: (layer id, geometry, mask).
         self.selection_layer: tuple[str, tuple, Image.Image] | None = None
         # Multiple selection of the layer panel (layer ids), see set_layer_checked.
@@ -274,6 +284,8 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
             previous = getattr(self, "canvas_scene", None)
             self.canvas_scene = scene
             self.canvas.setScene(self.canvas_scene)
+            # A scene prepared earlier (history steps) shows the frames of the time shown now.
+            set_scene_time(self.canvas_scene, doc, self.animation_time_ms)
             if previous is not None:
                 # The previous scene may be the one handling the click that led here
                 # (a pending curve committed by a selection change): it is handed to
@@ -297,6 +309,7 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
             self.update_utility_buttons()
         finally:
             self.refreshing = False
+        self._refresh_playback()
         self.canvas.viewport().update()
         self.update_title()
 
@@ -504,7 +517,7 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         self.text_background_clear.setEnabled(bool(background) and not layer.locked)
         self.lock_btn.setText("Déverrouiller" if layer.locked else "Verrouiller")
         self.shape_rows.refresh(layer)
-        can_paint = layer.kind == "image" and not layer.locked
+        can_paint = layer.kind == "image" and not layer.locked and not layer.is_animated
         self.paint_bucket_btn.setEnabled(can_paint)
         self.paint_global_btn.setEnabled(can_paint)
         self._schedule_right_panel_layout()
@@ -1501,6 +1514,80 @@ class MainWindow(DocumentFlowsMixin, LayerFlowsMixin, TextFlowsMixin, SelectionF
         self._push(DocumentCommand(self, before, after, "Déplacer au clavier", layer.id, layer.id,
                                    merge_key=("nudge", layer.id)))
         return True
+
+    # --- Animated layers ----------------------------------------------------------------
+    # Every animation starts at 0 and loops; the document lasts as long as the longest.
+
+    def refuse_animated(self, layer, action: str) -> bool:
+        """Pixel edits are refused on animated layers: they would only change one frame."""
+        if layer is None or not layer.is_animated:
+            return False
+        self.statusBar().showMessage(
+            f"« {layer.name} » est un calque animé : {action} ne s'applique qu'aux images fixes", 5000)
+        return True
+
+    def _refresh_playback(self) -> None:
+        """Duration and visibility of the playback bar, after any change of the document."""
+        duration = document_duration(self.document)
+        self.playback_bar.setVisible(duration > 0)
+        self.playback_bar.set_duration(duration)
+        if duration <= 0:
+            self.pause_animation()
+            if self.animation_time_ms:
+                self.animation_time_ms = 0.0
+            return
+        if self.animation_time_ms >= duration:
+            # The longest animation is gone: keep playing within the new length.
+            self.set_animation_time(self.animation_time_ms % duration)
+        else:
+            self.playback_bar.set_time(self.animation_time_ms)
+
+    def set_animation_time(self, time_ms: float) -> None:
+        """Show every animated layer at ``time_ms`` at once."""
+        duration = document_duration(self.document)
+        self.animation_time_ms = float(time_ms % duration) if duration else 0.0
+        set_scene_time(self.canvas_scene, self.document, self.animation_time_ms)
+        self.playback_bar.set_time(self.animation_time_ms)
+        self.canvas.viewport().update()
+
+    def seek_animation(self, time_ms: float) -> None:
+        self.set_animation_time(time_ms)
+        if self.playing:
+            self._play_origin_ms = self.animation_time_ms
+            self._play_clock.restart()
+
+    def play_animation(self) -> None:
+        if self.playing or document_duration(self.document) <= 0:
+            return
+        self.playing = True
+        self._play_origin_ms = self.animation_time_ms
+        self._play_clock.start()
+        self._play_timer.start()
+        self.playback_bar.set_playing(True)
+
+    def pause_animation(self) -> None:
+        if not self.playing:
+            return
+        self.playing = False
+        self._play_timer.stop()
+        self.playback_bar.set_playing(False)
+
+    def toggle_animation(self) -> None:
+        if self.playing:
+            self.pause_animation()
+        else:
+            self.play_animation()
+
+    def rewind_animation(self) -> None:
+        self.seek_animation(0)
+
+    def _play_tick(self) -> None:
+        self.set_animation_time(self._play_origin_ms + self._play_clock.elapsed())
+
+    def reset_animation_time(self) -> None:
+        """A new or opened document starts at 0 s, paused."""
+        self.pause_animation()
+        self.animation_time_ms = 0.0
 
     # --- Layer opacity ------------------------------------------------------------------
 

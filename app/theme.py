@@ -218,6 +218,16 @@ QToolButton#importChoice:disabled {{
     border-color: {COLORS['panel']};
     color: {COLORS['disabled']};
 }}
+QWidget#playbackBar {{
+    background-color: {COLORS['panel']};
+    border-top: 1px solid {COLORS['border']};
+}}
+QToolButton#playbackButton {{
+    min-width: 26px;
+    min-height: 22px;
+    padding: 3px;
+}}
+QLabel#playbackTime {{ color: {COLORS['muted']}; }}
 QToolButton#layerDragHandle {{
     background: transparent;
     border: none;

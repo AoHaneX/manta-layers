@@ -82,6 +82,14 @@ def layer_kind_icon(kind: str) -> QPixmap:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.drawRect(QRectF(2, 7, 9, 9))
         painter.drawEllipse(QRectF(7, 2, 9, 9))
+    elif kind == "animation":
+        # A film strip: frames between perforated edges.
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.drawRoundedRect(QRectF(2, 3, 14, 12), 2, 2)
+        painter.drawLine(QPointF(5, 3), QPointF(5, 15))
+        painter.drawLine(QPointF(13, 3), QPointF(13, 15))
+        painter.setBrush(color)
+        painter.drawPolygon([QPointF(7.5, 6.5), QPointF(7.5, 11.5), QPointF(11, 9)])
     else:
         painter.drawRoundedRect(QRectF(2, 3, 14, 12), 2, 2)
         painter.drawEllipse(QRectF(11, 5, 2, 2))
@@ -160,6 +168,26 @@ def history_arrow_icon(redo: bool) -> QIcon:
         arrow.lineTo(QPointF(6.5, 10))
     arrow.closeSubpath()
     painter.drawPath(arrow)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def playback_icon(kind: str) -> QIcon:
+    """Icons of the playback bar: "play", "pause" or "rewind" (back to the start)."""
+    pixmap = _blank_pixmap(16)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    color = QColor(COLORS["text"])
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    if kind == "pause":
+        painter.drawRoundedRect(QRectF(3.5, 3, 3, 10), 1, 1)
+        painter.drawRoundedRect(QRectF(9.5, 3, 3, 10), 1, 1)
+    elif kind == "rewind":
+        painter.drawRect(QRectF(3, 3, 2, 10))
+        painter.drawPolygon([QPointF(13, 3), QPointF(13, 13), QPointF(5.5, 8)])
+    else:
+        painter.drawPolygon([QPointF(4, 2.5), QPointF(4, 13.5), QPointF(13, 8)])
     painter.end()
     return QIcon(pixmap)
 

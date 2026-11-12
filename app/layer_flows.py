@@ -182,6 +182,9 @@ class LayerFlowsMixin(_WindowBase):
         if any(layer.locked for layer in sources):
             self.statusBar().showMessage("Déverrouillez les calques avant de les fusionner", 3500)
             return False
+        animated = next((layer for layer in sources if layer.is_animated), None)
+        if animated is not None and self.refuse_animated(animated, "la fusion"):
+            return False
         changes = self._render_or_report(
             "Fusionner les calques", lambda: merge_changes_appearance(self.document, [layer.id for layer in sources]))
         if changes is None:

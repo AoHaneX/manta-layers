@@ -84,6 +84,8 @@ class ColorToolsMixin(_WindowBase):
         if not layer or layer.kind != "image" or layer.locked or not isinstance(item, QGraphicsPixmapItem):
             self.statusBar().showMessage("Trait ignoré : calque non modifiable", 3000)
             return
+        if self.refuse_animated(layer, "le trait"):
+            return
         width, height = item.pixmap().width(), item.pixmap().height()
         stroke = self.eraser_stroke_settings()
         size = stroke["size"]
@@ -183,6 +185,8 @@ class ColorToolsMixin(_WindowBase):
             return False
         if layer.locked:
             self.statusBar().showMessage("Déverrouillez le calque pour le modifier", 3000)
+            return False
+        if self.refuse_animated(layer, "le pot de peinture"):
             return False
         found = self._layer_pixel(layer, item, scene_position)
         if found is None:
