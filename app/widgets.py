@@ -6,7 +6,17 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QMimeData, QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QDrag, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QListWidget, QPlainTextEdit, QToolButton, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QPlainTextEdit,
+    QSlider,
+    QSpinBox,
+    QToolButton,
+    QWidget,
+)
 from shiboken6 import isValid
 
 if TYPE_CHECKING:
@@ -153,6 +163,69 @@ class LayerListWidget(QListWidget):
     def contextMenuEvent(self, event):
         self.main_window.show_layer_context_menu(self.itemAt(event.pos()), event.globalPos())
         event.accept()
+
+
+class OpacityControl(QWidget):
+    """Layer opacity, 0 to 100 %: a slider and its value, kept in step.
+
+    ``previewed`` follows every change, for an immediate display. ``committed``
+    is emitted once a value is chosen: at the end of a slider drag, or for each
+    step made with the keyboard, the wheel or a click on the track (the window
+    groups those steps into one history entry).
+    """
+
+    previewed = Signal(int)
+    committed = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        label = QLabel("Opacité")
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setRange(0, 100)
+        self.slider.setPageStep(10)
+        self.slider.setValue(100)
+        self.slider.setToolTip("Opacité du calque sélectionné")
+        self.spin = QSpinBox()
+        self.spin.setRange(0, 100)
+        self.spin.setSuffix(" %")
+        self.spin.setValue(100)
+        self.spin.setKeyboardTracking(False)  # a typed value counts once validated
+        self.spin.setToolTip("Opacité du calque sélectionné")
+        label.setBuddy(self.slider)
+        layout.addWidget(label)
+        layout.addWidget(self.slider, stretch=1)
+        layout.addWidget(self.spin)
+        self.slider.valueChanged.connect(self._slider_changed)
+        self.slider.sliderReleased.connect(lambda: self.committed.emit(self.slider.value()))
+        self.spin.valueChanged.connect(self._spin_changed)
+
+    def value(self) -> int:
+        return self.slider.value()
+
+    def set_value(self, percent: int) -> None:
+        """Show a layer's opacity, without emitting anything."""
+        for widget in (self.slider, self.spin):
+            widget.blockSignals(True)
+            widget.setValue(percent)
+            widget.blockSignals(False)
+
+    def _slider_changed(self, percent: int) -> None:
+        self.spin.blockSignals(True)
+        self.spin.setValue(percent)
+        self.spin.blockSignals(False)
+        self.previewed.emit(percent)
+        if not self.slider.isSliderDown():
+            self.committed.emit(percent)  # keyboard, wheel or click on the track
+
+    def _spin_changed(self, percent: int) -> None:
+        self.slider.blockSignals(True)
+        self.slider.setValue(percent)
+        self.slider.blockSignals(False)
+        self.previewed.emit(percent)
+        self.committed.emit(percent)
 
 
 class SidebarBackground(QWidget):
