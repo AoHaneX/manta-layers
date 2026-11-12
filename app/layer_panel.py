@@ -20,7 +20,10 @@ if TYPE_CHECKING:
 FOLDER_INDENT = 18
 # Item data role telling folder rows from layer rows in the panel list.
 FOLDER_ROLE = Qt.ItemDataRole.UserRole + 1
-KIND_TOOLTIPS = {"text": "Calque texte", "image": "Calque image", "shape": "Forme"}
+KIND_TOOLTIPS = {
+    "text": "Calque texte", "image": "Calque image", "shape": "Forme",
+    "animation": "Calque animé (GIF ou APNG)",
+}
 
 
 class FolderNameButton(QPushButton):
@@ -89,10 +92,11 @@ def build_layer_row(window: MainWindow, layer: Layer, checked: bool) -> QWidget:
         lambda state, layer_id=layer.id: window.set_layer_visibility(layer_id, state),
     ))
     kind = QLabel()
-    kind.setPixmap(layer_kind_icon(layer.kind))
+    icon_kind = "animation" if layer.is_animated else layer.kind
+    kind.setPixmap(layer_kind_icon(icon_kind))
     kind.setAlignment(Qt.AlignmentFlag.AlignCenter)
     kind.setFixedSize(20, 27)
-    kind.setToolTip(KIND_TOOLTIPS.get(layer.kind, "Calque"))
+    kind.setToolTip(KIND_TOOLTIPS.get(icon_kind, "Calque"))
     layout.addWidget(kind)
     name = QPushButton(layer.name)
     name.setObjectName("layerName")

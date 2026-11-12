@@ -99,15 +99,16 @@ def open_project(path: str | Path) -> Document:
             for layer in layers:
                 if not isinstance(layer, dict) or layer.get("kind") != "image":
                     continue
-                for key in ("asset", "mask"):
+                for key in ("asset", "mask", "animation"):
                     asset_id = layer.get(key)
-                    if key == "mask" and asset_id is None:
+                    optional = key != "asset"  # a lost mask or animation leaves a still image
+                    if optional and asset_id is None:
                         continue
                     # Prévient toute lecture arbitraire à partir d'un manifeste corrompu.
                     if not isinstance(asset_id, str) or len(asset_id) != 32 or not all(c in '0123456789abcdef' for c in asset_id):
                         raise ValueError("Identifiant d'image invalide")
-                    if key == "mask" and f"assets/{asset_id}.png" not in names:
-                        continue  # a missing mask is dropped, the layer stays readable
+                    if optional and f"assets/{asset_id}.png" not in names:
+                        continue  # dropped by Document.from_manifest, the layer stays readable
                     if asset_id not in assets:
                         info = z.getinfo(f"assets/{asset_id}.png")
                         if info.file_size > MAX_ASSET_BYTES:

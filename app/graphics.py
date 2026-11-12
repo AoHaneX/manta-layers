@@ -28,12 +28,13 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene
 
-from . import selection
+from . import animation, selection
 from .imaging import trim_transparent
 from .model import ASSET_FORMATS, MAX_PIXELS, Document, Layer, new_id
 from .shape_item import ShapeGraphicItem
 from .textpath import custom_points, drag_handle, handle_points, normalize_controls, normalize_shape, sample_path
 from .theme import COLORS
+from .timeline import layer_frame
 
 if TYPE_CHECKING:
     pass
@@ -639,6 +640,7 @@ def clear_render_caches() -> None:
     PIXMAP_CACHE.clear()
     RENDER_CACHE.clear()
     _LAST_SOURCE.clear()
+    animation.clear_readers()
 
 
 def _render_key(layer: Layer) -> str:
@@ -756,7 +758,11 @@ def layer_source_pixel(layer: Layer, document: Document, x: int, y: int,
     return source_x, source_y, pixel
 
 
-def layer_pixmap(layer: Layer, document: Document) -> QPixmap:
+def layer_pixmap(layer: Layer, document: Document, time_ms: float = 0) -> QPixmap:
+    """Displayed pixels of an image layer; an animated layer shows its frame at ``time_ms``."""
+    index = layer_frame(layer, time_ms)
+    if index:
+        return _animation_frame_pixmap(layer, document, index)
     key = _render_key(layer)
     pixmap = PIXMAP_CACHE.get(key)
     if pixmap is not None:
@@ -803,14 +809,42 @@ def unreadable_layer_pixmap(layer: Layer, document: Document) -> QPixmap:
     return pixmap
 
 
-def create_graphic(layer: Layer, document: Document, tolerate_unreadable=None) -> QGraphicsItem:
+def _animation_frame_pixmap(layer: Layer, document: Document, index: int) -> QPixmap:
+    """Frame ``index`` (not the first one) of an animated layer, with its mask and flips.
+
+    The first frame is the layer's still image, rendered as usual. A frame that
+    cannot be decoded falls back to it: the layer stays visible.
+    """
+    key = f"{_render_key(layer)}:{layer.animation}:{index}"
+    pixmap = PIXMAP_CACHE.get(key)
+    if pixmap is not None:
+        return pixmap
+    try:
+        assert layer.animation is not None
+        frame = animation.frame_reader(layer.animation, document.assets[layer.animation]).frame(index)
+    except (ValueError, KeyError, AssertionError):
+        return layer_pixmap(layer, document, 0)
+    if layer.mask:
+        mask = selection.decode(document.assets[layer.mask])
+        if mask.size != frame.size:
+            mask = mask.resize(frame.size, Image.Resampling.NEAREST)
+        frame = selection.apply_alpha(frame, mask)
+    pixmap = QPixmap.fromImage(pil_to_qimage(frame))
+    if layer.flip_horizontal or layer.flip_vertical:
+        pixmap = pixmap.transformed(QTransform().scale(
+            -1 if layer.flip_horizontal else 1, -1 if layer.flip_vertical else 1))
+    PIXMAP_CACHE.put(key, pixmap)
+    return pixmap
+
+
+def create_graphic(layer: Layer, document: Document, tolerate_unreadable=None, time_ms: float = 0) -> QGraphicsItem:
     """Scene item of a layer. An unreadable image raises, unless ``tolerate_unreadable(layer)``
     is true: it is then shown hatched (see unreadable_layer_pixmap)."""
     item: QGraphicsItem
     if layer.kind == "image":
         unreadable = False
         try:
-            pixmap = layer_pixmap(layer, document)
+            pixmap = layer_pixmap(layer, document, time_ms)
         except ValueError:
             if tolerate_unreadable is None or not tolerate_unreadable(layer):
                 raise
@@ -834,7 +868,8 @@ def create_graphic(layer: Layer, document: Document, tolerate_unreadable=None) -
     return item
 
 
-def make_scene(document: Document, interactive: bool, tolerate_unreadable=None) -> QGraphicsScene:
+def make_scene(document: Document, interactive: bool, tolerate_unreadable=None,
+               time_ms: float = 0) -> QGraphicsScene:
     """Scene of the document; ``tolerate_unreadable`` as in create_graphic.
 
     The canvas tolerates the images that were already damaged in an opened
@@ -843,7 +878,7 @@ def make_scene(document: Document, interactive: bool, tolerate_unreadable=None) 
     scene = QGraphicsScene()
     scene.setSceneRect(0, 0, document.width, document.height)
     for z, layer in enumerate(document.layers):
-        item = create_graphic(layer, document, tolerate_unreadable)
+        item = create_graphic(layer, document, tolerate_unreadable, time_ms)
         item.setZValue(z)
         if interactive:
             item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, not layer.locked)
@@ -852,20 +887,57 @@ def make_scene(document: Document, interactive: bool, tolerate_unreadable=None) 
     return scene
 
 
-def render_document(document: Document, fit: QSize | None = None) -> QImage:
+def set_scene_time(scene: QGraphicsScene, document: Document, time_ms: float) -> None:
+    """Show in ``scene`` the frames of the animated layers playing at ``time_ms``.
+
+    Only their pixmaps change: positions, transformations, opacity and order
+    stay those of the scene. Used by the canvas preview and the export alike.
+    """
+    for item in scene.items():
+        layer = document.layer(item.data(0))
+        if (layer is not None and layer.is_animated and isinstance(item, QGraphicsPixmapItem)
+                and not item.data(UNREADABLE_ROLE)):
+            pixmap = layer_pixmap(layer, document, time_ms)
+            if pixmap.cacheKey() != item.pixmap().cacheKey():
+                item.setPixmap(pixmap)
+
+
+class DocumentRenderer:
+    """Renders a document at successive instants with one scene (animated exports)."""
+
+    def __init__(self, document: Document):
+        self.document = document
+        self.scene = make_scene(document, interactive=False)
+
+    def render(self, time_ms: float = 0) -> QImage:
+        set_scene_time(self.scene, self.document, time_ms)
+        return _paint_scene(self.scene, self.document, None)
+
+
+def render_document(document: Document, fit: QSize | None = None, time_ms: float = 0) -> QImage:
     """Rendu à la taille exacte du document, sans sélection ni poignées.
 
     With ``fit``, the document is drawn directly at the largest size that fits
     in it, keeping its proportions (thumbnails): no full-size image is made.
-    The image is RGBA8888, the layout Pillow reads without converting it.
+    Animated layers show their frame at ``time_ms``; still exports and
+    thumbnails use 0, the first frames. The image is RGBA8888, the layout
+    Pillow reads without converting it.
     """
+    return _paint_scene(make_scene(document, interactive=False, time_ms=time_ms), document, fit)
+
+
+def render_at(document: Document, time_ms: float) -> Image.Image:
+    """The document as an RGBA image at ``time_ms``: the reference of the preview and the exports."""
+    return qimage_to_pil(render_document(document, time_ms=time_ms))
+
+
+def _paint_scene(scene: QGraphicsScene, document: Document, fit: QSize | None) -> QImage:
     width, height = document.width, document.height
     if fit is not None:
         scale = min(fit.width() / width, fit.height() / height)
         width, height = max(1, round(width * scale)), max(1, round(height * scale))
     image = QImage(width, height, QImage.Format.Format_RGBA8888)
     image.fill(QColor(document.background) if document.background else Qt.GlobalColor.transparent)
-    scene = make_scene(document, interactive=False)
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
     painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, fit is not None)

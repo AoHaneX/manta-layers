@@ -41,7 +41,7 @@ from .selection import COMBINE_LABELS, COMBINE_MODES
 from .shape_panel import ShapePropertyRows
 from .textpath import SHAPE_LABELS, TEXT_SHAPES
 from .theme import COLORS
-from .widgets import CommitPlainTextEdit, LayerListWidget, OpacityControl, SidebarBackground
+from .widgets import CommitPlainTextEdit, LayerListWidget, OpacityControl, PlaybackBar, SidebarBackground
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 
@@ -229,7 +229,19 @@ class WindowPanelsMixin(_WindowBase):
         self.left_toggle.setFixedSize(27, 34)
         self.left_toggle.move(5, 8)
         self.left_toggle.raise_()
-        splitter.addWidget(self.canvas)
+        canvas_area = QWidget()
+        canvas_layout = QVBoxLayout(canvas_area)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_layout.setSpacing(0)
+        canvas_layout.addWidget(self.canvas, stretch=1)
+        # Shown only while the document holds animated layers.
+        self.playback_bar = PlaybackBar()
+        self.playback_bar.play_toggled.connect(self.toggle_animation)
+        self.playback_bar.rewound.connect(self.rewind_animation)
+        self.playback_bar.seeked.connect(self.seek_animation)
+        self.playback_bar.setVisible(False)
+        canvas_layout.addWidget(self.playback_bar)
+        splitter.addWidget(canvas_area)
 
         right = QWidget()
         right.setObjectName("sidePanel")
@@ -887,6 +899,10 @@ class WindowPanelsMixin(_WindowBase):
         tools_menu.addSeparator()
         self._action(tools_menu, "Créateur de tokens…", self.open_token_creator)
         self._action(tools_menu, "Découper une spritesheet…", self.open_sprite_slicer)
+        # Space plays or pauses the animated layers (only when the canvas has the focus).
+        self.playback_shortcut = QShortcut(QKeySequence("Space"), self.canvas)
+        self.playback_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        self.playback_shortcut.activated.connect(self.toggle_animation)
         self.text_tool_shortcut = QShortcut(QKeySequence("T"), self.canvas)
         self.text_tool_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         self.text_tool_shortcut.activated.connect(

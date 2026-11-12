@@ -40,8 +40,9 @@ Ces noms suivent la convention de release ReefKit, lue par ReefKit Launcher. Les
 
 | Domaine | Ce que permet Manta Layers |
 |---|---|
-| **Documents** | Nouveau projet aux dimensions choisies (fond transparent, blanc ou noir). Format `.manta` qui conserve images sources, calques et réglages. Export PNG (transparence), JPEG (aplati sur blanc) et WebP, de l'image entière ou d'un calque. |
-| **Images** | Import PNG, JPEG, WebP, BMP et GIF (première image), par menu, presse-papiers ou glisser-déposer (au choix : nouveau document aux dimensions de l'image ou calque du document actuel), jusqu'à 67 mégapixels par image. L'orientation EXIF des photos est appliquée. |
+| **Documents** | Nouveau projet aux dimensions choisies (fond transparent, blanc ou noir). Format `.manta` qui conserve images sources, calques et réglages. Export PNG (transparence), JPEG (aplati sur blanc) et WebP, de l'image entière ou d'un calque ; export GIF animé et PNG animé (APNG) des documents animés. |
+| **Images** | Import PNG, JPEG, WebP, BMP et GIF, par menu, presse-papiers ou glisser-déposer (au choix : nouveau document aux dimensions de l'image ou calque du document actuel), jusqu'à 67 mégapixels par image. L'orientation EXIF des photos est appliquée. |
+| **Animations** | GIF et PNG animés (APNG) en calques animés, synchronisés sur une même durée, avec barre de lecture, sauvegarde dans le projet et export GIF ou APNG en boucle infinie. |
 | **Calques** | Création, duplication, renommage, suppression, visibilité, verrouillage, opacité, réorganisation par glisser-déposer. Sélection multiple, dossiers repliables, fusion avec transparence. |
 | **Transformations** | Déplacement, redimensionnement par poignées, rotation, retournement. Valeurs exactes au clavier. Guides d'alignement et magnétisme. |
 | **Texte** | Texte vectoriel édité directement sur le canvas, multiligne. Formes droit, arc, U, U inversé et courbe de Bézier, avec poignées interactives. Polices importées. |
@@ -60,7 +61,8 @@ Le [guide d'utilisation](docs/GUIDE.md) détaille chaque manipulation.
 |---|---|
 | Nouveau projet / Ouvrir un projet | `Ctrl+N` / `Ctrl+O` |
 | Importer une image / Ajouter un texte | `Ctrl+I` / `Ctrl+T` |
-| Exporter l'image finale (PNG, JPEG, WebP) | `Ctrl+S` |
+| Exporter l'image finale (PNG, JPEG, WebP, GIF animé, APNG) | `Ctrl+S` |
+| Lire ou mettre en pause les animations (canevas actif) | `Espace` |
 | Enregistrer le projet `.manta` | `Ctrl+Maj+S` |
 | Annuler / Rétablir | `Ctrl+Z` / `Ctrl+Y` ou `Ctrl+Maj+Z` |
 | Dupliquer le calque | `Ctrl+D` |

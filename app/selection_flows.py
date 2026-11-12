@@ -296,6 +296,8 @@ class SelectionFlowsMixin(_WindowBase):
                 "Un calque texte reste vectoriel : copiez la sélection vers un nouveau calque", 4000
             )
             return None
+        if editable and self.refuse_animated(layer, "la modification de la sélection"):
+            return None
         if editable and layer.locked:
             self.statusBar().showMessage("Déverrouillez le calque pour le modifier", 3000)
             return None
@@ -500,6 +502,8 @@ class SelectionFlowsMixin(_WindowBase):
         if layer.locked:
             self.statusBar().showMessage("Déverrouillez le calque pour le détourer", 3000)
             return
+        if self.refuse_animated(layer, "le détourage"):
+            return
         # Source pixels with their non-destructive edits, but without the current mask.
         image = self._render_or_report("Supprimer l'arrière-plan", lambda: render_layer_image(
             self.document.assets[layer.asset], layer.color_replacements,
@@ -554,6 +558,8 @@ class SelectionFlowsMixin(_WindowBase):
             return False
         if layer.locked:
             self.statusBar().showMessage("Déverrouillez le calque pour le rogner", 3000)
+            return False
+        if self.refuse_animated(layer, "le rognage"):
             return False
         rendered = self._render_or_report("Rogner les marges transparentes",
                                           lambda: render_layer_with_mask(layer, self.document))

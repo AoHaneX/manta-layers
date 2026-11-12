@@ -171,7 +171,7 @@ def extract_elements(document: Document, layer_ids, bounds: tuple[float, float, 
         layer.y -= top
         layer.locked = False
     assets = {asset: document.assets[asset] for layer in layers
-              for asset in (layer.asset, layer.mask) if asset and asset in document.assets}
+              for asset in (layer.asset, layer.mask, layer.animation) if asset and asset in document.assets}
     used = {layer.folder for layer in layers}
     folders = [deepcopy(folder) for folder in document.folders if folder.id in used]
     subset = Document(width, height, None, layers, assets, folders)
@@ -198,7 +198,7 @@ def insert_elements(target: Document, elements: Document, offset: tuple[float, f
         layer.x += offset[0]
         layer.y += offset[1]
         layer.folder = folder_ids.get(source.folder) if source.folder else None
-        for asset in (layer.asset, layer.mask):
+        for asset in (layer.asset, layer.mask, layer.animation):
             if asset and asset in elements.assets:
                 target.assets.setdefault(asset, elements.assets[asset])
         target.layers.append(layer)

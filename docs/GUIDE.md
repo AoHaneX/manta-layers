@@ -122,6 +122,18 @@ On y accède par le bouton de l'onglet Outils, par le menu Outils ou par un clic
 
 Aucune image n'est envoyée sur Internet.
 
+## Animations GIF et APNG
+
+- **Import :** un GIF ou un PNG animé (APNG) devient un calque animé, marqué d'une pellicule dans la liste des calques. Comme pour une image, le dépôt propose « Create new » (un document aux dimensions de l'animation, sur fond transparent) ou « Add current ». Un GIF à une seule image reste une image fixe.
+- **Calque animé :** il se déplace, se redimensionne, pivote, se retourne et prend une opacité comme un calque image ; tout cela s'applique à toute l'animation. Les retouches au pixel (gomme, crayon, pots, effacement ou découpe de sélection, détourage, rognage, fusion) sont refusées, avec un message : elles ne modifieraient qu'une image.
+- **Temps commun :** toutes les animations démarrent à 0 s et bouclent. Le document dure autant que la plus longue ; une animation plus courte recommence à sa fin. Chacune garde le rythme de ses propres images.
+- **Barre de lecture :** sous le canevas, dès qu'un calque est animé. Lecture et pause (ou `Espace` quand le canevas a le focus), retour au début, et curseur pour afficher un instant précis. Un projet s'ouvre à 0 s, en pause.
+- **Export :** dans « Exporter l'image », choisissez « GIF animé » ou « PNG animé (APNG) ». Une barre de progression permet d'annuler ; le fichier n'est écrit qu'une fois complet. L'animation dure autant que le document et boucle à l'infini.
+  - **APNG :** sans perte, transparence partielle conservée.
+  - **GIF :** 256 couleurs par image, délais au centième de seconde ; un pixel opaque à au moins 50 % devient opaque, les autres transparents.
+- **Image fixe :** les exports PNG, JPEG et WebP, la miniature du projet et les outils qui lisent les pixels (pipette, baguette, copie, tokens, spritesheets) utilisent la première image des animations, à 0 s.
+- **Projet :** les animations sont enregistrées dans le fichier `.manta`. Une version plus ancienne de Manta Layers ouvre ce projet en montrant la première image de chaque animation.
+
 ## Modèles, tokens et spritesheets
 
 - **Bibliothèque de modèles :** Insertion > Bibliothèque de modèles (`Ctrl+Maj+B`) insère un modèle au centre, ses calques restant séparés.

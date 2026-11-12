@@ -489,6 +489,8 @@ class CanvasView(QGraphicsView):
                 f"Déverrouillez le calque pour utiliser {tool}", 3000
             )
             return
+        if self.main_window.refuse_animated(layer, tool):
+            return
         local = item.mapFromScene(self.mapToScene(event.position().toPoint()))
         if not item.boundingRect().contains(local):
             return

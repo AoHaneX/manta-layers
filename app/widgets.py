@@ -228,6 +228,71 @@ class OpacityControl(QWidget):
         self.committed.emit(percent)
 
 
+class PlaybackBar(QWidget):
+    """Play, pause, back to the start and a time slider, for documents with animated layers.
+
+    Not a timeline: every animation starts at 0 and loops, the slider covers
+    the length of the longest one. Signals carry times in milliseconds.
+    """
+
+    play_toggled = Signal()
+    rewound = Signal()
+    seeked = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from .icons import playback_icon  # icons need a running QGuiApplication
+        from .timeline import format_time
+        self._format = format_time
+        self._icons = {kind: playback_icon(kind) for kind in ("play", "pause", "rewind")}
+        self.setObjectName("playbackBar")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)  # paints the panel colour
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(8)
+        self.rewind_button = QToolButton()
+        self.rewind_button.setObjectName("playbackButton")
+        self.rewind_button.setIcon(self._icons["rewind"])
+        self.rewind_button.setToolTip("Retour au début")
+        self.rewind_button.clicked.connect(self.rewound.emit)
+        self.play_button = QToolButton()
+        self.play_button.setObjectName("playbackButton")
+        self.play_button.clicked.connect(self.play_toggled.emit)
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setRange(0, 0)
+        self.slider.setToolTip("Position dans l'animation")
+        self.slider.valueChanged.connect(self.seeked.emit)
+        self.time_label = QLabel()
+        self.time_label.setObjectName("playbackTime")
+        self.time_label.setMinimumWidth(130)
+        self.time_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        for widget in (self.rewind_button, self.play_button):
+            layout.addWidget(widget)
+        layout.addWidget(self.slider, stretch=1)
+        layout.addWidget(self.time_label)
+        self._duration = 0
+        self.set_playing(False)
+        self.set_time(0)
+
+    def set_duration(self, duration_ms: int) -> None:
+        self._duration = max(0, int(duration_ms))
+        self.slider.blockSignals(True)
+        # The last instant is just before the loop starts again.
+        self.slider.setRange(0, max(0, self._duration - 1))
+        self.slider.blockSignals(False)
+        self.set_time(self.slider.value())
+
+    def set_time(self, time_ms: float) -> None:
+        self.slider.blockSignals(True)
+        self.slider.setValue(int(time_ms))
+        self.slider.blockSignals(False)
+        self.time_label.setText(f"{self._format(time_ms)} / {self._format(self._duration)}")
+
+    def set_playing(self, playing: bool) -> None:
+        self.play_button.setIcon(self._icons["pause" if playing else "play"])
+        self.play_button.setToolTip("Pause · Espace" if playing else "Lecture · Espace")
+
+
 class SidebarBackground(QWidget):
     """Fond du panneau gauche, recadré depuis le haut et la droite si nécessaire."""
 

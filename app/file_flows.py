@@ -8,13 +8,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QStandardPaths, QTimer
-from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
+from PIL import ImageChops
+from PySide6.QtCore import QEventLoop, QStandardPaths, Qt, QThread, QTimer, Signal
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QInputDialog, QMessageBox, QProgressDialog
 
 from . import export, selection
 from .dialogs import NewProjectDialog, ResizeDocumentDialog
 from .graphics import (
     UNREADABLE_ROLE,
+    DocumentRenderer,
     clear_render_caches,
     font_is_installed,
     make_scene,
@@ -27,9 +29,39 @@ from .recovery import SessionRecovery, recovery_text
 from .storage import open_project, save_project
 from .templates import save_template
 from .theme import dialog_button_style
+from .timeline import document_duration, export_segments
 
 # While the document has unsaved changes, a recovery copy is written this often.
 RECOVERY_INTERVAL_MS = 60_000
+# Rendered frames of an animated export stay in memory until encoded (Pillow's
+# GIF and APNG writers keep them all): beyond this, the export is refused.
+MAX_ANIMATION_EXPORT_BYTES = 1536 * 1024 * 1024
+
+
+class AnimationExportWorker(QThread):
+    """Encodes the rendered frames of an animated export, away from the interface thread."""
+
+    progressed = Signal(int)
+
+    def __init__(self, frames, durations, destination: Path, animation: str):
+        super().__init__()
+        self.frames, self.durations = frames, durations
+        self.destination, self.animation = destination, animation
+        self.error: Exception | None = None
+        self.was_cancelled = False
+        self._stop = False
+
+    def cancel(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:
+        try:
+            export.save_animation(self.frames, self.durations, self.destination, self.animation,
+                                  cancelled=lambda: self._stop, progress=self.progressed.emit)
+        except export.ExportCancelled:
+            self.was_cancelled = True
+        except Exception as exc:  # reported by the window once the thread is over
+            self.error = exc
 
 
 # A mixin of MainWindow: type checkers see the window it is mixed into.
@@ -117,7 +149,8 @@ class DocumentFlowsMixin(_WindowBase):
         def tolerated(layer: Layer) -> bool:
             return tolerate_all or layer.asset in known or (layer.mask is not None and layer.mask in known)
 
-        return make_scene(document, interactive=True, tolerate_unreadable=tolerated)
+        return make_scene(document, interactive=True, tolerate_unreadable=tolerated,
+                          time_ms=self.animation_time_ms)
 
     def _start_session(self, document: Document, project_path: Path | None, unsaved: bool = False) -> None:
         """Show another document from scratch: history, selection, view and recovery copy.
@@ -127,6 +160,7 @@ class DocumentFlowsMixin(_WindowBase):
         # Renders of the previous document would stay in memory until evicted
         # (up to 768 MB); if this one cannot be shown, the current one is re-rendered.
         clear_render_caches()
+        self.reset_animation_time()
         scene = self._make_scene(document, tolerate_all=True)
         unreadable = {item.data(0) for item in scene.items() if item.data(UNREADABLE_ROLE)}
         self._unreadable_assets = {asset for layer in document.layers if layer.id in unreadable
@@ -371,8 +405,10 @@ class DocumentFlowsMixin(_WindowBase):
                                  f"Document trop grand pour l'export (> {MAX_DOCUMENT_PIXELS // 1_000_000} "
                                  "millions de pixels). Réduisez ses dimensions.")
             return
+        # Still formats show the animated layers at 0 s; the animated formats export them whole.
         self._export(f"{self._file_stem()}.png", "Exporter l'image",
-                     lambda: qimage_to_pil(render_document(self.document)), "Export terminé", "Export impossible")
+                     lambda: qimage_to_pil(render_document(self.document)), "Export terminé", "Export impossible",
+                     filters=export.DOCUMENT_FILE_FILTERS)
 
     def export_selected_layer(self):
         layer = self.document.layer(self.selected_id)
@@ -396,15 +432,19 @@ class DocumentFlowsMixin(_WindowBase):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
         return answer == QMessageBox.StandardButton.Yes
 
-    def _export(self, filename: str, title: str, render, done: str, failed: str) -> Path | None:
+    def _export(self, filename: str, title: str, render, done: str, failed: str,
+                filters: str = export.FILE_FILTERS) -> Path | None:
         """Ask where to save, then write the rendered image; the folder is remembered."""
         self._commit_pending_edits()
         path, chosen_filter = QFileDialog.getSaveFileName(
-            self, title, self.initial_path("export", filename), export.FILE_FILTERS)
+            self, title, self.initial_path("export", filename), filters)
         if not path:
             return None
         chosen = Path(path)
         self.remember_directory("export", chosen.parent)
+        animation = export.animation_format(chosen_filter)
+        if animation is not None:
+            return self.export_animation(chosen, animation, title)
         destination = export.with_image_suffix(chosen, chosen_filter)
         if not self._confirm_completed_path(chosen, destination, title):
             return None
@@ -415,6 +455,87 @@ class DocumentFlowsMixin(_WindowBase):
             return None
         self.statusBar().showMessage(f"{done} : {destination}", 6000)
         return destination
+
+    def export_animation(self, chosen: Path, animation: str, title: str = "Exporter l'animation") -> Path | None:
+        """Export the whole animation of the document as a GIF or an APNG looping forever.
+
+        One output frame per change of frame of any animated layer, loops
+        included, shown for the time until the next change; identical
+        successive frames are merged. Frames are rendered here, with a progress
+        dialog that can cancel, then encoded in a worker thread. The document
+        shown is not modified.
+        """
+        destination = export.with_animation_suffix(chosen, animation)
+        if not self._confirm_completed_path(chosen, destination, title):
+            return None
+        document = self.document.clone()  # the export renders this state, whatever happens meanwhile
+        if document_duration(document) <= 0:
+            QMessageBox.information(self, title, "Le document ne contient aucun calque animé : "
+                                    "exportez-le comme image fixe (PNG, JPEG ou WebP).")
+            return None
+        segments = export_segments(document, quantum=10 if animation == "GIF" else 1)
+        needed = len(segments) * document.width * document.height * 4
+        if needed > MAX_ANIMATION_EXPORT_BYTES:
+            QMessageBox.critical(self, "Export impossible", (
+                f"L'animation compterait {len(segments)} images de {document.width} × {document.height} px, "
+                f"soit {needed // (1024 * 1024)} Mo à encoder (au plus {MAX_ANIMATION_EXPORT_BYTES // (1024 * 1024)}). "
+                "Réduisez les dimensions du document ou la longueur des animations."))
+            return None
+        progress = QProgressDialog("Rendu des images de l'animation…", "Annuler", 0, 2 * len(segments), self)
+        progress.setWindowTitle(title)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setAutoReset(False)
+        progress.setAutoClose(False)
+        progress.setMinimumDuration(0)
+        try:
+            frames, durations = self._render_animation_frames(document, segments, progress)
+            if frames is None:
+                self.statusBar().showMessage("Export annulé", 4000)
+                return None
+            progress.setLabelText("Encodage du fichier…")
+            progress.setMaximum(len(segments) + len(frames))
+            worker = AnimationExportWorker(frames, durations, destination, animation)
+            worker.progressed.connect(lambda done: progress.setValue(len(segments) + done))
+            progress.canceled.connect(worker.cancel)
+            waiting = QEventLoop()
+            worker.finished.connect(waiting.quit)
+            worker.start()
+            if not worker.isFinished():
+                waiting.exec()
+            worker.wait()
+        finally:
+            progress.close()
+            progress.deleteLater()
+        if worker.was_cancelled:
+            self.statusBar().showMessage("Export annulé", 4000)
+            return None
+        if worker.error is not None:
+            QMessageBox.critical(self, "Export impossible", str(worker.error))
+            return None
+        total = sum(durations)
+        self.statusBar().showMessage(
+            f"Animation exportée ({len(frames)} images, {total / 1000:.2f} s) : {destination}".replace(".", ",", 1),
+            6000)
+        return destination
+
+    def _render_animation_frames(self, document: Document, segments, progress: QProgressDialog):
+        """Rendered frames and their durations, or (None, None) when cancelled."""
+        renderer = DocumentRenderer(document)
+        frames: list = []
+        durations: list[int] = []
+        for index, (instant, length) in enumerate(segments):
+            if progress.wasCanceled():
+                return None, None
+            image = qimage_to_pil(renderer.render(instant))
+            # alpha_only=False: by default, the box of an RGBA image only looks at the alpha.
+            if frames and ImageChops.difference(image, frames[-1]).getbbox(alpha_only=False) is None:
+                durations[-1] += length  # nothing changed: the previous frame stays longer
+            else:
+                frames.append(image)
+                durations.append(length)
+            progress.setValue(index + 1)
+            QApplication.processEvents()
+        return frames, durations
 
     # --- Session recovery ------------------------------------------------------------
     # While the document has unsaved changes, a copy is written every minute (see

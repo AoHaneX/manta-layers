@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from .animation import Animation, read_animation
 from .textpath import DEFAULT_CONTROLS, normalize_controls, normalize_shape
 
 # Version 2 adds text path shapes, Bézier controls and layer masks.
@@ -54,6 +55,18 @@ MAX_STROKE_WIDTH = 500.0
 
 def new_id() -> str:
     return uuid4().hex
+
+
+def _frame_durations(raw) -> list[int]:
+    """Valid frame durations of an animated layer (ms), or [] when unusable."""
+    if not isinstance(raw, list) or not 2 <= len(raw) <= 2000:
+        return []
+    durations = []
+    for value in raw:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
+            return []
+        durations.append(max(1, min(600_000, int(value))))
+    return durations if sum(durations) <= 600_000 else []
 
 
 def is_hex_color(value) -> bool:
@@ -126,6 +139,11 @@ class Layer:
     # Optional non-destructive layer mask: asset id of an 8-bit PNG the size of
     # the source image (255 visible, 0 hidden). Used by selections and background removal.
     mask: str | None = None
+    # Animated image layers (GIF or APNG on import): asset id of the whole animation,
+    # stored as a lossless APNG of full frames, and the display time of each frame in
+    # ms. ``asset`` keeps the first frame: older versions show it as a still image.
+    animation: str | None = None
+    frame_durations: list[int] = field(default_factory=list)
     # Folder containing the layer (see Folder), None at the top level.
     folder: str | None = None
     # Vector shape layers: geometry in item coordinates, drawn in a
@@ -138,6 +156,10 @@ class Layer:
     stroke_width: float = 0.0
     corner_radius: float = 0.0
     polygon_sides: int = 6
+
+    @property
+    def is_animated(self) -> bool:
+        return self.kind == "image" and self.animation is not None and len(self.frame_durations) >= 2
 
     @classmethod
     def from_dict(cls, raw: dict) -> Layer:
@@ -154,6 +176,10 @@ class Layer:
             raise ValueError("Référence d'image invalide")
         if layer.mask is not None and (not isinstance(layer.mask, str) or layer.kind != "image"):
             layer.mask = None
+        layer.frame_durations = _frame_durations(layer.frame_durations)
+        if (layer.animation is not None and (not isinstance(layer.animation, str) or layer.kind != "image")) \
+                or len(layer.frame_durations) < 2:
+            layer.animation, layer.frame_durations = None, []  # shown as its still first frame
         for name in ("name", "text", "font_family"):
             if not isinstance(getattr(layer, name), str):
                 setattr(layer, name, getattr(defaults, name))
@@ -346,6 +372,10 @@ class Document:
         return document
 
     def add_image_bytes(self, contents: bytes, name: str, center: bool = True) -> Layer:
+        """Add an image as a layer; an animated GIF or APNG becomes an animated layer."""
+        animation = read_animation(contents, MAX_DIMENSION, MAX_PIXELS)
+        if animation is not None:
+            return self._add_animation(animation, name, center)
         try:
             source = Image.open(BytesIO(contents), formats=IMPORT_FORMATS)
         except UnidentifiedImageError as exc:
@@ -374,6 +404,22 @@ class Document:
             layer.x = float((self.width - rgba.width) / 2)
             layer.y = float((self.height - rgba.height) / 2)
         self.assets[asset] = output.getvalue()
+        self.layers.append(layer)
+        return layer
+
+    def _add_animation(self, animation: Animation, name: str, center: bool) -> Layer:
+        first = BytesIO()
+        animation.first_frame.save(first, format="PNG")
+        if first.tell() > MAX_ASSET_BYTES or len(animation.apng) > MAX_ASSET_BYTES:
+            raise ValueError("Animation trop volumineuse une fois enregistrée dans le projet")
+        animation_id = new_id()
+        layer = Layer(name=name, kind="image", asset=new_id(), animation=animation_id,
+                      frame_durations=list(animation.durations))
+        if center:
+            layer.x = float((self.width - animation.first_frame.width) / 2)
+            layer.y = float((self.height - animation.first_frame.height) / 2)
+        self.assets[layer.image_asset()] = first.getvalue()
+        self.assets[animation_id] = animation.apng
         self.layers.append(layer)
         return layer
 
@@ -537,7 +583,7 @@ class Document:
 
     def used_assets(self) -> set[str]:
         return {asset for layer in self.layers if layer.kind == "image"
-                for asset in (layer.asset, layer.mask) if asset}
+                for asset in (layer.asset, layer.mask, layer.animation) if asset}
 
     def prune_assets(self) -> None:
         """Forget the images and masks no layer uses any more (deleted layers, replaced masks)."""
@@ -584,6 +630,9 @@ class Document:
             if layer.mask is not None and layer.mask not in assets:
                 # A lost mask only hides less: keep the layer, drop the mask.
                 layer.mask = None
+            if layer.animation is not None and layer.animation not in assets:
+                # A lost animation leaves its first frame, as a still image.
+                layer.animation, layer.frame_durations = None, []
         if len({layer.id for layer in doc.layers}) != len(doc.layers):
             raise ValueError("Identifiants de calques dupliqués")
         raw_folders = manifest.get("folders", [])
